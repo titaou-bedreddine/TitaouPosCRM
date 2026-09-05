@@ -313,13 +313,13 @@
       } catch { /* silent */ }
     }, 4000);
 
-    // Scheduled daily backup ("every day at HH:MM"): checked every minute;
-    // the backend stamps the day so it runs at most once per day.
+    // Scheduled daily backup ("every day at HH:MM"): the tick just pings the
+    // backend, which decides if the window arrived and stamps the day so it
+    // runs at most once per day (calling create_backup here directly would
+    // have backed up on every 60s tick).
     setInterval(async () => {
       try {
-        const s = await invoke<Record<string, string>>('get_all_settings');
-        if (s['backup_scheduled_enabled'] !== 'true') return;
-        await invoke('create_backup', { tag: 'scheduled' });
+        await invoke('run_scheduled_backup');
       } catch {
         // Silent — backups must never disturb the cashier.
       }

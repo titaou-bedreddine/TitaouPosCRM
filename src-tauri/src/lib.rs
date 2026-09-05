@@ -129,6 +129,7 @@ pub fn run() {
             commands::restore_database,
             commands::restore_settings_only,
             commands::create_backup,
+            commands::run_scheduled_backup,
             commands::list_backups,
             commands::validate_backup_file,
             commands::pick_backup_folder,

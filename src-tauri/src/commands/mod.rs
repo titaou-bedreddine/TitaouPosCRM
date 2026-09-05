@@ -1033,6 +1033,16 @@ pub fn create_backup(db: State<'_, DbState>, tag: Option<String>) -> Result<Stri
     settings_service::create_backup(&db, tag.as_deref().unwrap_or("manual"))
 }
 
+/// Scheduled daily backup tick ("every day at HH:MM"): the backend decides
+/// whether the window has been reached and stamps the day — safe to call
+/// every minute. The UI must NOT call create_backup directly for the
+/// schedule, or it would back up on every tick.
+#[tauri::command]
+pub fn run_scheduled_backup(db: State<'_, DbState>) -> Result<(), String> {
+    settings_service::run_scheduled_backup(&db);
+    Ok(())
+}
+
 /// List existing backups (newest first) for the Settings UI.
 #[tauri::command]
 pub fn list_backups(db: State<'_, DbState>) -> Result<Vec<settings_service::BackupInfo>, String> {

@@ -121,9 +121,26 @@ struct EmpRow {
     hire_date: String,
 }
 
+/// One reminder the scan decided to emit (after the DB work is done).
+struct PendingReminder {
+    employee_id: i64,
+    employee_name: String,
+    amount: i64,
+    pay_date: String,
+    kind: &'static str,
+}
+
 /// One scheduler tick: scan every active employee, compute their next
 /// payment date, and fire DAY_BEFORE / DUE_TODAY reminders when due.
 /// Returns the number of NEW reminders emitted (for diagnostics).
+///
+/// LOCK DISCIPLINE (the v0.5.16 regression): db.conn is a NON-REENTRANT
+/// mutex. The first version kept the lock for the whole loop and then
+/// called ui_language / push_inapp_notification / notify_if_enabled —
+/// each re-locks db.conn, self-deadlocking the backend so even login
+/// hung ("backend connection stuck"). Now ALL reads/decisions happen
+/// inside ONE short lock scope, the guard is released, and only then
+/// are notifications emitted lock-free.
 pub fn run_payroll_reminder_scan(db: &DbState) -> i64 {
     let settings = crate::services::settings_service::get_all_settings(db).unwrap_or_default();
     // Master OFF disables the whole payroll reminder feature.
@@ -135,6 +152,9 @@ pub fn run_payroll_reminder_scan(db: &DbState) -> i64 {
     if !inapp_on && !telegram_on {
         return 0;
     }
+    // Resolve the UI language BEFORE taking the connection lock below —
+    // ui_language locks the same mutex internally.
+    let lang = crate::services::notifier_service::ui_language(db);
 
     let today = today_str();
     let tomorrow = parse_date(&today)
@@ -142,7 +162,8 @@ pub fn run_payroll_reminder_scan(db: &DbState) -> i64 {
         .map(|d| d.format("%Y-%m-%d").to_string())
         .unwrap_or_default();
 
-    let (emps, conn) = {
+    // --- Single short lock scope: read employees, decide, mark, release. ---
+    let pending: Vec<PendingReminder> = {
         let conn = db.conn.lock().unwrap();
         // Ensure the dedup table exists even on legacy DBs.
         let _ = conn.execute(
@@ -156,7 +177,8 @@ pub fn run_payroll_reminder_scan(db: &DbState) -> i64 {
             )",
             [],
         );
-        let list: Vec<EmpRow> = match conn.prepare(
+
+        let emps: Vec<EmpRow> = match conn.prepare(
             "SELECT id, full_name, base_salary, salary_start_date, hire_date
              FROM employees WHERE is_active = 1",
         ) {
@@ -177,16 +199,9 @@ pub fn run_payroll_reminder_scan(db: &DbState) -> i64 {
                 Vec::new()
             }
         };
-        (list, conn)
-    };
 
-    let lang = crate::services::notifier_service::ui_language(db);
-    let mut emitted: i64 = 0;
-
-    for emp in emps {
-        // Per-employee isolation: an error on one employee never stops the
-        // rest of the loop.
-        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut due: Vec<PendingReminder> = Vec::new();
+        for emp in emps {
             let start = emp
                 .salary_start_date
                 .clone()
@@ -200,69 +215,76 @@ pub fn run_payroll_reminder_scan(db: &DbState) -> i64 {
             } else if tomorrow == pay_date {
                 "DAY_BEFORE"
             } else {
-                return false;
+                continue;
             };
-
-            // Already-paid occurrence → no reminder.
+            // Already-paid occurrence or already-delivered → skip.
             if payroll_period_paid(&conn, emp.id, &pay_date) {
-                return false;
+                continue;
             }
-            // Already delivered → no duplicate.
             if reminder_already_sent(&conn, emp.id, &pay_date, kind) {
-                return false;
+                continue;
             }
-
-            let amount = emp.base_salary;
-            let (title, message) = if kind == "DAY_BEFORE" {
-                (
-                    crate::services::notifier_service::tr(&lang, (
-                        "💼 Employee Payroll Reminder".to_string(),
-                        "💼 تذكير براتب موظف".to_string(),
-                        "💼 Rappel de paie employé".to_string(),
-                    )),
-                    crate::services::notifier_service::tr(&lang, (
-                        format!("Employee: {}\nAmount Due: {} DZD\nPayment Date: {}\nReminder: Payroll payment is due tomorrow.", emp.name, amount, pay_date),
-                        format!("الموظف: {}\nالمبلغ المستحق: {} دج\nتاريخ الدفع: {}\nتذكير: دفع الراتب غداً.", emp.name, amount, pay_date),
-                        format!("Employé : {}\nMontant dû : {} DZD\nDate de paiement : {}\nRappel : la paie est due demain.", emp.name, amount, pay_date),
-                    )),
-                )
-            } else {
-                (
-                    crate::services::notifier_service::tr(&lang, (
-                        "📅 Employee Payroll Due Today".to_string(),
-                        "📅 راتب موظف مستحق اليوم".to_string(),
-                        "📅 Paie employée due aujourd'hui".to_string(),
-                    )),
-                    crate::services::notifier_service::tr(&lang, (
-                        format!("Employee: {}\nAmount Due: {} DZD\nPayment Date: {}\nStatus: Payment due today.", emp.name, amount, pay_date),
-                        format!("الموظف: {}\nالمبلغ المستحق: {} دج\nتاريخ الدفع: {}\nالحالة: الدفع مستحق اليوم.", emp.name, amount, pay_date),
-                        format!("Employé : {}\nMontant dû : {} DZD\nDate de paiement : {}\nStatut : paiement dû aujourd'hui.", emp.name, amount, pay_date),
-                    )),
-                )
-            };
-
-            if inapp_on {
-                crate::services::notifier_service::push_inapp_notification(
-                    db, "payroll", &title, &message, Some(emp.id),
-                );
-            }
-            if telegram_on {
-                // Payroll reminders ride the master telegram switch; the
-                // per-event switch IS notify_payroll_telegram (already
-                // checked above) so pass it as the gate key.
-                crate::services::notifier_service::notify_if_enabled(
-                    db,
-                    "notify_payroll_telegram",
-                    format!("{}\n{}", title, message),
-                );
-            }
+            // Claim the reminder NOW (while still holding the lock) so the
+            // 60s scheduler can never double-fire between scan steps.
             mark_reminder_sent(&conn, emp.id, &pay_date, kind);
-            true
-        }))
-        .unwrap_or(false);
-        if ok {
-            emitted += 1;
+            due.push(PendingReminder {
+                employee_id: emp.id,
+                employee_name: emp.name,
+                amount: emp.base_salary,
+                pay_date,
+                kind,
+            });
         }
+        due
+    };
+    // --- Lock released: notifications below may lock db.conn freely. ---
+
+    let mut emitted: i64 = 0;
+    for r in &pending {
+        let (title, message) = if r.kind == "DAY_BEFORE" {
+            (
+                crate::services::notifier_service::tr(&lang, (
+                    "💼 Employee Payroll Reminder".to_string(),
+                    "💼 تذكير براتب موظف".to_string(),
+                    "💼 Rappel de paie employé".to_string(),
+                )),
+                crate::services::notifier_service::tr(&lang, (
+                    format!("Employee: {}\nAmount Due: {} DZD\nPayment Date: {}\nReminder: Payroll payment is due tomorrow.", r.employee_name, r.amount, r.pay_date),
+                    format!("الموظف: {}\nالمبلغ المستحق: {} دج\nتاريخ الدفع: {}\nتذكير: دفع الراتب غداً.", r.employee_name, r.amount, r.pay_date),
+                    format!("Employé : {}\nMontant dû : {} DZD\nDate de paiement : {}\nRappel : la paie est due demain.", r.employee_name, r.amount, r.pay_date),
+                )),
+            )
+        } else {
+            (
+                crate::services::notifier_service::tr(&lang, (
+                    "📅 Employee Payroll Due Today".to_string(),
+                    "📅 راتب موظف مستحق اليوم".to_string(),
+                    "📅 Paie employée due aujourd'hui".to_string(),
+                )),
+                crate::services::notifier_service::tr(&lang, (
+                    format!("Employee: {}\nAmount Due: {} DZD\nPayment Date: {}\nStatus: Payment due today.", r.employee_name, r.amount, r.pay_date),
+                    format!("الموظف: {}\nالمبلغ المستحق: {} دج\nتاريخ الدفع: {}\nالحالة: الدفع مستحق اليوم.", r.employee_name, r.amount, r.pay_date),
+                    format!("Employé : {}\nMontant dû : {} DZD\nDate de paiement : {}\nStatut : paiement dû aujourd'hui.", r.employee_name, r.amount, r.pay_date),
+                )),
+            )
+        };
+
+        // A failure on one employee's notification must not stop the others.
+        if inapp_on {
+            crate::services::notifier_service::push_inapp_notification(
+                db, "payroll", &title, &message, Some(r.employee_id),
+            );
+        }
+        if telegram_on {
+            // The per-event switch IS notify_payroll_telegram (already
+            // checked above), so passing it as the gate key is correct.
+            crate::services::notifier_service::notify_if_enabled(
+                db,
+                "notify_payroll_telegram",
+                format!("{}\n{}", title, message),
+            );
+        }
+        emitted += 1;
     }
 
     if emitted > 0 {
@@ -274,6 +296,35 @@ pub fn run_payroll_reminder_scan(db: &DbState) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    // The v0.5.16 regression: the scan used to hold db.conn across calls
+    // that re-lock the same NON-REENTRANT mutex (ui_language, in-app push,
+    // telegram config) — self-deadlocking the backend so even login hung
+    // ("backend connection stuck"). This runs the scan on a worker thread
+    // with a hard timeout: a deadlock hangs the test, not the POS.
+    #[test]
+    fn test_scan_completes_without_deadlock() {
+        let db = std::sync::Arc::new(crate::database::DbState::new().expect("db open"));
+        let (tx, rx) = mpsc::channel();
+        let db2 = std::sync::Arc::clone(&db);
+        let handle = std::thread::spawn(move || {
+            let emitted = run_payroll_reminder_scan(&db2);
+            let _ = tx.send(emitted);
+        });
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(_) => {
+                handle.join().unwrap();
+                // Scan finished: the mutex must be free again — prove it by
+                // taking the lock right now.
+                let _guard = db.conn.lock().unwrap();
+            }
+            Err(_) => {
+                panic!("DEADLOCK in run_payroll_reminder_scan: it re-locks db.conn while holding it");
+            }
+        }
+    }
 
     // Payment date math must survive month lengths: cycle day 31 in a
     // non-leap February clamps to the 28th.
