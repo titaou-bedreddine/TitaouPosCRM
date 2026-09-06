@@ -296,26 +296,51 @@ pub fn network_open_firewall() -> Result<String, String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        let rule = format!("TitaouPOS LAN (port {})", port);
-        let output = std::process::Command::new("netsh")
-            .args([
-                "advfirewall", "firewall", "add", "rule",
-                &format!("name={}", rule),
-                "dir=in", "action=allow", "protocol=TCP",
-                &format!("localport={}", port),
-            ])
-            .creation_flags(0x08000000)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if output.status.success() {
-            return Ok(format!("Windows Firewall now allows TCP {} for the TitaouPOS LAN server", port));
+
+        // The LAN feature needs THREE inbound allowances (spec §43 — only
+        // the application's own ports, nothing broader):
+        //   TCP  <port>  — the shop API (/api/v1) + WebSocket
+        //   UDP  50110   — discovery broadcast (mDNS-less fallback)
+        //   UDP  5353    — mDNS multicast discovery
+        let rules: [(&str, &str, String); 3] = [
+            ("TitaouPOS LAN API", "TCP", port.to_string()),
+            ("TitaouPOS LAN Discovery", "UDP", "50110".to_string()),
+            ("TitaouPOS LAN mDNS", "UDP", "5353".to_string()),
+        ];
+        let mut failures: Vec<String> = Vec::new();
+        for (name, proto, port_no) in rules {
+            // Drop any previous rule of the same name first so repeated
+            // clicks never stack duplicates.
+            let _ = std::process::Command::new("netsh")
+                .args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", name)])
+                .creation_flags(0x08000000)
+                .output();
+            let out = std::process::Command::new("netsh")
+                .args([
+                    "advfirewall", "firewall", "add", "rule",
+                    &format!("name={}", name),
+                    "dir=in", "action=allow",
+                    &format!("protocol={}", proto),
+                    &format!("localport={}", port_no),
+                ])
+                .creation_flags(0x08000000)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                failures.push(name.to_string());
+            }
         }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!(
-            "Could not open the firewall automatically ({}). Run once as Administrator: netsh advfirewall firewall add rule name=\"TitaouPOS LAN\" dir=in action=allow protocol=TCP localport={}",
-            if stderr.is_empty() { "needs administrator rights" } else { &stderr },
+        if failures.is_empty() {
+            return Ok(format!(
+                "Windows Firewall now allows the TitaouPOS LAN: TCP {} (API + WebSocket), UDP 50110 (discovery), UDP 5353 (mDNS)",
+                port
+            ));
+        }
+        Err(format!(
+            "Could not open the firewall automatically (failed: {} — the app must run once as Administrator). Run PowerShell as Administrator:\nnetsh advfirewall firewall add rule name=\"TitaouPOS LAN API\" dir=in action=allow protocol=TCP localport={}\nnetsh advfirewall firewall add rule name=\"TitaouPOS LAN Discovery\" dir=in action=allow protocol=UDP localport=50110\nnetsh advfirewall firewall add rule name=\"TitaouPOS LAN mDNS\" dir=in action=allow protocol=UDP localport=5353",
+            failures.join(", "),
             port
-        ));
+        ))
     }
     #[cfg(not(windows))]
     {

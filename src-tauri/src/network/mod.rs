@@ -20,6 +20,8 @@ pub mod server_api;
 
 #[cfg(test)]
 pub mod api_live_tests;
+#[cfg(test)]
+pub mod discovery_live_tests;
 
 use crate::database::DbState;
 use crate::services::settings_service;
