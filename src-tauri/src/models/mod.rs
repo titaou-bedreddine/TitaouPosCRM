@@ -483,6 +483,9 @@ pub struct Employee {
     pub rfid_code: Option<String>,
     pub is_active: bool,
     pub notes: Option<String>,
+    /// Linked auto-created customer (employees ARE customers on the POS).
+    #[serde(default)]
+    pub customer_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

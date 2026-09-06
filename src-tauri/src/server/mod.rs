@@ -1,4 +1,4 @@
-use axum::{extract::State as AxState, response::Html, routing::get, routing::post, Json, Router};
+use axum::{extract::State as AxState, extract::ws::{Message, WebSocket, WebSocketUpgrade}, response::Html, routing::get, routing::post, Json, Router};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -213,6 +213,35 @@ fn pos_stats() -> serde_json::Value {
     })
 }
 
+
+/// Landing-page live-stats client (raw JS — NOT passed through format! so
+/// its braces stay untouched).
+const STATS_SCRIPT: &str = r##"
+<script>
+// Live stats: the server pushes fresh numbers over WebSocket every 3s.
+(function () {
+  var ids = ['today_sales_total', 'today_sales_count', 'products_count', 'low_stock_count', 'customers_count', 'employees_count'];
+  function connect() {
+    try {
+      var ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/ws');
+      ws.onmessage = function (ev) {
+        try {
+          var msg = JSON.parse(ev.data);
+          if (msg.type !== 'stats' || !msg.stats) return;
+          for (var i = 0; i < ids.length; i++) {
+            var el = document.getElementById('stat_' + ids[i]);
+            if (el) el.textContent = Number(msg.stats[ids[i]] || 0).toLocaleString('en-US');
+          }
+        } catch (e) { /* ignore malformed frames */ }
+      };
+      ws.onclose = function () { setTimeout(connect, 3000); };
+    } catch (e) { setTimeout(connect, 3000); }
+  }
+  connect();
+})();
+</script>
+"##;
+
 /// Landing page at `/`: visiting http://<LAN-IP>:<port> from a phone or PC
 /// shows a real page — live POS stats, status and endpoints — instead of a 404.
 async fn index() -> Html<String> {
@@ -226,7 +255,7 @@ async fn index() -> Html<String> {
         None => (configured_port(DIAG_DB.get()), false, 0, 0),
     };
     let st = pos_stats();
-    Html(format!(
+    let html = format!(
         r#"<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TitaouPOS Host</title>
 <style>body{{font-family:'Segoe UI',Arial,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px}}
@@ -243,12 +272,12 @@ hr{{border-color:#334155}}</style></head>
 <p class="sub">Embedded server is <span class="{run_cls}">{run_txt}</span> on port <code>{port}</code> • up {uptime} min • v{version}</p>
 
 <div class="stats">
-  <div class="stat"><b>{today_sales_total} DZD</b><span>Today's Sales</span></div>
-  <div class="stat"><b>{today_sales_count}</b><span>Today's Transactions</span></div>
-  <div class="stat"><b>{products_count}</b><span>Active Products</span></div>
-  <div class="stat"><b>{low_stock_count}</b><span>Low Stock Alerts</span></div>
-  <div class="stat"><b>{customers_count}</b><span>Customers</span></div>
-  <div class="stat"><b>{employees_count}</b><span>Employees</span></div>
+  <div class="stat"><b id="stat_today_sales_total">{today_sales_total}</b> DZD<span>Today's Sales</span></div>
+  <div class="stat"><b id="stat_today_sales_count">{today_sales_count}</b><span>Today's Transactions</span></div>
+  <div class="stat"><b id="stat_products_count">{products_count}</b><span>Active Products</span></div>
+  <div class="stat"><b id="stat_low_stock_count">{low_stock_count}</b><span>Low Stock Alerts</span></div>
+  <div class="stat"><b id="stat_customers_count">{customers_count}</b><span>Customers</span></div>
+  <div class="stat"><b id="stat_employees_count">{employees_count}</b><span>Employees</span></div>
 </div>
 
 <p>Connected devices: <b>{devices}</b></p>
@@ -261,7 +290,8 @@ hr{{border-color:#334155}}</style></head>
 <li><code>GET /api/diag/login</code> — diagnostics</li>
 </ul>
 <p style="color:#94a3b8;font-size:12px">TitaouPOS • Titaou Bedreddine 0553444057</p>
-</div></body></html>"#,
+</div>
+__STATS_SCRIPT__</body></html>"#,
         run_cls = if running { "ok" } else { "bad" },
         run_txt = if running { "ONLINE" } else { "OFFLINE" },
         port = port,
@@ -274,7 +304,8 @@ hr{{border-color:#334155}}</style></head>
         customers_count = st["customers_count"].as_i64().unwrap_or(0),
         employees_count = st["employees_count"].as_i64().unwrap_or(0),
         devices = devices_count,
-    ))
+    );
+    Html(html.replace("__STATS_SCRIPT__", STATS_SCRIPT))
 }
 
 /// Same diagnostic surface the original server exposed: runs the login /
@@ -303,6 +334,35 @@ async fn api_diag_login() -> Json<serde_json::Value> {
     }))
 }
 
+
+/// WebSocket: pushes live POS stats every 3 seconds so the landing page
+/// (or any paired device) refreshes itself without reloading.
+async fn ws_upgrade(ws: WebSocketUpgrade) -> axum::response::Response {
+    ws.on_upgrade(handle_ws_socket)
+}
+
+async fn handle_ws_socket(mut socket: WebSocket) {
+    let mut tick: u64 = 0;
+    loop {
+        let payload = serde_json::json!({
+            "type": "stats",
+            "stats": pos_stats(),
+            "devices": match STATE.get() {
+                Some(s) => s.devices.lock().unwrap().values()
+                    .filter(|d| d.last_seen.elapsed() < Duration::from_secs(300))
+                    .count(),
+                None => 0,
+            },
+            "tick": tick,
+        });
+        tick += 1;
+        if socket.send(Message::Text(payload.to_string())).await.is_err() {
+            break; // client went away
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+}
+
 pub fn start_local_api_server() {
     // Port is read BEFORE spawning so STATE gets the real value; when the
     // setting changes, a restart of the app picks it up.
@@ -325,6 +385,7 @@ pub fn start_local_api_server() {
                     .route("/api/handshake", post(api_handshake))
                     .route("/api/status", get(api_status))
                     .route("/api/stats", get(|| async { Json(pos_stats()) }))
+                    .route("/api/ws", get(ws_upgrade))
                     .route("/api/diag/login", get(api_diag_login))
                     .with_state(state)
                     .layer(CorsLayer::permissive());

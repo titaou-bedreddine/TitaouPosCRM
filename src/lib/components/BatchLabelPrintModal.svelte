@@ -2,8 +2,9 @@
   import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import type { Product } from '../types';
-  import { buildLabelPresetHtml, toLabelCurrency, type LabelPresetId } from '../printing/labelPresets';
+  import { LABEL_PRESETS, buildLabelPresetHtml, toLabelCurrency, type LabelPresetId } from '../printing/labelPresets';
   import { printLabelSilently } from '../utils/printer';
+  import { t } from '../i18n';
   import { Printer, X, ScanLine, Trash2, Loader2, CheckCircle2, AlertTriangle } from 'lucide-svelte';
 
   export let isOpen = false;
@@ -26,6 +27,28 @@
   let presets: LabelPresetId[] = ['vprice40x20', 'shelf40x20'];
 
   $: shopName = settings.shop_name_fr || 'TITAOU POS';
+
+  // Live preview of BOTH presets: uses the last queued product (or a demo
+  // row) so the operator sees exactly what will print before printing.
+  $: previewProduct = queue.length > 0
+    ? queue[queue.length - 1].product
+    : ({ name_fr: 'Produit Démo / Demo', name_ar: 'منتج تجريبي', barcodes: ['6130000000018'], sale_price: 120 } as any);
+  $: previewHtmls = {
+    vprice40x20: buildLabelPresetHtml('vprice40x20', {
+      shopName,
+      productName: previewProduct.name_fr || previewProduct.name_ar || '',
+      barcode: previewProduct.barcodes?.[0] || previewProduct.sku || '',
+      price: previewProduct.sale_price ?? 0,
+      currency: toLabelCurrency(settings.default_currency),
+    }),
+    shelf40x20: buildLabelPresetHtml('shelf40x20', {
+      shopName,
+      productName: previewProduct.name_fr || previewProduct.name_ar || '',
+      barcode: previewProduct.barcodes?.[0] || previewProduct.sku || '',
+      price: previewProduct.sale_price ?? 0,
+      currency: toLabelCurrency(settings.default_currency),
+    }),
+  };
 
   // Respect the configured default preset (Settings → Barcode Labels).
   $: if (isOpen && settings.label_preset_id === 'shelf40x20') {
@@ -101,7 +124,8 @@
       outcomeMsg = allOk
         ? `Printed ${totalLabels} label(s) (${queue.length} product(s)) — one 40×20mm page each, no gaps`
         : lastMsg;
-      if (allOk) queue = [];
+      // Keep the queue after printing so labels can be re-printed or
+      // adjusted; a Clear button empties it explicitly.
     } catch (e: any) {
       // The native pipeline is the only path — surface the real error.
       outcomeMsg = 'Print failed: ' + (typeof e === 'string' ? e : e?.message || String(e));
@@ -112,11 +136,14 @@
   }
 
   $: if (isOpen) {
-    queue = [];
     scanInput = '';
     outcomeMsg = '';
-    presetId = 'vprice40x20';
     setTimeout(() => scanInputEl?.focus(), 100);
+  }
+
+  function clearQueue() {
+    queue = [];
+    outcomeMsg = '';
   }
 </script>
 
@@ -142,15 +169,34 @@
             on:click={() => (presetId = 'vprice40x20')}
             class="p-2.5 rounded-xl border font-bold text-xs transition cursor-pointer {presetId === 'vprice40x20' ? 'border-sky-500 bg-sky-50 dark:bg-sky-950 text-sky-600' : 'border-pos-border text-pos-muted'}"
           >
-            40×20 mm – Vertical Price
+            {t('label_preset_vprice')}
           </button>
           <button
             type="button"
             on:click={() => (presetId = 'shelf40x20')}
             class="p-2.5 rounded-xl border font-bold text-xs transition cursor-pointer {presetId === 'shelf40x20' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950 text-emerald-600' : 'border-pos-border text-pos-muted'}"
           >
-            40×20 mm – Shelf Price
+            {t('label_preset_shelf')}
           </button>
+        </div>
+
+        <!-- Live previews: both presets, first queued product -->
+        <div class="grid grid-cols-2 gap-2">
+          {#each Object.keys(previewHtmls) as pid}
+            <div class="space-y-1">
+              <div dir="ltr" class="bg-white border border-slate-300 rounded-lg p-2 flex justify-center overflow-hidden">
+                <div style="width: calc(40mm * 1.6); height: calc(20mm * 1.6); position: relative; overflow: hidden;">
+                  <div style="width: 40mm; height: 20mm; transform: scale(1.6); transform-origin: top left;">
+                    {@html previewHtmls[pid as LabelPresetId]}
+                  </div>
+                </div>
+              </div>
+              <p class="text-[9px] text-pos-muted text-center font-bold">
+                {t(pid === 'vprice40x20' ? 'label_preset_vprice' : 'label_preset_shelf')}
+                {#if presetId === pid}<span class="text-sky-600"> ●</span>{/if}
+              </p>
+            </div>
+          {/each}
         </div>
 
         <!-- Scan input -->
@@ -214,6 +260,14 @@
           {queue.length} product(s) • {totalLabels} label(s) total
         </span>
         <div class="flex gap-2">
+          <button
+            type="button"
+            on:click={clearQueue}
+            disabled={queue.length === 0}
+            class="px-4 py-2 bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/60 disabled:opacity-40 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-xs font-bold rounded-xl cursor-pointer flex items-center gap-1.5"
+          >
+            <Trash2 class="w-3.5 h-3.5" /> Clear
+          </button>
           <button on:click={onClose} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">Cancel</button>
           <button
             type="button"

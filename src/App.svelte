@@ -225,8 +225,14 @@
     loadActiveSession();
   }
 
+  let sidebarVersion = '';
   onMount(async () => {
     loadTelegramMaster();
+    try {
+      sidebarVersion = await invoke<string>('get_app_version');
+    } catch {
+      sidebarVersion = '';
+    }
     // Disable right-click context menu across Tauri POS desktop app
     window.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -383,6 +389,7 @@
           <div class="min-w-0">
             <h1 class="font-black text-sm tracking-tight text-pos-text">TitaouPOS</h1>
             <p class="text-[9px] text-sky-600 font-bold truncate">Titaou Bedreddine 0553444057</p>
+            <p class="text-[8px] text-pos-muted font-mono">{sidebarVersion ? 'v' + sidebarVersion : ''}</p>
           </div>
         </div>
       </div>
@@ -536,7 +543,7 @@
               drawerMsg = '❌ ' + (typeof e === 'string' ? e : e?.message || String(e));
               console.warn('Drawer kick failed:', e);
             }
-            setTimeout(() => (drawerMsg = ''), 5000);
+            setTimeout(() => (drawerMsg = ''), 2200);
           }}
           class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-pointer transition"
           title="Open Cash Drawer (F10)"
@@ -545,7 +552,7 @@
           <span>{t('btn_drawer')}</span>
         </button>
         {#if drawerMsg}
-          <p class="text-[9px] font-bold px-1 {drawerMsg.startsWith('✅') ? 'text-emerald-600' : 'text-rose-600'}" title={drawerMsg}>{drawerMsg}</p>
+          <p class="text-[8px] font-bold px-1 truncate max-w-[230px] {drawerMsg.startsWith('✅') ? 'text-emerald-600' : 'text-rose-600'}" title={drawerMsg}>{drawerMsg}</p>
         {/if}
 
         <!-- Clean User Card Horizontal with Compact Language Selector -->
@@ -595,7 +602,7 @@
 
           <!-- Compact Mini Language Toggle -->
           <div class="flex items-center justify-between gap-1 pt-1.5 border-t border-pos-border/40 text-[10px]">
-            <span class="text-[9px] text-pos-muted font-bold">Lang:</span>
+            <span></span>
             <div class="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-lg">
               <button
                 type="button"

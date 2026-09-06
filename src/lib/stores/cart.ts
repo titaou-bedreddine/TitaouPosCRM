@@ -96,6 +96,7 @@ export function addToCart(product: Product, quantity = 1, asRefund = false): boo
         expiry_date: (product as any).expiry_date,
         purchase_price: product.purchase_price,
         current_stock: product.current_stock,
+        is_scalable: (product as any).is_scalable,
       };
       
       const order = get(cartItemOrder);
@@ -361,6 +362,57 @@ export const globalDiscountPercent = derived(
 // OFF by default; 50/100 round the GRAND TOTAL for quick cash handling.
 // Never applied to negative (refund) totals, purchase prices or history.
 export const saleTotalRoundingStep = writable<number>(0);
+
+// ---------------------------------------------------------------------------
+// Learned-weight suggestions (v0.5.20): the POS remembers which quantities a
+// product is usually sold in (e.g. Lait → 1, Œufs → 30/15/10, Eau → 6) and
+// surfaces them as one-tap chips on scalable cart lines. Stored in
+// localStorage per product; checkout records what was actually sold.
+// ---------------------------------------------------------------------------
+
+const QTY_HISTORY_KEY = 'pos_qty_history_v1';
+
+type QtyHistory = Record<string, number[]>; // productId → recent quantities
+
+function loadQtyHistory(): QtyHistory {
+  try {
+    return JSON.parse(localStorage.getItem(QTY_HISTORY_KEY) || '{}') as QtyHistory;
+  } catch {
+    return {};
+  }
+}
+
+/** Record a sold quantity at checkout (max 8 most-recent per product). */
+export function recordSoldQuantities(items: { product_id: number; quantity: number }[]) {
+  if (typeof localStorage === 'undefined') return;
+  const hist = loadQtyHistory();
+  let changed = false;
+  for (const it of items) {
+    const key = String(it.product_id);
+    const qty = Math.round(it.quantity * 1000) / 1000;
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    const list = hist[key] || [];
+    hist[key] = [qty, ...list.filter((q) => q !== qty)].slice(0, 8);
+    changed = true;
+  }
+  if (changed) {
+    try {
+      localStorage.setItem(QTY_HISTORY_KEY, JSON.stringify(hist));
+    } catch { /* storage full: suggestions degrade silently */ }
+  }
+}
+
+/** Suggested quick-quantities for a scalable product (learned first, then defaults). */
+export function suggestedQuantities(productId: number): number[] {
+  const hist = loadQtyHistory();
+  const learned = (hist[String(productId)] || []).slice(0, 4);
+  const defaults = [1, 0.5, 0.25, 2];
+  for (const d of defaults) {
+    if (learned.length >= 4) break;
+    if (!learned.includes(d)) learned.push(d);
+  }
+  return learned;
+}
 
 export function applySaleRounding(total: number, step: number): number {
   if (!step || step <= 0 || total <= 0) return total;

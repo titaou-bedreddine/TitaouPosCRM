@@ -1214,7 +1214,7 @@
         label: `Test ${def.name}`,
         widthMm: def.widthMm,
         heightMm: def.heightMm,
-        copies: 5, // acceptance test: 5 × 20mm = 100mm, zero gaps
+        copies: 1, // a TEST prints ONE label (the operator asked)
         printer: settings.label_printer || undefined,
         dpi: toInt(settings.label_printer_dpi, 203),
       });
@@ -2201,7 +2201,7 @@
                 class="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition"
               >
                 <Printer class="w-3.5 h-3.5" />
-                <span>Test Print 5× (<span dir="ltr">{LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm}mm</span>)</span>
+                <span>Test Print (<span dir="ltr">{LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm}mm</span>)</span>
               </button>
             </div>
           {/each}

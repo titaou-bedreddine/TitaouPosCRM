@@ -545,6 +545,54 @@ pub fn find_employee_by_rfid(db: State<'_, DbState>, rfid: String) -> Result<Opt
     employee_service::find_employee_by_rfid(&db, &rfid)
 }
 
+/// RFID login: resolve a scanned card to the employee's active user account.
+#[tauri::command]
+pub fn login_with_rfid(db: State<'_, DbState>, rfid: String) -> Result<Option<User>, String> {
+    employee_service::login_with_rfid(&db, &rfid)
+}
+
+/// Resolve a scanned scale barcode (ACLAS price/weight-embedded EAN) to the
+/// scalable product. The WEIGHT rides back as the suggested quantity.
+#[tauri::command]
+pub fn resolve_scale_scan(db: State<'_, DbState>, code: String) -> Result<Option<ScaleScanResult>, String> {
+    let settings = settings_service::get_all_settings(&db)?;
+    let btype: i64 = settings
+        .get("scale_default_barcode_type")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(97);
+    let Some((item_code, weight, price)) =
+        scale_service::parse_scale_barcode_code(&code, btype)
+    else {
+        return Ok(None);
+    };
+    let Some(product) = scale_service::resolve_scale_scan(&db, &code) else {
+        return Ok(None);
+    };
+    Ok(Some(ScaleScanResult {
+        product_id: product.id,
+        name: Some(product.name_fr.clone()),
+        unit_price: if price > 0 { price } else { product.sale_price },
+        weight,
+    }))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ScaleScanResult {
+    pub product_id: i64,
+    pub name: Option<String>,
+    pub unit_price: i64,
+    pub weight: f64,
+}
+
+/// Browser-free printing fallback: send a ready-made ESC/POS byte payload
+/// (text commands, cut) RAW to the Windows spooler — no driver dialog, no
+/// browser, no PDF. Works on any thermal receipt printer even on machines
+/// with NO Chrome/Edge installed.
+#[tauri::command]
+pub fn print_escpos_raw(payload: String, printer: Option<String>) -> Result<(), String> {
+    crate::printing::escpos::print_raw(&payload, printer.as_deref())
+}
+
 /// Next free employee code (EMP-NN) — accounts for soft-deleted rows.
 #[tauri::command]
 pub fn next_employee_code(db: State<'_, DbState>) -> Result<String, String> {
@@ -1247,7 +1295,27 @@ pub async fn check_github_update(app_handle: tauri::AppHandle) -> Result<AppUpda
         }
     }
 
-    let has_update = clean_latest != clean_current && !tag_name.is_empty();
+    // Version-AWARE comparison: a published release OLDER than the running
+    // build (e.g. running 0.5.18 while GitHub's latest release is 0.5.15)
+    // must NOT offer a "new update". Compare each numeric segment.
+    fn is_newer_version(candidate: &str, current: &str) -> bool {
+        let parse = |v: &str| -> Vec<u64> {
+            v.split('.')
+                .map(|p| p.trim().parse::<u64>().unwrap_or(0))
+                .collect()
+        };
+        let (cand, cur) = (parse(candidate), parse(current));
+        let len = cand.len().max(cur.len());
+        for i in 0..len {
+            let a = cand.get(i).copied().unwrap_or(0);
+            let b = cur.get(i).copied().unwrap_or(0);
+            if a != b {
+                return a > b;
+            }
+        }
+        false
+    }
+    let has_update = !tag_name.is_empty() && is_newer_version(&clean_latest, &clean_current);
 
     Ok(AppUpdateResult {
         has_update,

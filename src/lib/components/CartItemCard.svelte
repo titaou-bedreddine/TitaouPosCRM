@@ -3,6 +3,7 @@
   import { currentLocale } from '../i18n';
   import { t } from '../i18n';
   import {
+    suggestedQuantities,
     updateItemQuantity,
     applyItemDiscount,
     toggleItemRefund,
@@ -79,6 +80,15 @@
   function clearDiscount() {
     applyItemDiscount(item.product_id, item.is_refund, 0);
     showDiscountInput = false;
+  }
+
+  // Weight/quantity suggestion chips for SCALE products: learned from
+  // real sales (localStorage) + sensible defaults. One tap sets the qty —
+  // they live inside the line so the scanning flow is never interrupted.
+  $: showQtyChips = item.is_scalable === true && !item.is_refund;
+  $: qtySuggestions = showQtyChips ? suggestedQuantities(item.product_id) : [];
+  function applySuggestion(qty: number) {
+    updateItemQuantity(item.product_id, item.is_refund, qty);
   }
 
   $: isJustAdded = $lastAddedProductId === item.product_id;
@@ -202,6 +212,22 @@
         <Plus class="w-3 h-3" />
       </button>
     </div>
+
+    <!-- Weight/qty suggestion chips (scale products only) -->
+    {#if showQtyChips && qtySuggestions.length > 0}
+      <div class="flex items-center gap-1 flex-wrap -mt-1">
+        {#each qtySuggestions as sq}
+          <button
+            type="button"
+            on:click={() => applySuggestion(sq)}
+            class="px-1.5 py-0.5 rounded-md bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 text-[10px] font-black font-mono cursor-pointer hover:bg-sky-100 dark:hover:bg-sky-900 active:scale-90 transition"
+            title={String(sq)}
+          >
+            {sq % 1 === 0 ? sq : sq.toFixed(2)}
+          </button>
+        {/each}
+      </div>
+    {/if}
 
     <!-- Action Buttons -->
     <div class="flex items-center gap-1">

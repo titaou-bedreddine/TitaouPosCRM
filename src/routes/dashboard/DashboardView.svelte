@@ -26,13 +26,123 @@
   // Expense detail modal (opened by clicking an expense line on the
   // Expenses tab): reprint / edit / delete like the sale-history popup.
   let expenseDetail: any = null;
-  let expenseDetailItems: boolean = false;
-  let isDeletingExpense = false;
   let expenseDeleted = false;
+  // Edit mode (pen): fields become editable — requires the admin password.
+  let isEditingExpense = false;
+  let editExpenseAdminPassword = '';
+  let editExpenseError = '';
+  let isSavingExpense = false;
+  let editExpenseForm: any = { amount: 0, category_id: 1, recipient: '', date: '', notes: '', payment_method: 'cash' };
+  let expenseCategories: any[] = [];
+  // Delete confirmation: type DELETE + admin password.
+  let showExpenseDeleteConfirm = false;
+  let deleteConfirmText = '';
+  let deleteAdminPassword = '';
+  let deleteError = '';
 
   async function openExpenseDetail(e: any) {
     expenseDetail = e;
     expenseDeleted = false;
+    isEditingExpense = false;
+    showExpenseDeleteConfirm = false;
+    editExpenseError = '';
+    deleteError = '';
+    editExpenseAdminPassword = '';
+    deleteConfirmText = '';
+    deleteAdminPassword = '';
+    editExpenseForm = {
+      amount: e.amount,
+      category_id: e.category_id,
+      recipient: e.recipient || '',
+      date: e.date,
+      notes: e.notes || '',
+      payment_method: e.payment_method || 'cash',
+    };
+    if (expenseCategories.length === 0) {
+      // Same fixed set the Expenses page uses (IDs 1–6).
+      expenseCategories = [
+        { id: 1, name: 'Loyer / Rent (إيجار)' },
+        { id: 2, name: 'Électricité & Eau / Utilities (كهرباء وغاز ومياه)' },
+        { id: 3, name: 'Transport & Livraison / Delivery (نقل وتوصيل)' },
+        { id: 4, name: 'Maintenance & Réparation (صيانة وإصلاح)' },
+        { id: 5, name: 'Fournitures & Emballage / Packaging (مستلزمات وتغليف)' },
+        { id: 6, name: 'Divers / General Expenses (مصاريف عامة)' },
+      ];
+    }
+  }
+
+  function startEditExpense() {
+    isEditingExpense = true;
+    editExpenseError = '';
+  }
+
+  async function saveExpenseEdit() {
+    if (!expenseDetail) return;
+    if (!editExpenseAdminPassword.trim()) {
+      editExpenseError = t('admin_password_required');
+      return;
+    }
+    try {
+      isSavingExpense = true;
+      editExpenseError = '';
+      const ok = await invoke<boolean>('verify_admin_password', { password: editExpenseAdminPassword });
+      if (!ok) {
+        editExpenseError = t('admin_password_wrong');
+        isSavingExpense = false;
+        return;
+      }
+      await invoke('update_expense', {
+        expenseId: expenseDetail.id,
+        categoryId: Number(editExpenseForm.category_id) || 1,
+        amount: Number(editExpenseForm.amount) || 0,
+        paymentMethod: editExpenseForm.payment_method || 'cash',
+        recipient: editExpenseForm.recipient || null,
+        receiptReference: expenseDetail.receipt_reference || null,
+        notes: editExpenseForm.notes || null,
+        date: editExpenseForm.date || expenseDetail.date,
+      });
+      isEditingExpense = false;
+      editExpenseAdminPassword = '';
+      expenseDeleted = false;
+      Object.assign(expenseDetail, {
+        amount: Number(editExpenseForm.amount) || 0,
+        category_id: Number(editExpenseForm.category_id) || 1,
+        recipient: editExpenseForm.recipient,
+        date: editExpenseForm.date,
+        notes: editExpenseForm.notes,
+      });
+      loadStats();
+    } catch (err: any) {
+      editExpenseError = typeof err === 'string' ? err : err?.message || String(err);
+    } finally {
+      isSavingExpense = false;
+    }
+  }
+
+  async function confirmExpenseDelete() {
+    if (!expenseDetail) return;
+    if (deleteConfirmText.trim().toUpperCase() !== 'DELETE') {
+      deleteError = t('delete_type_delete');
+      return;
+    }
+    if (!deleteAdminPassword.trim()) {
+      deleteError = t('admin_password_required');
+      return;
+    }
+    try {
+      const ok = await invoke<boolean>('verify_admin_password', { password: deleteAdminPassword });
+      if (!ok) {
+        deleteError = t('admin_password_wrong');
+        return;
+      }
+      await invoke('delete_expense', { expenseId: expenseDetail.id });
+      expenseDeleted = true;
+      showExpenseDeleteConfirm = false;
+      expenseDetail = null;
+      loadStats();
+    } catch (err: any) {
+      deleteError = typeof err === 'string' ? err : err?.message || String(err);
+    }
   }
   function closeExpenseDetail() {
     // If the expense was deleted, the dashboard numbers must refresh.
@@ -41,20 +151,7 @@
     }
     expenseDetail = null;
   }
-  async function deleteExpenseDetail() {
-    if (!expenseDetail) return;
-    try {
-      isDeletingExpense = true;
-      await invoke('delete_expense', { expenseId: expenseDetail.id });
-      isDeletingExpense = false;
-      expenseDeleted = true;
-      expenseDetail = null;
-      loadStats();
-    } catch (err: any) {
-      isDeletingExpense = false;
-      console.error('Delete expense failed:', err);
-    }
-  }
+
   async function printExpenseDetail() {
     if (!expenseDetail) return;
     try {
@@ -510,8 +607,8 @@
                 <td class="p-2.5 text-end whitespace-nowrap">
                   <div class="inline-flex items-center gap-1">
                     <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); }} class="p-1 text-pos-muted hover:text-sky-600 rounded-lg cursor-pointer" title={t('exp_view_hint')}><Eye class="w-3.5 h-3.5" /></button>
-                    <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); }} class="p-1 text-pos-muted hover:text-amber-600 rounded-lg cursor-pointer" title={t('exp_edit')}><Pencil class="w-3.5 h-3.5" /></button>
-                    <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); deleteExpenseDetail(); }} class="p-1 text-pos-muted hover:text-rose-600 rounded-lg cursor-pointer" title={t('exp_delete_title')}><Trash2 class="w-3.5 h-3.5" /></button>
+                    <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); startEditExpense(); }} class="p-1 text-pos-muted hover:text-amber-600 rounded-lg cursor-pointer" title={t('exp_edit')}><Pencil class="w-3.5 h-3.5" /></button>
+                    <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); showExpenseDeleteConfirm = true; }} class="p-1 text-pos-muted hover:text-rose-600 rounded-lg cursor-pointer" title={t('exp_delete_title')}><Trash2 class="w-3.5 h-3.5" /></button>
                     <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); setTimeout(printExpenseDetail, 50); }} class="p-1 text-pos-muted hover:text-sky-600 rounded-lg cursor-pointer" title={t('exp_print_hint')}><Printer class="w-3.5 h-3.5" /></button>
                   </div>
                 </td>
@@ -688,7 +785,7 @@
   </div>
 {/if}
 
-<!-- Expense Detail Modal (from the Expenses tab): view / reprint / delete -->
+<!-- Expense Detail Modal (from the Expenses tab): view / EDIT / reprint / delete -->
 {#if expenseDetail}
   <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" on:keydown={(e) => { if (e.key === 'Escape') closeExpenseDetail(); }}>
     <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-150">
@@ -704,34 +801,106 @@
         {#if expenseDeleted}
           <p class="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold flex items-center gap-2"><CheckCircle2 class="w-4 h-4" /> {t('exp_deleted')}</p>
         {/if}
-        <div class="grid grid-cols-2 gap-2">
-          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('date')}</p><p class="font-bold text-pos-text">{expenseDetail.date}</p></div>
-          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_category')}</p><p class="font-bold text-pos-text">{expenseDetail.category_name || 'Général'}</p></div>
-          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_beneficiary')}</p><p class="font-bold text-pos-text">{expenseDetail.recipient || 'Divers'}</p></div>
-          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_user_col')}</p><p class="font-bold text-pos-text">{expenseDetail.user_name || 'User #' + expenseDetail.user_id}</p></div>
-          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_amount_col')}</p><p class="font-black font-mono text-rose-600 text-base">{expenseDetail.amount.toLocaleString()} DZD</p></div>
-          <div><p class="text-pos-muted font-bold text-[10px] uppercase">Payment</p><p class="font-bold text-pos-text uppercase">{expenseDetail.payment_method}</p></div>
-        </div>
-        {#if expenseDetail.notes}
-          <div class="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-pos-border text-pos-muted">{expenseDetail.notes}</div>
+
+        {#if !isEditingExpense}
+          <!-- VIEW mode -->
+          <div class="grid grid-cols-2 gap-2">
+            <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('date')}</p><p class="font-bold text-pos-text">{expenseDetail.date}</p></div>
+            <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_category')}</p><p class="font-bold text-pos-text">{expenseDetail.category_name || 'Général'}</p></div>
+            <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_beneficiary')}</p><p class="font-bold text-pos-text">{expenseDetail.recipient || 'Divers'}</p></div>
+            <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_user_col')}</p><p class="font-bold text-pos-text">{expenseDetail.user_name || 'User #' + expenseDetail.user_id}</p></div>
+            <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_amount_col')}</p><p class="font-black font-mono text-rose-600 text-base">{expenseDetail.amount.toLocaleString()} DZD</p></div>
+            <div><p class="text-pos-muted font-bold text-[10px] uppercase">Payment</p><p class="font-bold text-pos-text uppercase">{expenseDetail.payment_method}</p></div>
+          </div>
+          {#if expenseDetail.notes}
+            <div class="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-pos-border text-pos-muted">{expenseDetail.notes}</div>
+          {/if}
+        {:else}
+          <!-- EDIT mode (admin password required) -->
+          <div class="p-2.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-xl font-bold text-amber-800 dark:text-amber-300 flex items-center gap-2">
+            <Pencil class="w-4 h-4 shrink-0" /> {t('exp_edit_admin_hint')}
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('exp_amount_col')} (DZD)</label>
+              <input type="number" bind:value={editExpenseForm.amount} class="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs font-mono font-bold text-pos-text outline-none" />
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('date')}</label>
+              <input type="date" bind:value={editExpenseForm.date} class="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs font-mono font-bold text-pos-text outline-none" />
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('exp_category')}</label>
+              <select bind:value={editExpenseForm.category_id} class="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs font-bold text-pos-text outline-none">
+                {#each expenseCategories as cat}
+                  <option value={cat.id}>{cat.name}</option>
+                {/each}
+              </select>
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('exp_beneficiary')}</label>
+              <input type="text" bind:value={editExpenseForm.recipient} class="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs font-bold text-pos-text outline-none" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('admin_password')} *</label>
+            <input type="password" bind:value={editExpenseAdminPassword} on:keydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveExpenseEdit(); } }} placeholder="••••••••" class="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs font-mono text-pos-text outline-none" />
+          </div>
+          {#if editExpenseError}
+            <p class="text-[11px] font-bold text-rose-600">{editExpenseError}</p>
+          {/if}
+        {/if}
+
+        {#if showExpenseDeleteConfirm}
+          <!-- DELETE confirmation: type DELETE + admin password -->
+          <div class="p-3 bg-rose-50 dark:bg-rose-950/40 border-2 border-dashed border-rose-300 dark:border-rose-800 rounded-xl space-y-2">
+            <p class="font-black text-rose-700 dark:text-rose-300">{t('exp_delete_confirm_title')}</p>
+            <p class="text-[11px] text-pos-muted font-bold">{t('exp_delete_confirm_hint')}</p>
+            <input type="text" bind:value={deleteConfirmText} placeholder="DELETE" class="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-800 rounded-lg text-xs font-mono font-black text-rose-600 outline-none" />
+            <input type="password" bind:value={deleteAdminPassword} placeholder={t('admin_password')} class="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-800 rounded-lg text-xs font-mono text-pos-text outline-none" />
+            {#if deleteError}
+              <p class="text-[11px] font-bold text-rose-600">{deleteError}</p>
+            {/if}
+            <div class="flex justify-end gap-2">
+              <button type="button" on:click={() => { showExpenseDeleteConfirm = false; deleteError = ''; }} class="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-lg cursor-pointer">{t('btn_cancel')}</button>
+              <button type="button" on:click={confirmExpenseDelete} class="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-lg cursor-pointer">{t('btn_delete')}</button>
+            </div>
+          </div>
         {/if}
       </div>
 
       <div class="px-5 py-3.5 border-t border-pos-border bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between gap-2">
         <button
           type="button"
-          on:click={deleteExpenseDetail}
-          disabled={isDeletingExpense}
+          on:click={() => { showExpenseDeleteConfirm = true; deleteError = ''; }}
           class="px-4 py-2 bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/60 dark:hover:bg-rose-900 text-rose-800 dark:text-rose-300 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer"
         >
-          <Trash2 class="w-4 h-4" /><span>{isDeletingExpense ? '…' : t('btn_delete')}</span>
+          <Trash2 class="w-4 h-4" /><span>{t('btn_delete')}</span>
         </button>
         <div class="flex gap-2">
-          <button on:click={closeExpenseDetail} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">{t('btn_cancel')}</button>
+          {#if !isEditingExpense}
+            <button
+              type="button"
+              on:click={startEditExpense}
+              class="px-4 py-2 bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900 text-amber-800 dark:text-amber-300 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer"
+            >
+              <Pencil class="w-4 h-4" /><span>{t('exp_edit')}</span>
+            </button>
+          {:else}
+            <button type="button" on:click={() => (isEditingExpense = false)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">{t('btn_cancel')}</button>
+            <button
+              type="button"
+              on:click={saveExpenseEdit}
+              disabled={isSavingExpense}
+              class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <CheckCircle2 class="w-4 h-4" /><span>{isSavingExpense ? '…' : t('btn_save')}</span>
+            </button>
+          {/if}
           <button
             type="button"
             on:click={printExpenseDetail}
-            class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"
+            class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"
           >
             <Printer class="w-4 h-4" /><span>{t('exp_voucher')}</span>
           </button>

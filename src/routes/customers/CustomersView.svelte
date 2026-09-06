@@ -10,8 +10,7 @@
   import UniversalSearchBar from '../../lib/components/UniversalSearchBar.svelte';
   import QrImage from '../../lib/components/QrImage.svelte';
   import {
-    Users, Plus, QrCode, DollarSign, Edit2, Trash2, Search,
-    X, Check, Printer, FileText, Phone, MapPin, Building, History,
+    Users, Plus, QrCode, DollarSign, Edit2, Trash2, Search, X, Check, Printer, FileText, Phone, MapPin, Building, History,
     Eye, ShieldAlert, Pin, PinOff
   } from 'lucide-svelte';
 
@@ -295,8 +294,16 @@
         type="text"
         bind:value={searchQuery}
         placeholder="Search by customer name, phone, RC, or NIF..."
-        class="w-full ps-9 pe-3 py-2 bg-pos-card border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none focus:border-sky-500 shadow-xs"
+        class="w-full ps-9 pe-8 py-2 bg-pos-card border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none focus:border-sky-500 shadow-xs"
       />
+      {#if searchQuery}
+        <button
+          type="button"
+          on:click={() => (searchQuery = '')}
+          class="absolute end-2.5 top-2 text-pos-muted hover:text-rose-500 rounded-full p-0.5 cursor-pointer"
+          title="Clear"
+        ><X class="w-4 h-4" /></button>
+      {/if}
     </div>
   </div>
 

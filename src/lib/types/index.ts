@@ -106,6 +106,8 @@ export interface CartItem {
   purchase_price?: number;
   // Product's available inventory balance for negative-stock enforcement.
   current_stock?: number;
+  // Scale product: enables weight-suggestion chips on the cart line.
+  is_scalable?: boolean;
 }
 
 export interface CashSession {

@@ -10,7 +10,7 @@ pub fn list_employees(db: &DbState) -> Result<Vec<Employee>, String> {
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn
         .prepare(
-            "SELECT id, employee_code, full_name, phone, email, national_id, job_title, base_salary, salary_type, salary_start_date, hire_date, qr_code, rfid_code, is_active, notes
+            "SELECT id, employee_code, full_name, phone, email, national_id, job_title, base_salary, salary_type, salary_start_date, hire_date, qr_code, rfid_code, is_active, notes, customer_id
              FROM employees
              WHERE is_active = 1
              ORDER BY id DESC",
@@ -35,6 +35,7 @@ pub fn list_employees(db: &DbState) -> Result<Vec<Employee>, String> {
                 rfid_code: row.get(12)?,
                 is_active: row.get(13)?,
                 notes: row.get(14)?,
+                customer_id: row.get(15).ok().flatten(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -73,6 +74,13 @@ pub fn save_employee(
             ],
         )
         .map_err(|e| e.to_string())?;
+        // Keep the auto-created linked customer's name in sync.
+        let _: i64 = conn
+            .execute(
+                "UPDATE customers SET name = ?1, phone = COALESCE(?2, phone) WHERE id = (SELECT customer_id FROM employees WHERE id = ?3 AND customer_id IS NOT NULL)",
+                rusqlite::params![name, phone, eid],
+            )
+            .unwrap_or(0) as i64;
         Ok(eid)
     } else {
         let qr_code = format!("EMP-QR-{}", code);
@@ -85,7 +93,23 @@ pub fn save_employee(
             ],
         )
         .map_err(|e| e.to_string())?;
-        Ok(conn.last_insert_rowid())
+        let emp_id = conn.last_insert_rowid();
+        // Every employee is automatically a customer: their POS purchases
+        // (cash or debt) are tracked on their own history.
+        let cust_qr = format!("EMP-{}", code);
+        conn.execute(
+            "INSERT INTO customers (name, phone, qr_code, balance, initial_debt, is_active)
+             VALUES (?1, ?2, ?3, 0, 0, 1)",
+            rusqlite::params![name, phone, cust_qr],
+        )
+        .map_err(|e| e.to_string())?;
+        let customer_id = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE employees SET customer_id = ?1 WHERE id = ?2",
+            rusqlite::params![customer_id, emp_id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(emp_id)
     }
 }
 
@@ -185,13 +209,13 @@ pub fn get_user_by_qr(db: &DbState, qr_code: &str) -> Result<Option<User>, Strin
         Err(e) => Err(e.to_string()),
     }
 }
-/// Find an active employee by a scanned RFID tag. Returns the Employee or
-/// None when the tag is unknown.
+/// Find an active employee by a scanned RFID tag (or QR). Returns the
+/// Employee (with the linked auto-customer id) or None when unknown.
 pub fn find_employee_by_rfid(db: &DbState, rfid: &str) -> Result<Option<Employee>, String> {
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn
         .prepare(
-            "SELECT id, employee_code, full_name, phone, email, national_id, job_title, base_salary, salary_type, salary_start_date, hire_date, qr_code, rfid_code, is_active, notes
+            "SELECT id, employee_code, full_name, phone, email, national_id, job_title, base_salary, salary_type, salary_start_date, hire_date, qr_code, rfid_code, is_active, notes, customer_id
              FROM employees
              WHERE is_active = 1 AND (rfid_code = ?1 OR qr_code = ?1)
              ORDER BY id DESC LIMIT 1",
@@ -215,6 +239,48 @@ pub fn find_employee_by_rfid(db: &DbState, rfid: &str) -> Result<Option<Employee
                 rfid_code: row.get(12)?,
                 is_active: row.get(13)?,
                 notes: row.get(14)?,
+                customer_id: row.get(15).ok().flatten(),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.next().map(|r| r.ok()).flatten())
+}
+
+/// RFID login for the login screen: resolve the tag to the employee's
+/// linked user account (must be active). No password by design — the card
+/// IS the credential.
+pub fn login_with_rfid(db: &DbState, rfid: &str) -> Result<Option<crate::models::User>, String> {
+    let conn = db.conn.lock().unwrap();
+    let user_id: Option<i64> = conn
+        .query_row(
+            "SELECT user_account_id FROM employees
+             WHERE is_active = 1 AND user_account_id IS NOT NULL
+               AND (rfid_code = ?1 OR qr_code = ?1)",
+            [rfid],
+            |r| r.get(0),
+        )
+        .ok();
+    let Some(uid) = user_id else {
+        return Ok(None);
+    };
+    let mut stmt = conn
+        .prepare(
+            "SELECT u.id, u.username, u.display_name, u.role_id, r.name, u.max_discount_percent, u.is_active
+             FROM users u LEFT JOIN roles r ON u.role_id = r.id
+             WHERE u.id = ?1 AND u.is_active = 1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt
+        .query_map([uid], |r| {
+            Ok(crate::models::User {
+                id: r.get(0)?,
+                username: r.get(1)?,
+                display_name: r.get(2)?,
+                role_id: r.get(3)?,
+                role_name: r.get(4)?,
+                max_discount_percent: r.get(5)?,
+                is_active: r.get(6)?,
+                permissions: vec![],
             })
         })
         .map_err(|e| e.to_string())?;

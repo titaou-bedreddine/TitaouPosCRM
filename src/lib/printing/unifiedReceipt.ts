@@ -129,3 +129,106 @@ export function buildUnifiedReceipt(c: UnifiedReceiptContext): BuiltReceipt {
     paperWidthMm,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Browser-free fallback (v0.5.20): on machines with NO Chrome/Edge the
+// raster pipeline cannot run. Thermal receipt printers are ESC/POS text
+// devices, so we can render the SAME receipt as a plain-text command stream
+// and spool it RAW — 100% native, silent, fast, no browser needed.
+// ---------------------------------------------------------------------------
+
+const ESC = '\x1B';
+const GS = '\x1D';
+
+function escposMoney(v: number): string {
+  return (Number.isFinite(v) ? v : 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+/** Two-column line: label left, value right-aligned at `width` columns. */
+function escposRow(label: string, value: string, width: number): string {
+  const space = Math.max(1, width - label.length - value.length);
+  return label + ' '.repeat(space) + value + '\n';
+}
+
+function escposCenter(text: string, width: number): string {
+  const pad = Math.max(0, Math.floor((width - text.length) / 2));
+  return ' '.repeat(pad) + text + '\n';
+}
+
+/** Build the complete ESC/POS payload for one receipt (cut included). */
+export function buildEscposReceipt(c: UnifiedReceiptContext, width: 32 | 42 | 48 = 42): string {
+  const s = c.settings;
+  const b = (key: string, dflt = true) => {
+    const v = s[key];
+    if (v === undefined || v === null || v === '') return dflt;
+    if (v === true || v === 'true' || v === '1') return true;
+    if (v === false || v === 'false' || v === '0') return false;
+    return dflt;
+  };
+  let out = '';
+  out += ESC + '@'; // init
+  out += ESC + 'a' + '\x01'; // center
+  out += ESC + '!\x30'; // double size + bold
+  out += (c.settings['shop_name_fr'] || c.settings['shop_name_ar'] || 'TITAOU POS') + '\n';
+  out += ESC + '!\x00'; // normal
+  if (b('receipt_show_address') && s['shop_address']) out += escposCenter(String(s['shop_address']).slice(0, width), width);
+  if (b('receipt_show_phone') && s['shop_phone']) out += escposCenter('Tel: ' + s['shop_phone'], width);
+  if (b('receipt_show_rc_nif') && (s['shop_rc'] || s['shop_nif'])) {
+    out += escposCenter(`RC: ${s['shop_rc'] || '-'} NIF: ${s['shop_nif'] || '-'}`.slice(0, width), width);
+  }
+  out += '-'.repeat(width) + '\n';
+  out += ESC + 'a' + '\x00'; // left
+  const info = `#${c.saleNumber}  ${c.saleDate || ''}`;
+  out += escposCenter(info.slice(0, width), width);
+  if (b('receipt_show_cashier') && c.cashierName) out += escposRow('Cashier', c.cashierName, width);
+  if (c.customerName) out += escposRow('Client', c.customerName.slice(0, width - 8), width);
+  out += escposRow('Payment', c.paymentMethod, width);
+  out += '-'.repeat(width) + '\n';
+  for (const i of c.items) {
+    const name = (i.isRefund ? '[R] ' : '') + i.name.slice(0, width - 1);
+    out += name + '\n';
+    out += escposRow(`  ${i.quantity} x ${escposMoney(i.unitPrice)}`, escposMoney(i.totalPrice), width);
+  }
+  out += '-'.repeat(width) + '\n';
+  if (b('receipt_show_address') === false) { /* noop */ }
+  if (c.discount > 0) {
+    out += escposRow('SUBTOTAL', escposMoney(c.subtotal), width);
+    out += escposRow('DISCOUNT', '-' + escposMoney(c.discount), width);
+  }
+  out += ESC + '!\x30'; // big total
+  out += escposRow('TOTAL', escposMoney(c.grandTotal), width);
+  out += ESC + '!\x00';
+  if (c.amountPaid !== undefined && c.amountPaid > 0) out += escposRow('PAID', escposMoney(c.amountPaid), width);
+  if (c.change) out += escposRow('CHANGE', escposMoney(c.change), width);
+  if (c.versementPaid !== undefined) out += escposRow('DEPOSIT', escposMoney(c.versementPaid), width);
+  if (c.versementRemaining !== undefined) out += escposRow('REMAINING', escposMoney(c.versementRemaining), width);
+  out += '-'.repeat(width) + '\n';
+  const footer = b('receipt_show_footer')
+    ? `${s['receipt_thank_you'] || 'MERCI POUR VOTRE CONFIANCE !'}`
+    : '';
+  if (footer) out += escposCenter(footer.slice(0, width), width);
+  if (b('receipt_show_footer') && s['receipt_footer']) out += escposCenter(String(s['receipt_footer']).slice(0, width), width);
+  out += '\n\n\n';
+  out += GS + 'V' + '\x42\x00'; // partial cut
+  return out;
+}
+
+/**
+ * ONE smart receipt print: native raster first; if the machine has no
+ * browser at all, fall back to ESC/POS RAW text printing automatically.
+ */
+export async function printReceiptSmart(c: UnifiedReceiptContext): Promise<{ ok: boolean; message: string }> {
+  const { printHtmlSilently } = await import('../utils/printer');
+  const built = buildUnifiedReceipt(c);
+  const r = await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
+  if (r.ok) return r;
+  const browserMissing = /no chrome|no edge|browser/i.test(r.message);
+  if (!browserMissing) return r;
+  const { invoke } = await import('@tauri-apps/api/core');
+  const esc = buildEscposReceipt(c, c.settings['receipt_paper_width'] === '58mm' ? 32 : 42);
+  await invoke('print_escpos_raw', {
+    payload: esc,
+    printer: c.settings['invoice_printer_name'] || null,
+  });
+  return { ok: true, message: 'Printed via ESC/POS (no browser on this machine)' };
+}

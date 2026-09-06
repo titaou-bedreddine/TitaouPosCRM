@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../lib/i18n';
   import QrImage from '../../lib/components/QrImage.svelte';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
@@ -242,8 +243,16 @@
         type="text"
         bind:value={searchQuery}
         placeholder="Search by supplier name, contact person, or phone..."
-        class="w-full ps-9 pe-3 py-2 bg-pos-card border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none focus:border-sky-500 shadow-xs"
+        class="w-full ps-9 pe-8 py-2 bg-pos-card border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none focus:border-sky-500 shadow-xs"
       />
+      {#if searchQuery}
+        <button
+          type="button"
+          on:click={() => (searchQuery = '')}
+          class="absolute end-2.5 top-2 text-pos-muted hover:text-rose-500 rounded-full p-0.5 cursor-pointer"
+          title="Clear"
+        ><X class="w-4 h-4" /></button>
+      {/if}
     </div>
   </div>
 
@@ -275,7 +284,15 @@
               <td class="p-3 text-pos-muted">{s.address || '—'}</td>
               <td class="p-3 text-end">
                 <div class="flex items-center justify-end gap-1">
-                  <button
+                                      <button
+                      type="button"
+                      on:click={(ev) => { ev.stopPropagation(); printSupplierCard(s); }}
+                      class="p-1.5 rounded-lg cursor-pointer transition text-pos-muted hover:text-sky-600"
+                      title={t('supplier_print_qr')}
+                    >
+                      <QrCode class="w-3.5 h-3.5" />
+                    </button>
+<button
                     type="button"
                     on:click={() => toggleSupplierPin(s)}
                     class="p-1.5 rounded-lg cursor-pointer transition {(s as any).pinned ? 'bg-amber-500 text-white' : 'text-pos-muted hover:text-amber-500'}"

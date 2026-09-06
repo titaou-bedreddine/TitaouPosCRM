@@ -4,12 +4,12 @@
   import { invoke } from '@tauri-apps/api/core';
   import { t, currentLocale } from '../../lib/i18n';
   import type { Category, Product, Supplier, Unit } from '../../lib/types';
-  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep } from '../../lib/stores/cart';
+  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities } from '../../lib/stores/cart';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildProfessionalReceiptHtml } from '../../lib/printing/professionalReceipt';
-  import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
+  import { buildUnifiedReceipt, printReceiptSmart } from '../../lib/printing/unifiedReceipt';
   import { normalizeBarcode } from '../../lib/utils/barcode';
   import { getLanguage } from '../../lib/i18n';
 
@@ -174,6 +174,137 @@
   let isLastReceiptOpen = false;
   // Banner for receipt-QR scan results (SALE: payload lookup).
   let qrSaleNotice = '';
+
+  // EMPLOYEE SCAN (RFID badge / EMP-QR tag): sets the employee's linked
+  // auto-customer as the cart customer so the sale lands on their history;
+  // debt then rides their salary. Shows remaining salary + a quick
+  // Absent/Today-Present control.
+  let employeeBanner: {
+    employeeId: number;
+    name: string;
+    code: string;
+    customerId: number;
+    remaining: number;
+  } | null = null;
+
+  async function refreshEmployeeBanner(employeeId: number, customerId: number, name: string, code: string) {
+    const today = new Date();
+    const monthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+    const [advances, absences, customers] = await Promise.all([
+      invoke<any[]>('list_employee_advances', { employeeId, month: null }).catch(() => []),
+      invoke<any[]>('list_employee_absences', { employeeId, month: null }).catch(() => []),
+      invoke<any[]>('list_customers').catch(() => []),
+    ]);
+    const advancesTotal = (advances || [])
+      .filter((a: any) => (a.date || '') >= monthStart)
+      .reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
+    const daysAbsent = (absences || [])
+      .filter((a: any) => (a[4] || '') >= monthStart)
+      .reduce((sum: number, a: any) => sum + (a[2] || 0), 0);
+    let debt = 0;
+    try {
+      debt = Math.max(0, (customers as any[]).find((c: any) => c.id === customerId)?.balance || 0);
+    } catch { debt = 0; }
+    void today;
+    return { employeeId, name, code, customerId, advances: advancesTotal, absences: daysAbsent, debt, remaining: 0 };
+  }
+
+  async function handleEmployeeScan(rawTag: string): Promise<boolean> {
+    const tag = rawTag.trim();
+    const up = tag.toUpperCase();
+    if (!up.startsWith('RFID-') && !up.startsWith('EMP-QR-') && !up.startsWith('EMP_')) {
+      return false;
+    }
+    try {
+      const emp = await invoke<any | null>('find_employee_by_rfid', { rfid: tag });
+      if (!emp) {
+        qrSaleNotice = '❌ ' + (t('emp_card_unknown') || 'Unknown card');
+        setTimeout(() => (qrSaleNotice = ''), 4000);
+        return true;
+      }
+      // Resolve the employee's linked customer (auto-created on save; the
+      // fallback creates it for employees added before this feature).
+      let customerId = emp.customer_id as number | null;
+      if (!customerId) {
+        const customers = await invoke<any[]>('list_customers');
+        const linked = (customers as any[]).find(
+          (c: any) => c.qr_code === `EMP-${emp.employee_code}` || c.name === emp.full_name
+        );
+        if (linked) {
+          customerId = linked.id;
+        } else {
+          customerId = await invoke<number>('save_customer', {
+            name: emp.full_name,
+            phone: emp.phone || null,
+            email: null, address: null, rc: null, nif: null, nis: null, ai: null,
+            initialDebt: 0, notes: `Auto-created for employee ${emp.employee_code}`,
+            customerId: null,
+          });
+        }
+      }
+      // Make the employee the cart customer.
+      if (customerId === null || customerId === undefined) {
+        qrSaleNotice = '❌ ' + (t('emp_card_unknown') || 'Unknown card');
+        setTimeout(() => (qrSaleNotice = ''), 4000);
+        return true;
+      }
+      $selectedCustomerId = customerId;
+      const today = new Date();
+      const monthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+      const [advances, absences, customers] = await Promise.all([
+        invoke<any[]>('list_employee_advances', { employeeId: emp.id, month: null }).catch(() => []),
+        invoke<any[]>('list_employee_absences', { employeeId: emp.id, month: null }).catch(() => []),
+        invoke<any[]>('list_customers').catch(() => []),
+      ]);
+      const advancesTotal = (advances || [])
+        .filter((a: any) => (a.date || '') >= monthStart)
+        .reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
+      const daysAbsent = (absences || [])
+        .filter((a: any) => (a[4] || '') >= monthStart)
+        .reduce((sum: number, a: any) => sum + (a[2] || 0), 0);
+      const debt = Math.max(0, (customers as any[]).find((c: any) => c.id === customerId)?.balance || 0);
+      const dailyRate = Math.round((emp.base_salary || 0) / 30);
+      const remaining = Math.max(
+        0,
+        (emp.base_salary || 0) - advancesTotal - daysAbsent * dailyRate - debt
+      );
+      employeeBanner = {
+        employeeId: emp.id,
+        name: emp.full_name,
+        code: emp.employee_code,
+        customerId,
+        remaining,
+      };
+    } catch (e: any) {
+      console.error('Employee scan failed:', e);
+      qrSaleNotice = '❌ ' + (typeof e === 'string' ? e : e?.message || 'Scan failed');
+      setTimeout(() => (qrSaleNotice = ''), 4000);
+    }
+    return true;
+  }
+
+  async function markEmployeeAbsent(days: number) {
+    if (!employeeBanner) return;
+    try {
+      await invoke('record_employee_absence', {
+        employeeId: employeeBanner.employeeId,
+        days,
+        reason: 'POS quick-absence / غياب سريع',
+        date: new Date().toISOString().split('T')[0],
+      });
+      qrSaleNotice = '✅ ' + (t('emp_absence_recorded') || 'Absence recorded');
+      setTimeout(() => (qrSaleNotice = ''), 4000);
+    } catch (e: any) {
+      console.error('absence record failed', e);
+      qrSaleNotice = '❌ ' + (typeof e === 'string' ? e : e?.message || 'Failed');
+      setTimeout(() => (qrSaleNotice = ''), 4000);
+    }
+    closeEmployeeBanner();
+  }
+
+  function closeEmployeeBanner() {
+    employeeBanner = null;
+  }
   // Purchase mode: the product waiting for its new supplier price.
   let purchasePriceTarget: Product | null = null;
   let unknownScannedBarcode = '';
@@ -330,6 +461,41 @@
       await handleSaleQrScan(code);
       searchQuery = '';
       return;
+    }
+
+    // Employee RFID / QR tags set the employee as the cart customer.
+    if (await handleEmployeeScan(code)) {
+      searchQuery = '';
+      return;
+    }
+
+    // ACLAS scale barcodes (price/weight embedded): resolve the scalable
+    // product and add it with the scanned WEIGHT.
+    if (code.length >= 13 && /^\d{13}$/.test(code)) {
+      try {
+        const scan = await invoke<any | null>('resolve_scale_scan', { code });
+        if (scan && scan.product_id) {
+          const prod = await invoke<Product[]>('search_products', {
+            query: String(scan.product_id),
+            categoryId: null,
+            searchType: 'all',
+          }).catch(() => [] as Product[]);
+          let product = prod.find((p) => p.id === scan.product_id);
+          if (!product) {
+            const all = await invoke<Product[]>('search_products', { query: '', categoryId: null, searchType: 'all' });
+            product = (all as Product[]).find((p) => p.id === scan.product_id);
+          }
+          if (product) {
+            const weight = scan.weight > 0 ? scan.weight : 1;
+            const item = { ...product, sale_price: scan.unit_price || product.sale_price };
+            addToCart(item, weight, $isRefundMode);
+            searchQuery = '';
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('scale scan lookup failed:', e);
+      }
     }
 
     try {
@@ -879,11 +1045,12 @@
             isCredit: true,
             copyLabel: 'COPIE CLIENT / CUSTOMER COPY',
           });
-          printHtmlSilently(
+          // Smart print: native raster → ESC/POS RAW fallback.
+          void printHtmlSilently(
             `<div style="page-break-after:always;break-after:page;">${storeCopy.html}</div>` + clientCopy.html,
             'Credit Receipts',
             { widthMm: storeCopy.paperWidthMm }
-          );
+          ).then((r) => { if (!r.ok) console.warn('credit receipts print:', r.message); });
         } else {
           const receipt = buildUnifiedReceipt({
             saleNumber, saleDate, cashierName: cashier,
@@ -901,11 +1068,24 @@
             versementPaid: mode === 'versement' ? paid : undefined,
             versementRemaining: mode === 'versement' ? reste : undefined,
           });
-          printHtmlSilently(
-            receipt.html,
-            receipt.title,
-            { widthMm: receipt.paperWidthMm }
-          );
+          // Smart print: native raster first; when the machine has NO
+          // browser at all, fall back to ESC/POS RAW text automatically.
+          printReceiptSmart({
+            saleNumber, saleDate, cashierName: cashier,
+            customerName: customerName || undefined,
+            items: receiptItems,
+            subtotal: $cartSubtotal,
+            discount: $globalDiscountAmount,
+            grandTotal: $cartGrandTotal,
+            amountPaid: mode === 'direct' ? $cartGrandTotal : paid,
+            change,
+            paymentMethod: effectiveMethod,
+            settings: appSettings,
+            qrDataUrl: receiptQrDataUrl,
+            copyLabel: mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
+            versementPaid: mode === 'versement' ? paid : undefined,
+            versementRemaining: mode === 'versement' ? reste : undefined,
+          }).then((r) => { if (!r.ok) console.warn('receipt print failed:', r.message); });
         }
       }
 
@@ -920,6 +1100,10 @@
           console.warn('Native drawer checkout trigger notice:', drawerErr);
         }
       }
+
+      // Learn the sold quantities so scalable products get smart
+      // weight-suggestion chips next time (1kg, 0.5, eggs 30…).
+      recordSoldQuantities($cartItems.map((i) => ({ product_id: i.product_id, quantity: i.quantity })));
 
       lastSaleSuccessNumber = saleNumber;
       clearCart();
@@ -1123,6 +1307,29 @@
     </div>
   {/if}
 
+  {#if employeeBanner}
+    <div class="bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-4 py-2.5 text-xs font-bold flex flex-wrap items-center justify-between gap-2 shadow-md animate-in slide-in-from-top-2">
+      <div class="flex items-center gap-2">
+        <span class="px-2 py-0.5 bg-white/25 rounded-lg font-black uppercase">{employeeBanner.code}</span>
+        <span>{employeeBanner.name}</span>
+        <span class="opacity-90">• {t('emp_remaining_salary')}: <strong class="font-mono">{employeeBanner.remaining.toLocaleString()} DZD</strong></span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <button
+          type="button"
+          on:click={() => markEmployeeAbsent(1)}
+          class="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-black text-[11px] rounded-lg cursor-pointer active:scale-95 transition"
+        >{t('emp_absent_today')}</button>
+        <button
+          type="button"
+          on:click={closeEmployeeBanner}
+          class="px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white font-black text-[11px] rounded-lg cursor-pointer active:scale-95 transition"
+        >{t('emp_present')}</button>
+        <button on:click={closeEmployeeBanner} class="underline cursor-pointer ms-1">{t('pos_dismiss')}</button>
+      </div>
+    </div>
+  {/if}
+
   <!-- Main POS Workspace -->
   <div class="flex-1 flex overflow-hidden p-2.5 gap-2.5">
     <!-- LEFT PANEL: Search, Category Pills, Catalog Grid -->
@@ -1137,6 +1344,7 @@
             autofocusSeconds={autofocusTimerSeconds}
             onSaleQrScan={handleSaleQrScan}
             onPurchaseQrScan={(payload) => onOpenPurchase?.(payload)}
+            onEmployeeScan={handleEmployeeScan}
           />
         </div>
 

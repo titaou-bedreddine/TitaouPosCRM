@@ -16,6 +16,8 @@
   export let onSaleQrScan: ((payload: string) => Promise<boolean>) | null = null;
   // Purchase QR scan (`PUR:<invoice>`): jumps to the purchases page.
   export let onPurchaseQrScan: ((payload: string) => void) | null = null;
+  // Employee RFID/QR scan: sets the employee as the cart customer.
+  export let onEmployeeScan: ((tag: string) => Promise<boolean>) | null = null;
   // POS rule: when > 0, the search bar auto-refocuses after N idle seconds.
   export let autofocusSeconds = 0;
 
@@ -91,40 +93,20 @@
         query = '';
         return;
       }
+      // Employee tags resolve to the cart customer (RFID badges / EMP-QR).
+      if (onEmployeeScan && (q.startsWith('RFID-') || q.startsWith('EMP-QR-') || q.startsWith('EMP_'))) {
+        const consumed = await onEmployeeScan(query.trim());
+        if (consumed) {
+          query = '';
+          return;
+        }
+      }
 
       // Auto-normalize if scanning numeric barcode with AZERTY/Arabic keyboard active
       if (searchType === 'barcode' || /^[&é"'\(-è_çà0-9١-٩]+$/.test(query.trim())) {
         query = normalizeBarcode(query);
       }
 
-      // Check if scanned an employee QR code (e.g. EMP-QR-01)
-      if (query.trim().startsWith('EMP-QR-') || query.trim().startsWith('EMP_QR_')) {
-        try {
-          const user = await invoke<User | null>('get_user_by_qr', { qrCode: query.trim() });
-          if (user) {
-            $currentUser = user;
-            query = '';
-            return;
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      }
-
-      // RFID tag scan: RFID- prefix or an unknown-format tag resolves to an
-      // employee via their rfid_code field.
-      if (query.trim().startsWith('RFID-')) {
-        try {
-          const emp = await invoke<any | null>('find_employee_by_rfid', { rfid: query.trim() });
-          if (emp) {
-            alert(`👤 ${emp.full_name} (${emp.employee_code})`);
-            query = '';
-            return;
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      }
       onSearch();
     }
   }

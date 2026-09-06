@@ -20,6 +20,52 @@
   // (4s each) means login can never succeed, so offer a one-click Reload.
   let passwordInputEl: HTMLInputElement;
 
+  // RFID badge / employee QR scan on the LOGIN screen: the card IS the
+  // credential — a valid tag logs the linked user in automatically.
+  let rfidBuffer = '';
+  let rfidLastKey = 0;
+  let rfidFlash = '';
+
+  async function tryRfidLogin(raw: string): Promise<boolean> {
+    const tag = raw.trim();
+    if (!tag) return false;
+    const isTag = tag.startsWith('RFID-') || tag.startsWith('EMP-QR-') || tag.startsWith('EMP_');
+    if (!isTag) return false;
+    try {
+      const user = await invoke<User | null>('login_with_rfid', { rfid: tag });
+      if (user) {
+        rfidFlash = '';
+        currentUser.set(user);
+        $currentUser = user;
+        return true;
+      }
+      rfidFlash = '❌ Unknown card / بطاقة غير معروفة';
+      setTimeout(() => (rfidFlash = ''), 3000);
+    } catch (e) {
+      console.error('RFID login failed:', e);
+    }
+    return false;
+  }
+
+  function handleGlobalScan(e: KeyboardEvent) {
+    // Ignore keystrokes while the password box is being used — the watcher
+    // only captures fast scanner bursts when no field has focus.
+    const active = document.activeElement as HTMLElement | null;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+    const now = Date.now();
+    if (now - rfidLastKey > 100) rfidBuffer = '';
+    rfidLastKey = now;
+    if (e.key === 'Enter') {
+      const candidate = rfidBuffer;
+      rfidBuffer = '';
+      if (candidate.length >= 4) {
+        void tryRfidLogin(candidate);
+      }
+      return;
+    }
+    if (e.key.length === 1) rfidBuffer += e.key;
+  }
+
   onMount(() => {
     password = '';
     // Cursor starts in the password box so the user can type straight away.
@@ -38,7 +84,11 @@
         if (missedPings >= 2) ipcDead = true;
       }
     }, 2000);
-    return () => clearInterval(watchdog);
+    window.addEventListener('keydown', handleGlobalScan);
+    return () => {
+      clearInterval(watchdog);
+      window.removeEventListener('keydown', handleGlobalScan);
+    };
   });
 
   onMount(async () => {
@@ -123,6 +173,11 @@
         {errorMsg}
       </div>
     {/if}
+
+      {#if rfidFlash}
+        <p class="text-[11px] font-bold text-rose-400 text-center">{rfidFlash}</p>
+      {/if}
+      <p class="text-[10px] text-slate-500 text-center">{t('login_rfid_hint')}</p>
 
     <div class="space-y-4">
       <!-- User Selection Dropdown -->

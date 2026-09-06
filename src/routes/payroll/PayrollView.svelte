@@ -5,9 +5,9 @@
   import { t } from '../../lib/i18n';
   import {
     Plus, Users, Award, DollarSign, Calendar, AlertTriangle,
-    Check, X, Printer, UserCheck, CreditCard, Clock
+    Check, X, Printer, UserCheck, CreditCard, Clock, QrCode
   } from 'lucide-svelte';
-  import { printHtmlSilently } from '../../lib/utils/printer';
+  import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { Pencil, Trash2 } from 'lucide-svelte';
   import { activeSession } from '../../lib/stores/session';
   import { currentUser } from '../../lib/stores/auth';
@@ -277,11 +277,32 @@
     }, 4500);
   }
 
+  // Deleting an employee is destructive: type DELETE + admin password.
+  let delConfirmText = '';
+  let delAdminPassword = '';
+  let delError = '';
+
   async function handleDeleteEmployee() {
     if (!employeeToDelete) return;
+    if (delConfirmText.trim().toUpperCase() !== 'DELETE') {
+      delError = t('delete_type_delete');
+      return;
+    }
+    if (!delAdminPassword.trim()) {
+      delError = t('admin_password_required');
+      return;
+    }
     try {
+      const ok = await invoke<boolean>('verify_admin_password', { password: delAdminPassword });
+      if (!ok) {
+        delError = t('admin_password_wrong');
+        return;
+      }
       await invoke('delete_employee', { employeeId: employeeToDelete.id });
       employeeToDelete = null;
+      delConfirmText = '';
+      delAdminPassword = '';
+      delError = '';
       await loadEmployees();
     } catch (e: any) {
       showError('Failed to delete employee: ' + (e.message || e));
@@ -366,6 +387,20 @@
     }
     selectedEmpForAbsence = null;
     absenceDays = 1;
+  }
+
+  // Employee QR card: wallet-size card with the employee QR — scanning it
+  // on the POS sets this employee as the cart customer.
+  async function printEmployeeQrCard(emp: Employee) {
+    const qr = await entityQrDataUrl(emp.qr_code || `EMP-${emp.employee_code}`, 300).catch(() => '');
+    const html = `<div style="width:60mm;font-family:monospace;font-size:10px;text-align:center;padding:3mm;">
+      <p style="font-size:13px;font-weight:900;margin:0;">${emp.full_name}</p>
+      <p style="font-size:9px;margin:2px 0;">${emp.employee_code} • ${emp.job_title || ''}</p>
+      <img src="${qr}" alt="QR" style="width:34mm;height:34mm;margin:4mm auto;" />
+      <p style="font-size:8px;">TitaouPOS • ${new Date().toLocaleDateString('fr-FR')}</p>
+    </div>`;
+    const r = await printHtmlSilently(html, 'Employee Card ' + emp.employee_code, { widthMm: 60 });
+    if (!r.ok) showError('Print failed: ' + r.message);
   }
 
   async function printPayrollSlip(emp: Employee) {
@@ -489,12 +524,22 @@
 
   <!-- Employee search: name, code, job title, RFID tag -->
   <div class="flex items-center gap-2">
-    <input
-      type="text"
-      bind:value={employeeSearch}
-      placeholder={t('emp_search')}
-      class="flex-1 max-w-md px-4 py-2.5 bg-pos-card border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none focus:ring-2 focus:ring-sky-500"
-    />
+    <div class="relative flex-1 max-w-md">
+      <input
+        type="text"
+        bind:value={employeeSearch}
+        placeholder={t('emp_search')}
+        class="w-full pe-8 px-4 py-2.5 bg-pos-card border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none focus:ring-2 focus:ring-sky-500"
+      />
+      {#if employeeSearch}
+        <button
+          type="button"
+          on:click={() => (employeeSearch = '')}
+          class="absolute end-2 top-2.5 text-pos-muted hover:text-rose-500 rounded-full p-0.5 cursor-pointer"
+          title="Clear"
+        ><X class="w-4 h-4" /></button>
+      {/if}
+    </div>
     {#if employeeSearch}
       <span class="text-[10px] font-bold text-pos-muted">
         {filteredEmployees.length} / {employees.length}
@@ -535,6 +580,14 @@
               title="Delete employee (حذف)"
             >
               <Trash2 class="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              on:click={() => printEmployeeQrCard(emp)}
+              class="p-1.5 bg-white/95 dark:bg-slate-800/95 text-pos-muted hover:text-sky-600 rounded-lg shadow-xs cursor-pointer"
+              title={t('emp_print_qr')}
+            >
+              <QrCode class="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
@@ -718,9 +771,23 @@
         <span>{t('pay_delete_employee')}</span>
       </h3>
       <p class="text-xs text-pos-muted">
-        Delete <strong class="text-pos-text">{employeeToDelete.full_name}</strong>?
-        Their advances and payroll history stay in the records.
+        {t('pay_delete_confirm_hint')} <strong class="text-pos-text">{employeeToDelete.full_name}</strong>?
       </p>
+      <input
+        type="text"
+        bind:value={delConfirmText}
+        placeholder="DELETE"
+        class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-rose-300 dark:border-rose-800 rounded-xl text-xs font-mono font-black text-rose-600 outline-none"
+      />
+      <input
+        type="password"
+        bind:value={delAdminPassword}
+        placeholder={t('admin_password')}
+        class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-mono text-pos-text outline-none"
+      />
+      {#if delError}
+        <p class="text-[11px] font-bold text-rose-600">{delError}</p>
+      {/if}
       <div class="flex justify-end gap-2 pt-2 border-t border-pos-border">
         <button on:click={() => (employeeToDelete = null)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">Cancel</button>
         <button on:click={handleDeleteEmployee} class="px-4 py-2 bg-rose-600 text-white text-xs font-black rounded-xl cursor-pointer shadow-md">Confirm Delete</button>

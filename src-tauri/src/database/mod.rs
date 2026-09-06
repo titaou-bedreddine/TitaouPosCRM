@@ -57,6 +57,9 @@ impl DbState {
         let _ = conn.execute("ALTER TABLE suppliers ADD COLUMN ai TEXT;", []);
         let _ = conn.execute("ALTER TABLE suppliers ADD COLUMN contact_person TEXT;", []);
         let _ = conn.execute("ALTER TABLE employees ADD COLUMN rfid_code TEXT;", []);
+        // Employee ↔ customer link: every employee is auto-created as a
+        // customer so their POS purchases (cash or debt) land in a history.
+        let _ = conn.execute("ALTER TABLE employees ADD COLUMN customer_id INTEGER;", []);
         let _ = conn.execute("ALTER TABLE users ADD COLUMN pinned INTEGER DEFAULT 0;", []);
         conn.execute(
             "CREATE TABLE IF NOT EXISTS employee_absences (
