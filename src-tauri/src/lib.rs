@@ -10,9 +10,37 @@ pub mod services;
 use database::DbState;
 use tauri::Manager;
 
+/// Wrap the generated Tauri command handler with LAN client forwarding:
+/// whitelisted business commands are executed on the shop server while this
+/// PC is a connected client; everything else runs locally. The wrapper is a
+/// named function so the `generate_handler!` closure gets its expected type.
+fn lan_wrap_invoke_handler(
+    generated: impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+        let cmd = invoke.message.command().to_string();
+        if network::should_forward_ipc(&cmd) {
+            let payload = match invoke.message.payload() {
+                tauri::ipc::InvokeBody::Json(v) => {
+                    serde_json::to_string(v).unwrap_or_else(|_| "null".to_string())
+                }
+                tauri::ipc::InvokeBody::Raw(_) => "null".to_string(),
+            };
+            let resolver = invoke.resolver;
+            resolver.respond_async(async move {
+                match network::forward_ipc(cmd, payload).await {
+                    Ok(v) => Ok(tauri::ipc::InvokeResponseBody::Json(v.to_string())),
+                    Err(e) => Err(tauri::ipc::InvokeError::from(e)),
+                }
+            });
+            return true;
+        }
+        generated(invoke)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let db_state = DbState::new().expect("Failed to initialize database");
+pub fn run() {    let db_state = DbState::new().expect("Failed to initialize database");
 
     // Startup backup (only when the setting is ON; once per day).
     crate::services::settings_service::run_startup_backup(&db_state);
@@ -41,7 +69,7 @@ pub fn run() {
             network::init(app.handle().clone(), DbState::new().expect("network db"));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(lan_wrap_invoke_handler(tauri::generate_handler![
             commands::login,
             commands::get_active_users,
             commands::change_user_password,
@@ -179,7 +207,7 @@ pub fn run() {
             commands::network_cmds::network_logout,
             commands::network_cmds::network_open_firewall,
             commands::network_cmds::network_forward,
-        ])
+        ]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

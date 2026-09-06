@@ -1066,6 +1066,208 @@ pub fn cached_users() -> Option<Value> {
 }
 
 // ---------------------------------------------------------------------------
+// Client-mode invoke forwarding (Rust-side IPC interception)
+// ---------------------------------------------------------------------------
+
+/// True when the given command should be forwarded to the shop server:
+/// it is on the whitelisted business surface AND this PC is a connected
+/// client. Everything else (hardware, backups, licensing, network commands,
+/// plugin commands) runs locally by design.
+pub fn should_forward_ipc(command: &str) -> bool {
+    let Some(rt) = net_opt() else { return false };
+    if !invoke_registry::KNOWN_COMMANDS.contains(&command) {
+        return false;
+    }
+    matches!(*rt.mode.lock().unwrap(), Mode::Connected)
+}
+
+/// Execute one whitelisted command on the shop server. Called by the
+/// invoke-handler wrapper in lib.rs (and by the `network_forward` command).
+pub async fn forward_ipc(command: String, payload_json: String) -> Result<Value, String> {
+    let status = status_snapshot();
+    let connected = status.get("mode").and_then(|m| m.as_str()) == Some("connected");
+    let base = status
+        .get("server_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    if !connected || base.is_none() {
+        if command == "get_active_users" {
+            // Offline login screen: serve the last known user list.
+            if let Some(cached) = cached_users() {
+                return Ok(cached);
+            }
+            return Err("No TitaouPOS server was found on this network.".into());
+        }
+        if command == "login" || command == "login_with_rfid" {
+            return Err(
+                "Cannot reach the shop server. Wait for reconnection or switch this PC's network role."
+                    .into(),
+            );
+        }
+        return Err("Not connected to the TitaouPOS shop server. Shop data lives on the server PC — check the network status indicator.".into());
+    }
+    let base = base.unwrap();
+    let args: Value = serde_json::from_str(&payload_json).unwrap_or(Value::Null);
+    forward_command_core(&base, &command, args).await
+}
+
+/// The full client-side forwarding pipeline: settings split (per-PC vs
+/// shop-wide), login token minting, and the generic invoke envelope.
+async fn forward_command_core(
+    base: &str,
+    command: &str,
+    args: Value,
+) -> Result<Value, String> {
+    match command {
+        "get_setting" => {
+            let key = args
+                .get("key")
+                .and_then(|k| k.as_str())
+                .unwrap_or("")
+                .to_string();
+            if is_local_only_setting(&key) {
+                let all = net()
+                    .db
+                    .get()
+                    .map(|db| settings_service::get_all_settings(db).unwrap_or_default())
+                    .unwrap_or_default();
+                return Ok(all
+                    .get(&key)
+                    .cloned()
+                    .filter(|v| !v.is_empty())
+                    .map(Value::String)
+                    .unwrap_or(Value::Null));
+            }
+        }
+        "set_setting" => {
+            let key = args.get("key").and_then(|k| k.as_str()).unwrap_or("").to_string();
+            let value = args
+                .get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if is_local_only_setting(&key) {
+                if let Some(db) = net().db.get() {
+                    settings_service::set_setting(db, &key, &value)?;
+                }
+                return Ok(Value::Null);
+            }
+        }
+        "set_multiple_settings" => {
+            if let Some(settings) = args.get("settings").and_then(|s| s.as_object()) {
+                let mut local = serde_json::Map::new();
+                let mut remote = serde_json::Map::new();
+                for (k, v) in settings {
+                    if is_local_only_setting(k) {
+                        local.insert(k.clone(), v.clone());
+                    } else {
+                        remote.insert(k.clone(), v.clone());
+                    }
+                }
+                if !local.is_empty() {
+                    if let Some(db) = net().db.get() {
+                        let map: std::collections::HashMap<String, String> =
+                            serde_json::from_value(Value::Object(local)).unwrap_or_default();
+                        settings_service::set_multiple_settings(db, map)?;
+                    }
+                }
+                if remote.is_empty() {
+                    return Ok(Value::Null);
+                }
+                return forward_envelope(base, command, json!({ "settings": remote }))
+                    .await
+                    .map(|(r, _)| r);
+            }
+        }
+        "login" => {
+            let device_tok =
+                device_token_pub().ok_or("This terminal is not registered on the shop server")?;
+            let username = args
+                .get("username")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let password = args
+                .get("password")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let base_owned = base.to_string();
+            let (result, user_token) =
+                tokio::task::spawn_blocking(move || {
+                    client::login_on_server(&base_owned, &device_tok, &username, &password)
+                })
+                .await
+                .map_err(|e| e.to_string())?
+                .map(|(user, tok)| (user, Some(tok)))?;
+            if let Some(t) = user_token {
+                store_user_token(&t);
+            }
+            return Ok(result);
+        }
+        _ => {}
+    }
+
+    let (result, auth_token) = forward_envelope(base, command, args).await?;
+    if let Some(t) = auth_token {
+        store_user_token(&t);
+    }
+    // Cache the user list for the offline login screen.
+    if command == "get_active_users" {
+        cache_users(&result);
+    }
+    Ok(result)
+}
+
+/// POST /api/v1/invoke/{command}; returns (result, optional auth_token for
+/// login-style commands).
+async fn forward_envelope(
+    base: &str,
+    command: &str,
+    args: Value,
+) -> Result<(Value, Option<String>), String> {
+    // Prefer the user token (permission identity); fall back to the device
+    // token for the pre-login surface.
+    let token =
+        active_token_pub().ok_or("This terminal is not registered on the shop server")?;
+    let url = format!("{}/api/v1/invoke/{}", base.trim_end_matches('/'), command);
+    static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+    let client = HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(3))
+            .build()
+            .expect("forward http client")
+    });
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&args)
+        .send()
+        .await
+        .map_err(|_| {
+            "Cannot reach the TitaouPOS shop server. Shop data lives on the server PC — check the LAN connection."
+                .to_string()
+        })?;
+    let status = resp.status();
+    let v: Value = resp.json().await.map_err(|e| format!("bad response: {}", e))?;
+    if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
+        let auth_token = v
+            .get("auth_token")
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string());
+        Ok((v.get("result").cloned().unwrap_or(Value::Null), auth_token))
+    } else {
+        Err(v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("server rejected '{}' (HTTP {})", command, status)))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Config-change wake
 // ---------------------------------------------------------------------------
 

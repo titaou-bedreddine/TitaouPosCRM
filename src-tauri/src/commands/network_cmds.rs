@@ -328,18 +328,6 @@ pub fn network_open_firewall() -> Result<String, String> {
 // network_forward — the client-side interception point
 // ---------------------------------------------------------------------------
 
-static HTTP_ASYNC: OnceLock<reqwest::Client> = OnceLock::new();
-
-fn http_async() -> &'static reqwest::Client {
-    HTTP_ASYNC.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .connect_timeout(std::time::Duration::from_secs(3))
-            .build()
-            .expect("forward http client")
-    })
-}
-
 fn server_base() -> Option<String> {
     network::status_snapshot()
         .get("server_url")
@@ -359,175 +347,15 @@ fn normalize(addr: &str) -> String {
     network::normalize_base_pub(addr)
 }
 
-/// The single interception point for client-mode operation: the frontend
-/// invoke patch reroutes whitelisted business commands here when this PC is
-/// a connected client. Local-only commands never arrive (not in the JS list,
-/// never in the server registry).
+/// Manual/debug entry into client forwarding. The AUTOMATIC interception
+/// happens in lib.rs's invoke_handler wrapper (Rust IPC layer) — the
+/// frontend never calls this itself.
 #[tauri::command]
 pub async fn network_forward(
-    db: State<'_, DbState>,
+    _db: State<'_, DbState>,
     command: String,
     args: Option<Value>,
 ) -> Result<Value, String> {
-    let status = network::status_snapshot();
-    let connected = status.get("mode").and_then(|m| m.as_str()) == Some("connected");
-    let base = server_base();
-
-    // ---- offline / standalone guards ------------------------------------
-    if !connected {
-        if command == "get_active_users" {
-            // Offline login screen: serve the last known user list.
-            if let Some(cached) = network::cached_users() {
-                return Ok(cached);
-            }
-            return Err("No TitaouPOS server was found on this network.".into());
-        }
-        if command == "login" || command == "login_with_rfid" {
-            return Err(
-                "Cannot reach the shop server. Wait for reconnection or switch this PC's network role."
-                    .into(),
-            );
-        }
-        return Err("Not connected to the TitaouPOS shop server. Shop data lives on the server PC — check the network status indicator.".into());
-    }
-    let Some(base) = base else {
-        return Err("Not connected to the TitaouPOS shop server.".into());
-    };
-
-    // ---- settings split (per-PC vs shop-wide) ----------------------------
-    match command.as_str() {
-        "get_setting" => {
-            let key = args
-                .as_ref()
-                .and_then(|a| a.get("key").and_then(|k| k.as_str()))
-                .unwrap_or("")
-                .to_string();
-            if network::is_local_only_setting(&key) {
-                let all = crate::services::settings_service::get_all_settings(&db)
-                    .unwrap_or_default();
-                return Ok(all
-                    .get(&key)
-                    .cloned()
-                    .filter(|v| !v.is_empty())
-                    .map(Value::String)
-                    .unwrap_or(Value::Null));
-            }
-        }
-        "set_setting" => {
-            let (key, value) = match args.as_ref() {
-                Some(a) => (
-                    a.get("key").and_then(|k| k.as_str()).unwrap_or("").to_string(),
-                    a.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                ),
-                None => (String::new(), String::new()),
-            };
-            if network::is_local_only_setting(&key) {
-                crate::services::settings_service::set_setting(&db, &key, &value)?;
-                return Ok(Value::Null);
-            }
-        }
-        "set_multiple_settings" => {
-            if let Some(a) = args.as_ref() {
-                if let Some(settings) = a.get("settings").and_then(|s| s.as_object()) {
-                    let mut local = serde_json::Map::new();
-                    let mut remote = serde_json::Map::new();
-                    for (k, v) in settings {
-                        if network::is_local_only_setting(k) {
-                            local.insert(k.clone(), v.clone());
-                        } else {
-                            remote.insert(k.clone(), v.clone());
-                        }
-                    }
-                    if !local.is_empty() {
-                        let map: std::collections::HashMap<String, String> =
-                            serde_json::from_value(Value::Object(local)).unwrap_or_default();
-                        crate::services::settings_service::set_multiple_settings(&db, map)?;
-                    }
-                    if remote.is_empty() {
-                        return Ok(Value::Null);
-                    }
-                    // continue forwarding the remote part below
-                    return forward_envelope(&base, &command, json!({ "settings": remote }))
-                        .await
-                        .map(|(r, _)| r);
-                }
-            }
-        }
-        _ => {}
-    }
-
-    // ---- auth command that must also mint a local user token -------------
-    if command == "login" {
-        let device_tok = network::device_token_pub()
-            .ok_or("This terminal is not registered on the shop server")?;
-        let (u, p) = match args.as_ref() {
-            Some(a) => (
-                a.get("username").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                a.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            ),
-            None => (String::new(), String::new()),
-        };
-        let dt = device_tok.clone();
-        let (result, user_token) =
-            tokio::task::spawn_blocking(move || client::login_on_server(&base, &dt, &u, &p))
-                .await
-                .map_err(|e| e.to_string())?
-                .map(|(user, tok)| (user, Some(tok)))?;
-        if let Some(t) = user_token {
-            network::store_user_token(&t);
-        }
-        return Ok(result);
-    }
-
-    // ---- generic forwarded command ----------------------------------------
-    // (login_with_rfid rides the generic path: the server mints a user token
-    // and returns it in the envelope's auth_token field.)
-    let args = args.unwrap_or(Value::Null);
-    let (result, auth_token) = forward_envelope(&base, &command, args).await?;
-    if let Some(t) = auth_token {
-        network::store_user_token(&t);
-    }
-    // Cache the user list for the offline login screen.
-    if command == "get_active_users" {
-        network::cache_users(&result);
-    }
-    Ok(result)
-}
-
-/// POST /api/v1/invoke/{command}; returns (result, optional auth_token for
-/// login-style commands).
-async fn forward_envelope(
-    base: &str,
-    command: &str,
-    args: Value,
-) -> Result<(Value, Option<String>), String> {
-    // Prefer the user token (permission identity); fall back to the device
-    // token for the pre-login surface.
-    let token = network::active_token_pub().ok_or("This terminal is not registered on the shop server")?;
-    let url = format!("{}/api/v1/invoke/{}", base.trim_end_matches('/'), command);
-    let resp = http_async()
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", token))
-        .json(&args)
-        .send()
-        .await
-        .map_err(|_| {
-            "Cannot reach the TitaouPOS shop server. Shop data lives on the server PC — check the LAN connection."
-                .to_string()
-        })?;
-    let status = resp.status();
-    let v: Value = resp.json().await.map_err(|e| format!("bad response: {}", e))?;
-    if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
-        let auth_token = v
-            .get("auth_token")
-            .and_then(|t| t.as_str())
-            .map(|s| s.to_string());
-        Ok((v.get("result").cloned().unwrap_or(Value::Null), auth_token))
-    } else {
-        Err(v
-            .get("error")
-            .and_then(|e| e.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("server rejected '{}' (HTTP {})", command, status)))
-    }
+    let payload = serde_json::to_string(&args.unwrap_or(Value::Null)).unwrap_or_else(|_| "null".to_string());
+    network::forward_ipc(command, payload).await
 }
