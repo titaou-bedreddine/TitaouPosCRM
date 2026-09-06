@@ -2133,7 +2133,9 @@
             <span class="text-[10px] font-black text-pos-muted uppercase tracking-wider block text-center">Live Preview — current preset</span>
             <div class="bg-white dark:bg-slate-900 border border-pos-border rounded-xl p-4 flex justify-center overflow-hidden">
               {#if builtinLabelPreviews[settings.label_preset_id as LabelPresetId]}
-                <div style="width: calc(40mm * 2.2); height: calc(20mm * 2.2); position: relative; overflow: hidden;">
+                <!-- dir="ltr": label geometry is absolute mm — RTL mirroring
+                     shifted and clipped the preview (v0.5.18 fix). -->
+                <div dir="ltr" style="width: calc(40mm * 2.2); height: calc(20mm * 2.2); position: relative; overflow: hidden;">
                   <div style="width: 40mm; height: 20mm; transform: scale(2.2); transform-origin: top left;">
                     {@html builtinLabelPreviews[settings.label_preset_id as LabelPresetId]}
                   </div>
@@ -2186,14 +2188,14 @@
           {#each LABEL_PRESET_IDS as pid}
             <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border space-y-3">
               <div class="flex items-center justify-between gap-2">
-                <span class="text-xs font-black text-pos-text">{LABEL_PRESETS[pid].name}</span>
-                <span class="text-[9px] font-mono bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">
+                <span dir="ltr" class="text-xs font-black text-pos-text">{LABEL_PRESETS[pid].name}</span>
+                <span dir="ltr" class="text-[9px] font-mono bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">
                   {LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm} mm
                 </span>
               </div>
               <div class="bg-slate-100 dark:bg-slate-800 rounded-xl p-2 flex justify-center overflow-hidden">
                 {#if builtinLabelPreviews[pid]}
-                  <div style="width: calc(40mm * 2.2); height: calc(20mm * 2.2); position: relative; overflow: hidden;">
+                  <div dir="ltr" style="width: calc(40mm * 2.2); height: calc(20mm * 2.2); position: relative; overflow: hidden;">
                     <div style="width: 40mm; height: 20mm; transform: scale(2.2); transform-origin: top left;">
                       {@html builtinLabelPreviews[pid]}
                     </div>
@@ -2206,7 +2208,7 @@
                 class="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition"
               >
                 <Printer class="w-3.5 h-3.5" />
-                <span>Test Print 5× ({LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm}mm)</span>
+                <span>Test Print 5× (<span dir="ltr">{LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm}mm</span>)</span>
               </button>
             </div>
           {/each}
@@ -2425,12 +2427,20 @@
               <p class="text-pos-muted text-[11px] mt-2">Uptime: {Math.floor((serverStatus?.uptime_secs || 0) / 60)} min • Endpoints: /api/status, /api/handshake</p>
             </div>
 
-            <!-- REAL QR: the actual LAN IP + port for device pairing -->
+            <!-- REAL QR: the actual LAN URL — scanning opens the landing
+                 page with one tap (the QR content IS a URL, not text). -->
             <div class="flex items-center justify-center p-4 bg-white rounded-xl border border-pos-border">
               {#if serverQrDataUrl}
-                <div class="text-center space-y-1">
+                <div class="text-center space-y-2">
                   <img src={serverQrDataUrl} alt="Pairing QR" class="w-40 h-40 mx-auto rounded-lg border border-pos-border" />
-                  <span class="text-[10px] text-slate-500 font-bold">Scan to pair a device on this network</span>
+                  <p class="text-[10px] text-slate-500 font-bold">Scan with your phone camera — tap the link that appears to open it automatically.</p>
+                  <button
+                    type="button"
+                    on:click={() => openUrlInBrowser(`http://${serverStatus?.lan_ips?.[0]}:${serverStatus?.port}/`)}
+                    class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-black rounded-lg cursor-pointer"
+                  >
+                    Open in Browser (فتح المتصفح)
+                  </button>
                 </div>
               {:else}
                 <div class="text-center space-y-1 p-4">

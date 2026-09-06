@@ -41,11 +41,14 @@ pub struct LabelPrintDiagnostics {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LabelPrintRequest {
     /// Complete HTML document for ONE label (repeated for every copy).
     pub html: String,
     pub printer: Option<String>,
+    #[serde(alias = "width_mm")]
     pub width_mm: f64,
+    #[serde(alias = "height_mm")]
     pub height_mm: f64,
     pub copies: u32,
     pub dpi: Option<u32>,
@@ -122,13 +125,14 @@ pub fn print_label_job(req: &LabelPrintRequest) -> LabelPrintResult {    let cop
 /// Silent thermal-RECEIPT printing with a DYNAMIC page height.
 ///
 /// Receipts are continuous-roll: the page must be exactly as tall as the
-/// rendered ticket, not a fixed A4/80mm form (which either clips long
-/// tickets or pads short ones and feeds blank paper). This variant:
-///   1. Rasterizes the full HTML at a low reference height first to MEASURE
-///      the ticket's natural content height in CSS px,
-///   2. re-rasterizes at the exact page height that content needs,
-///   3. GDI-prints it on a DEVMODE locked to width × measured-height mm —
-///      silent (direct DC), no Windows print dialog.
+/// rendered ticket. Single-pass pipeline (v0.5.18 — the previous PDF-based
+/// measurement step failed silently on machines where headless Edge is
+/// broken):
+///   1. ONE headless screenshot at the receipt width and a generous height,
+///   2. decode the PNG and TRIM the trailing all-white rows to the natural
+///      content height,
+///   3. GDI-print the cropped bitmap on a DEVMODE locked to
+///      width × content-height mm — silent, no dialogs, no PDF.
 pub fn print_receipt_job(
     html: &str,
     width_mm: f64,
@@ -137,81 +141,117 @@ pub fn print_receipt_job(
     job_title: &str,
 ) -> LabelPrintResult {
     let dpi = dpi.clamp(96, 600);
-    let scale = dpi as f64 / 96.0;
+    const MAX_HEIGHT_MM: f64 = 300.0;
 
-    // Pass 1: measure natural content height at the CSS-px scale.
-    let css_w = ((width_mm * 96.0) / 25.4).round() as i32;
-    let measured_css_h = match rasterize_html_measure(html, css_w) {
-        Ok(h) => h,
-        Err(e) => {
-            return LabelPrintResult {
-                ok: false,
-                message: format!("Receipt measurement failed: {}", e),
-                diagnostics: LabelPrintDiagnostics {
-                    printer: printer.unwrap_or("Default printer").to_string(),
-                    media_width_mm: width_mm,
-                    media_height_mm: 0.0,
-                    copies: 1,
-                    print_width_mm: width_mm,
-                    print_height_mm: 0.0,
-                    page_count: 0,
-                    dpi,
-                    raster_width_px: 0,
-                    raster_height_px: 0,
-                    mode: "measure-failed".to_string(),
-                },
-            }
-        }
-    };
-
-    // Pass 2: rasterize at the exact measured height (device px).
-    let css_h = measured_css_h.max(1);
     let px_w = ((width_mm * dpi as f64) / 25.4).round() as i32;
-    let px_h = (css_h as f64 * scale).round() as i32;
-    let height_mm = (css_h as f64 * 25.4 / 96.0).round().max(10.0);
+    let px_h = ((MAX_HEIGHT_MM * dpi as f64) / 25.4).round() as i32;
 
-    let diag = LabelPrintDiagnostics {
+    let diag_base = LabelPrintDiagnostics {
         printer: printer.unwrap_or("Default printer").to_string(),
         media_width_mm: width_mm,
-        media_height_mm: height_mm,
+        media_height_mm: 0.0,
         copies: 1,
         print_width_mm: width_mm,
-        print_height_mm: height_mm,
-        page_count: 1,
+        print_height_mm: 0.0,
+        page_count: 0,
         dpi,
         raster_width_px: px_w as u32,
-        raster_height_px: px_h as u32,
+        raster_height_px: 0,
         mode: String::new(),
     };
-    let finish = |ok: bool, mode: &str, message: String| LabelPrintResult {
+    let finish = |ok: bool, mode: &str, message: String, height_mm: f64, raster_h: i32| LabelPrintResult {
         ok,
         message,
-        diagnostics: LabelPrintDiagnostics { mode: mode.to_string(), ..diag.clone() },
+        diagnostics: LabelPrintDiagnostics {
+            mode: mode.to_string(),
+            media_height_mm: height_mm,
+            print_height_mm: height_mm,
+            page_count: if ok { 1 } else { 0 },
+            raster_height_px: raster_h as u32,
+            ..diag_base.clone()
+        },
     };
 
     if px_w <= 0 || px_h <= 0 {
-        return finish(false, "invalid-media", "Receipt content produced an empty page".into());
+        return finish(false, "invalid-media", "Receipt width too small to rasterize".into(), 0.0, 0);
     }
 
+    // 1. Single screenshot at a generous page height.
     let png = match rasterize_html(html, px_w, px_h, dpi) {
         Ok(p) => p,
-        Err(e) => return finish(false, "raster-failed", format!("Rasterization failed: {}", e)),
+        Err(e) => return finish(false, "raster-failed", format!("Receipt rasterization failed: {}", e), 0.0, 0),
     };
 
-    match gdi_print_pages(&png, width_mm, height_mm, 1, printer, job_title) {
+    // 2. Decode + trim trailing all-white rows to the natural content height.
+    let (bgra, img_w, img_h) = match decode_png_bgra_any(&png) {
+        Ok(v) => v,
+        Err(e) => return finish(false, "decode-failed", format!("PNG decode failed: {}", e), 0.0, 0),
+    };
+    let content_rows = last_non_white_row(&bgra, img_w, img_h).unwrap_or(img_h);
+    // Small bottom padding so descenders/borders are never clipped.
+    let content_px = (content_rows + 8).min(img_h);
+    let height_mm = ((content_px as f64) * 25.4 / dpi as f64).ceil().max(10.0);
+
+    // 3. GDI print ONE page of exactly width × height mm.
+    match gdi_print_bgra_pages(&bgra, img_w, content_px, width_mm, height_mm, 1, printer, job_title) {
         Ok(()) => finish(
             true,
             "gdi-dynamic-receipt",
             format!("Receipt printed silently: {}×{}mm ({} DPI)", width_mm, height_mm, dpi),
+            height_mm,
+            content_px,
         ),
-        Err(e) => finish(false, "gdi-failed", format!("GDI print failed: {}", e)),
+        Err(e) => finish(false, "gdi-failed", format!("GDI print failed: {}", e), height_mm, content_px),
     }
 }
 
 // ---------------------------------------------------------------------------
-// HTML → PNG via headless Chromium screenshot (Edge or Chrome).
+// HTML → PNG via headless Chromium screenshot.
+//
+// BROWSER ORDER MATTERS (v0.5.18): headless Edge 153 is broken on some
+// machines (exits 0, produces NOTHING — verified in the field), so a working
+// Chrome is tried FIRST and Edge is only the fallback. Each candidate is
+// actually attempted: the first browser that produces output wins, and the
+// combined stderr/stdout of every failure is surfaced in the error so a
+// fully-broken machine is diagnosable instead of silent.
 // ---------------------------------------------------------------------------
 
+/// Headless-capable browser candidates, best-first.
+fn browser_candidates() -> Vec<std::path::PathBuf> {
+    [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ]
+    .iter()
+    .map(std::path::PathBuf::from)
+    .filter(|p| p.exists())
+    .collect()
+}
+
+fn run_headless(browser: &std::path::Path, args: &[String]) -> Result<std::process::Output, String> {
+    std::process::Command::new(browser)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to launch {}: {}", browser.display(), e))
+}
+
+fn headless_base_args(user_data: &std::path::Path) -> Vec<String> {
+    vec![
+        "--headless".to_string(),
+        "--disable-gpu".to_string(),
+        "--no-first-run".to_string(),
+        "--disable-extensions".to_string(),
+        "--disable-crash-reporter".to_string(),
+        // CRITICAL: an isolated profile. Without it, a running Edge/Chrome
+        // instance hijacks the launch — the flags are ignored, a visible
+        // tab opens and no output is ever produced.
+        format!("--user-data-dir={}", user_data.to_string_lossy()),
+    ]
+}
+
+/// Screenshot `html` at exactly `px_w` × `px_h` device pixels.
 fn rasterize_html(html: &str, px_w: i32, px_h: i32, dpi: u32) -> Result<Vec<u8>, String> {
     let tmp = std::env::temp_dir();
     let stamp = chrono::Local::now().timestamp_subsec_nanos();
@@ -228,129 +268,145 @@ fn rasterize_html(html: &str, px_w: i32, px_h: i32, dpi: u32) -> Result<Vec<u8>,
     let css_w = (px_w as f64 / scale).round() as i32;
     let css_h = (px_h as f64 / scale).round() as i32;
 
-    let browser = find_browser()?;
     let url = format!("file:///{}", html_path.to_string_lossy().replace('\\', "/"));
-    let screenshot_arg = format!("--screenshot={}", png_path.to_string_lossy());
+    let mut args = headless_base_args(&user_data);
+    args.push("--hide-scrollbars".to_string());
+    args.push("--default-background-color=FFFFFFFF".to_string());
+    args.push(format!("--window-size={},{}", css_w, css_h));
+    args.push(format!("--force-device-scale-factor={}", scale));
+    args.push(format!("--screenshot={}", png_path.to_string_lossy()));
+    args.push(url);
 
-    let output = std::process::Command::new(&browser)
-        .args([
-            "--headless",
-            "--disable-gpu",
-            "--no-first-run",
-            "--disable-extensions",
-            "--disable-crash-reporter",
-            "--no-pdf-header-footer",
-            // CRITICAL: an isolated profile. Without it, a running Edge/Chrome
-            // instance hijacks the launch — the flags are ignored, a visible
-            // tab opens and no screenshot is ever produced.
-            &format!("--user-data-dir={}", user_data.to_string_lossy()),
-            &format!("--window-size={},{}", css_w, css_h),
-            &format!("--force-device-scale-factor={}", scale),
-            &screenshot_arg,
-            &url,
-        ])
-        .output()
-        .map_err(|e| format!("failed to launch browser: {}", e))?;
-    let _ = std::fs::remove_file(&html_path);
-    let _ = std::fs::remove_dir_all(&user_data);
-    if !output.status.success() {
-        let _ = std::fs::remove_file(&png_path);
-        return Err("headless browser exited with an error".into());
-    }
-    if !png_path.exists() {
-        return Err("headless browser produced no screenshot".into());
-    }
-    let png = std::fs::read(&png_path).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&png_path);
-    Ok(png)
-}
-
-fn find_browser() -> Result<std::path::PathBuf, String> {
-    let candidates = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    ];
-    candidates
-        .iter()
-        .map(std::path::PathBuf::from)
-        .find(|p| p.exists())
-        .ok_or_else(|| "No Edge/Chrome found for label rasterization".to_string())
-}
-
-/// Measure the natural (dynamic) content height of an HTML document in CSS
-/// pixels, at a viewport of `css_w` CSS px wide. Uses headless Chromium's
-/// PDF engine with `@page { size: Wmm auto }`: the produced PDF's page
-/// height IS the laid-out ticket height, which maps 1:1 back to CSS px.
-fn rasterize_html_measure(html: &str, _css_w: i32) -> Result<i32, String> {
-    let tmp = std::env::temp_dir();
-    let stamp = chrono::Local::now().timestamp_subsec_nanos();
-    let html_path = tmp.join(format!("titaou_measure_{}.html", stamp));
-    let pdf_path = tmp.join(format!("titaou_measure_{}.pdf", stamp));
-    let user_data = tmp.join(format!("titaou_profile_{}", stamp));
-    let _ = std::fs::create_dir_all(&user_data);
-    std::fs::write(&html_path, html).map_err(|e| e.to_string())?;
-
-    let browser = find_browser()?;
-    let url = format!("file:///{}", html_path.to_string_lossy().replace('\\', "/"));
-    let pdf_arg = format!("--print-to-pdf={}", pdf_path.to_string_lossy());
-
-    let output = std::process::Command::new(&browser)
-        .args([
-            "--headless",
-            "--disable-gpu",
-            "--no-first-run",
-            "--disable-extensions",
-            "--disable-crash-reporter",
-            "--print-to-pdf-no-header",
-            "--no-pdf-header-footer",
-            // CRITICAL: isolated profile — a running Edge would otherwise
-            // hijack the launch (visible tab, no PDF) and measurement fails.
-            &format!("--user-data-dir={}", user_data.to_string_lossy()),
-            &pdf_arg,
-            &url,
-        ])
-        .output()
-        .map_err(|e| format!("failed to launch browser: {}", e))?;
-    let _ = std::fs::remove_file(&html_path);
-    let _ = std::fs::remove_dir_all(&user_data);
-    if !output.status.success() || !pdf_path.exists() {
-        let _ = std::fs::remove_file(&pdf_path);
-        return Err("measurement render failed".into());
+    let browsers = browser_candidates();
+    if browsers.is_empty() {
+        let _ = std::fs::remove_file(&html_path);
+        let _ = std::fs::remove_dir_all(&user_data);
+        return Err("No Chrome/Edge installation found for rasterization".into());
     }
 
-    // PDF pages: width in points at index 3..5, height at 5..7 of each
-    // /MediaBox [x0 y0 x1 y1]. One page is expected (auto height, no breaks).
-    let pdf = std::fs::read(&pdf_path).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&pdf_path);
-
-    let text = String::from_utf8_lossy(&pdf).to_string();
-    // Find the LAST /MediaBox — trailer pages reuse the same object; the
-    // final one carries the page actually laid out. Values are like
-    // "226.77 0 226.77 1417.32".
-    let mut height_pt: f64 = 0.0;
-    if let Some(pos) = text.rfind("/MediaBox") {
-        let raw_slice: String = text[pos..(pos + 120).min(text.len())].to_string();
-        let slice: String = raw_slice
-            .chars()
-            .take_while(|c| c.is_ascii_digit() || *c == ' ' || *c == '.' || *c == '-' || *c == '[' || *c == ']')
-            .collect();
-        let nums: Vec<f64> = slice
-            .split(|c: char| c == '[' || c == ']' || c.is_whitespace())
-            .filter_map(|t| t.parse::<f64>().ok())
-            .collect();
-        if nums.len() >= 4 {
-            height_pt = nums[3] - nums[1];
+    let mut failures: Vec<String> = Vec::new();
+    let mut result: Result<Vec<u8>, String> = Err("no browser attempted".into());
+    for browser in &browsers {
+        match run_headless(browser, &args) {
+            Ok(output) => {
+                let log = format!(
+                    "{} stdout: {} | stderr: {}",
+                    browser.display(),
+                    String::from_utf8_lossy(&output.stdout).trim(),
+                    String::from_utf8_lossy(&output.stderr).trim(),
+                );
+                if png_path.exists() {
+                    match std::fs::read(&png_path) {
+                        Ok(png) => {
+                            let _ = std::fs::remove_file(&html_path);
+                            let _ = std::fs::remove_file(&png_path);
+                            let _ = std::fs::remove_dir_all(&user_data);
+                            result = Ok(png);
+                            break;
+                        }
+                        Err(e) => failures.push(format!("{}: png read failed: {}", browser.display(), e)),
+                    }
+                } else if !output.status.success() {
+                    failures.push(format!("{}: exit {:?} — {}", browser.display(), output.status.code(), log));
+                } else {
+                    failures.push(format!("{}: exited ok but produced NO screenshot — {}", browser.display(), log));
+                }
+            }
+            Err(e) => failures.push(e),
         }
     }
-    if height_pt <= 0.0 {
-        return Err("could not read page height from PDF".into());
-    }
+    let _ = std::fs::remove_file(&html_path);
+    let _ = std::fs::remove_file(&png_path);
+    let _ = std::fs::remove_dir_all(&user_data);
 
-    // PDF points (1/72 inch) → CSS px (1/96 inch).
-    let css_h = (height_pt * 96.0 / 72.0).ceil() as i32;
-    Ok(css_h.max(1))
+    match result {
+        Ok(png) => Ok(png),
+        Err(_) => Err(format!(
+            "all headless browsers failed: {}",
+            failures.join(" || ")
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PNG decode + white-trim helpers (shared by labels and receipts).
+// ---------------------------------------------------------------------------
+
+/// Decode a PNG into a BGRA top-down buffer (alpha forced opaque — thermal
+/// media has no transparency). Returns (bgra, width, height).
+///
+/// CRITICAL: Chrome/Edge screenshots may be RGBA8 **or RGB24** (3 bytes/px)
+/// depending on version/background. The previous decoder assumed 4 bytes/px
+/// unconditionally — RGB frames produced a short buffer (index panics) and
+/// swapped colors on print. Expand + convert per actual color type.
+fn decode_png_bgra_any(png_bytes: &[u8]) -> Result<(Vec<u8>, i32, i32), String> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    // Expand palettes/grayscale to 8-bit RGB(A) so only 4 shapes remain.
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("png parse: {}", e))?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("png decode: {}", e))?;
+    let w = info.width as i32;
+    let h = info.height as i32;
+    let (color_type, _depth) = reader.output_color_type();
+    let channels = match color_type {
+        png::ColorType::Grayscale => 1usize,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => {
+            return Err("unexpected indexed PNG after EXPAND".into());
+        }
+    };
+    let px_count = (w as usize) * (h as usize);
+    if buf.len() < px_count * channels {
+        return Err(format!(
+            "png buffer too short: {} bytes for {}×{} × {}ch",
+            buf.len(), w, h, channels
+        ));
+    }
+    // Convert to BGRA (the layout GDI DIBs expect).
+    let mut bgra = Vec::with_capacity(px_count * 4);
+    for px in buf[..px_count * channels].chunks_exact(channels) {
+        let (r, g, b) = match channels {
+            1 => (px[0], px[0], px[0]),
+            2 => (px[0], px[0], px[0]), // gray + alpha, alpha dropped
+            3 => (px[0], px[1], px[2]),
+            _ => (px[0], px[1], px[2]),
+        };
+        bgra.push(b);
+        bgra.push(g);
+        bgra.push(r);
+        bgra.push(255); // opaque: thermal media has no alpha
+    }
+    Ok((bgra, w, h))
+}
+
+/// Index of the LAST row (0-based) containing any non-near-white pixel,
+/// i.e. the natural content height of a screenshot. Returns None when the
+/// whole image is blank (caller falls back to the full height).
+fn last_non_white_row(bgra: &[u8], w: i32, h: i32) -> Option<i32> {
+    const WHITE_THRESHOLD: u8 = 250;
+    let stride = (w * 4) as usize;
+    for row in (0..h).rev() {
+        let row_start = row as usize * stride;
+        let row_end = row_start + stride;
+        let mut non_white = false;
+        for px in bgra[row_start..row_end].chunks_exact(4) {
+            if px[0] < WHITE_THRESHOLD || px[1] < WHITE_THRESHOLD || px[2] < WHITE_THRESHOLD {
+                non_white = true;
+                break;
+            }
+        }
+        if non_white {
+            return Some(row);
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -380,17 +436,18 @@ mod gdi {
     const DM_PAPERLENGTH: u32 = 0x4;
     const DM_PAPERWIDTH: u32 = 0x8;
 
-    pub fn print_pages(
-        png: &[u8],
+    /// Print a decoded BGRA bitmap as `copies` pages of exactly
+    /// width×height mm — silent, direct printer DC, no dialog.
+    pub fn print_bgra_pages(
+        bgra: &[u8],
+        img_w: i32,
+        img_h: i32,
         width_mm: f64,
         height_mm: f64,
         copies: u32,
         printer_name: Option<&str>,
         job_title: &str,
     ) -> Result<(), String> {
-        // Decode PNG into BGRA top-down pixels.
-        let (bgra, img_w, img_h) = decode_png_bgra(png)?;
-
         unsafe {
             let hdc = acquire_label_dc(printer_name, width_mm, height_mm)?;
             if hdc.is_null() {
@@ -416,7 +473,7 @@ mod gdi {
                     failed = true;
                     break;
                 }
-                draw_label_page(hdc, &bgra, img_w, img_h);
+                draw_label_page(hdc, bgra, img_w, img_h);
                 if EndPage(hdc) <= 0 {
                     failed = true;
                     break;
@@ -427,7 +484,7 @@ mod gdi {
                 // EndDoc flushes what GDI will accept; the spooler drops the rest.
                 EndDoc(hdc);
                 DeleteDC(hdc);
-                return Err("a label page failed mid-job (check media/printer state)".into());
+                return Err("a page failed mid-job (check media/printer state)".into());
             }
             if EndDoc(hdc) <= 0 {
                 DeleteDC(hdc);
@@ -438,8 +495,8 @@ mod gdi {
         }
     }
 
-    /// Blit one label bitmap onto the current page, 1:1 with the page pixels:
-    /// the DEVMODE media (40×20mm) equals the raster size, so no scaling.
+    /// Blit one bitmap onto the current page, 1:1 with the page pixels:
+    /// the DEVMODE media equals the raster size, so no scaling.
     unsafe fn draw_label_page(hdc: HDC, bgra: &[u8], img_w: i32, img_h: i32) {
         let mem_dc = CreateCompatibleDC(hdc);
         if mem_dc.is_null() {
@@ -527,7 +584,7 @@ mod gdi {
             return Err("could not read printer DEVMODE".into());
         }
 
-        // Patch: custom paper form = exact label media.
+        // Patch: custom paper form = exact media.
         (*dm_ptr).dmFields |= DM_ORIENTATION | DM_PAPERSIZE | DM_PAPERLENGTH | DM_PAPERWIDTH;
         (*dm_ptr).Anonymous1.Anonymous1.dmOrientation = DMORIENT_PORTRAIT;
         (*dm_ptr).Anonymous1.Anonymous1.dmPaperSize = DMPAPER_USER;
@@ -545,7 +602,7 @@ mod gdi {
         ) <= 0
         {
             ClosePrinter(hprinter);
-            return Err("driver rejected the custom 40x20mm media".into());
+            return Err("driver rejected the custom media size".into());
         }
         ClosePrinter(hprinter);
 
@@ -553,7 +610,7 @@ mod gdi {
         let driver = utf16("WINSPOOL");
         let hdc = CreateDCW(driver.as_ptr(), name16.as_ptr(), std::ptr::null(), dm_ptr as *const _);
         if hdc.is_null() {
-            return Err("CreateDCW failed for the label printer".into());
+            return Err("CreateDCW failed for the printer".into());
         }
         Ok(hdc)
     }
@@ -581,30 +638,6 @@ mod gdi {
         let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
         String::from_utf16_lossy(&buf[..len])
     }
-
-    /// Minimal PNG decode to BGRA (any bit depth the `png` crate outputs as
-    /// 8-bit RGBA after transformations; palette/gray are expanded).
-    fn decode_png_bgra(png_bytes: &[u8]) -> Result<(Vec<u8>, i32, i32), String> {
-        let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
-        let mut reader = decoder
-            .read_info()
-            .map_err(|e| format!("png parse: {}", e))?;
-        let mut buf = vec![0u8; reader.output_buffer_size()];
-        let info = reader
-            .next_frame(&mut buf)
-            .map_err(|e| format!("png decode: {}", e))?;
-        let w = info.width as i32;
-        let h = info.height as i32;
-        // Chrome screenshots are RGBA8; convert to the BGRA GDI expects.
-        let mut bgra = Vec::with_capacity(buf.len());
-        for px in buf.chunks_exact(4) {
-            bgra.push(px[2]); // B
-            bgra.push(px[1]); // G
-            bgra.push(px[0]); // R
-            bgra.push(255); // opaque: thermal media has no alpha
-        }
-        Ok((bgra, w, h))
-    }
 }
 
 #[cfg(windows)]
@@ -616,7 +649,22 @@ fn gdi_print_pages(
     printer_name: Option<&str>,
     job_title: &str,
 ) -> Result<(), String> {
-    gdi::print_pages(png, width_mm, height_mm, copies, printer_name, job_title)
+    let (bgra, w, h) = decode_png_bgra_any(png)?;
+    gdi::print_bgra_pages(&bgra, w, h, width_mm, height_mm, copies, printer_name, job_title)
+}
+
+#[cfg(windows)]
+fn gdi_print_bgra_pages(
+    bgra: &[u8],
+    img_w: i32,
+    img_h: i32,
+    width_mm: f64,
+    height_mm: f64,
+    copies: u32,
+    printer_name: Option<&str>,
+    job_title: &str,
+) -> Result<(), String> {
+    gdi::print_bgra_pages(bgra, img_w, img_h, width_mm, height_mm, copies, printer_name, job_title)
 }
 
 #[cfg(not(windows))]
@@ -629,4 +677,78 @@ fn gdi_print_pages(
     _job_title: &str,
 ) -> Result<(), String> {
     Err("label GDI printing is Windows-only".into())
+}
+
+#[cfg(not(windows))]
+fn gdi_print_bgra_pages(
+    _bgra: &[u8],
+    _img_w: i32,
+    _img_h: i32,
+    _width_mm: f64,
+    _height_mm: f64,
+    _copies: u32,
+    _printer_name: Option<&str>,
+    _job_title: &str,
+) -> Result<(), String> {
+    Err("label GDI printing is Windows-only".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The v0.5.17 regression: the frontend sends camelCase (`widthMm`) while
+    // the struct had snake_case fields — "invalid args `request` for command
+    // `print_label_job`: missing field `width_mm`" and label printing never
+    // reached the printer. camelCase (and the snake_case alias) must both parse.
+    #[test]
+    fn label_request_accepts_camel_case_and_snake_case() {
+        let camel: LabelPrintRequest = serde_json::from_str(
+            r#"{"html":"<b>x</b>","printer":null,"widthMm":40.0,"heightMm":20.0,"copies":2,"dpi":203,"label":"T"}"#,
+        )
+        .expect("camelCase payload must deserialize");
+        assert_eq!(camel.width_mm, 40.0);
+        assert_eq!(camel.height_mm, 20.0);
+        assert_eq!(camel.copies, 2);
+
+        let snake: LabelPrintRequest = serde_json::from_str(
+            r#"{"html":"<b>x</b>","printer":null,"width_mm":40.0,"height_mm":20.0,"copies":1,"dpi":203,"label":"T"}"#,
+        )
+        .expect("snake_case alias must deserialize");
+        assert_eq!(snake.width_mm, 40.0);
+    }
+
+    // Receipt trimming: a mostly-white page with content at the top must
+    // trim to the content height (+ padding), not the full page.
+    #[test]
+    fn last_non_white_row_trims_trailing_whitespace() {
+        let w = 8usize;
+        let h = 100usize;
+        let mut bgra = vec![255u8; w * h * 4];
+        // Row 40: one dark pixel.
+        let row40 = 40 * w * 4;
+        bgra[row40] = 0;
+        assert_eq!(last_non_white_row(&bgra, w as i32, h as i32), Some(40));
+        // All white → None.
+        let all_white = vec![255u8; w * h * 4];
+        assert_eq!(last_non_white_row(&all_white, w as i32, h as i32), None);
+        // Content on the very last row → Some(h-1).
+        let last = (h - 1) * w * 4;
+        bgra[last] = 0;
+        assert_eq!(last_non_white_row(&bgra, w as i32, h as i32), Some((h - 1) as i32));
+    }
+
+    // Rasterization must actually WORK on this machine: catches a broken
+    // headless browser (e.g. Edge 153 producing nothing) regardless of which
+    // browser is tried first.
+    #[test]
+    fn rasterize_produces_a_real_screenshot() {
+        let html = "<!DOCTYPE html><html><body style='background:#fff;margin:0'><div style='width:50px;height:50px;background:#000'></div></body></html>";
+        let png = rasterize_html(html, 100, 100, 96).expect("headless rasterization must succeed");
+        let (bgra, w, h) = decode_png_bgra_any(&png).expect("png must decode");
+        assert_eq!((w, h), (100, 100));
+        // The 50px black square sits at the top of an otherwise-white page:
+        // content ends at row 49. Proves RGB24 and RGBA8 frames both decode.
+        assert_eq!(last_non_white_row(&bgra, w, h), Some(49));
+    }
 }

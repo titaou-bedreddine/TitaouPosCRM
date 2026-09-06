@@ -180,6 +180,7 @@
             <div class="bg-white border-2 border-dashed border-slate-300 rounded-xl p-3 overflow-auto flex flex-col items-center gap-[2px] max-h-64">
               {#each Array(Math.min(copies, 12)) as _, i}
                 <div
+                  dir="ltr"
                   class="label-strip-item"
                   style="width: calc({presetDef.widthMm}mm * {zoom}); height: calc({presetDef.heightMm}mm * {zoom}); flex: 0 0 auto;"
                 >
@@ -193,7 +194,7 @@
               {/if}
             </div>
             <p class="text-[10px] text-pos-muted text-center">
-              Physical Size: <span class="font-bold">{presetDef.widthMm} × {presetDef.heightMm} mm</span> •
+              Physical Size: <span dir="ltr" class="font-bold">{presetDef.widthMm} × {presetDef.heightMm} mm</span> •
               Orientation: <span class="font-bold">Landscape</span> •
               Media locked per label — no gaps, {copies} page(s)
             </p>

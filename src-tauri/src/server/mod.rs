@@ -177,32 +177,86 @@ async fn api_status() -> Json<serde_json::Value> {
     }))
 }
 
+/// Live POS statistics for the landing page + /api/stats. Every query is
+/// individually fallible-proof (missing table → 0) so the page NEVER fails.
+fn pos_stats() -> serde_json::Value {
+    let Some(db) = DIAG_DB.get() else {
+        return serde_json::json!({
+            "today_sales_count": 0, "today_sales_total": 0,
+            "products_count": 0, "low_stock_count": 0,
+            "customers_count": 0, "employees_count": 0,
+        });
+    };
+    let conn = db.conn.lock().unwrap();
+    let q = |sql: &str| -> i64 {
+        conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap_or(0)
+    };
+    let today_sales_count = q(
+        "SELECT COUNT(*) FROM sales WHERE date(created_at) = date('now','localtime') AND status = 'completed'",
+    );
+    let today_sales_total = q(
+        "SELECT COALESCE(SUM(total_amount), 0) FROM sales WHERE date(created_at) = date('now','localtime') AND status = 'completed'",
+    );
+    let products_count = q("SELECT COUNT(*) FROM products WHERE is_active = 1");
+    let low_stock_count = q(
+        "SELECT COUNT(*) FROM products WHERE is_active = 1 AND current_stock <= min_stock",
+    );
+    let customers_count = q("SELECT COUNT(*) FROM customers WHERE is_active = 1");
+    let employees_count = q("SELECT COUNT(*) FROM employees WHERE is_active = 1");
+    serde_json::json!({
+        "today_sales_count": today_sales_count,
+        "today_sales_total": today_sales_total,
+        "products_count": products_count,
+        "low_stock_count": low_stock_count,
+        "customers_count": customers_count,
+        "employees_count": employees_count,
+    })
+}
+
 /// Landing page at `/`: visiting http://<LAN-IP>:<port> from a phone or PC
-/// shows a real page (name, status, endpoints) instead of a 404.
+/// shows a real page — live POS stats, status and endpoints — instead of a 404.
 async fn index() -> Html<String> {
-    let (port, running, devices) = match STATE.get() {
+    let (port, running, uptime_secs, devices_count) = match STATE.get() {
         Some(s) => (
             s.port,
             true,
+            s.started_at.elapsed().as_secs(),
             s.devices.lock().unwrap().values().filter(|d| d.last_seen.elapsed() < Duration::from_secs(300)).count(),
         ),
-        None => (configured_port(DIAG_DB.get()), false, 0),
+        None => (configured_port(DIAG_DB.get()), false, 0, 0),
     };
+    let st = pos_stats();
     Html(format!(
         r#"<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TitaouPOS Host</title>
-<style>body{{font-family:'Segoe UI',Arial,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
-.card{{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:32px;max-width:420px;width:92%}}
-h1{{margin:0 0 4px;font-size:22px}} .ok{{color:#34d399;font-weight:800}} .bad{{color:#f87171;font-weight:800}}
-code{{background:#0f172a;padding:2px 6px;border-radius:6px;font-size:13px}} li{{margin:6px 0}}</style></head>
+<style>body{{font-family:'Segoe UI',Arial,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px}}
+.card{{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:28px;max-width:460px;width:100%}}
+h1{{margin:0;font-size:22px}} .sub{{color:#94a3b8;font-size:12px;margin:2px 0 14px}}
+.ok{{color:#34d399;font-weight:800}} .bad{{color:#f87171;font-weight:800}}
+.stats{{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}}
+.stat{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:10px 12px}}
+.stat b{{display:block;font-size:18px}} .stat span{{font-size:11px;color:#94a3b8}}
+code{{background:#0f172a;padding:2px 6px;border-radius:6px;font-size:12px}} ul{{margin:6px 0;padding-left:18px}} li{{margin:4px 0}}
+hr{{border-color:#334155}}</style></head>
 <body><div class="card">
 <h1>TitaouPOS Host</h1>
-<p>Embedded server is <span class="{run_cls}">{run_txt}</span> on port <code>{port}</code></p>
+<p class="sub">Embedded server is <span class="{run_cls}">{run_txt}</span> on port <code>{port}</code> • up {uptime} min • v{version}</p>
+
+<div class="stats">
+  <div class="stat"><b>{today_sales_total} DZD</b><span>Today's Sales</span></div>
+  <div class="stat"><b>{today_sales_count}</b><span>Today's Transactions</span></div>
+  <div class="stat"><b>{products_count}</b><span>Active Products</span></div>
+  <div class="stat"><b>{low_stock_count}</b><span>Low Stock Alerts</span></div>
+  <div class="stat"><b>{customers_count}</b><span>Customers</span></div>
+  <div class="stat"><b>{employees_count}</b><span>Employees</span></div>
+</div>
+
 <p>Connected devices: <b>{devices}</b></p>
-<hr style="border-color:#334155">
+<hr>
 <p style="font-weight:700;margin-bottom:6px">API endpoints</p>
 <ul>
 <li><code>GET /api/status</code> — server status</li>
+<li><code>GET /api/stats</code> — live POS statistics (JSON)</li>
 <li><code>POST /api/handshake</code> — pair a mobile terminal (device_name, device_uid, device_role)</li>
 <li><code>GET /api/diag/login</code> — diagnostics</li>
 </ul>
@@ -211,7 +265,15 @@ code{{background:#0f172a;padding:2px 6px;border-radius:6px;font-size:13px}} li{{
         run_cls = if running { "ok" } else { "bad" },
         run_txt = if running { "ONLINE" } else { "OFFLINE" },
         port = port,
-        devices = devices,
+        uptime = uptime_secs / 60,
+        version = env!("CARGO_PKG_VERSION"),
+        today_sales_total = st["today_sales_total"].as_i64().unwrap_or(0),
+        today_sales_count = st["today_sales_count"].as_i64().unwrap_or(0),
+        products_count = st["products_count"].as_i64().unwrap_or(0),
+        low_stock_count = st["low_stock_count"].as_i64().unwrap_or(0),
+        customers_count = st["customers_count"].as_i64().unwrap_or(0),
+        employees_count = st["employees_count"].as_i64().unwrap_or(0),
+        devices = devices_count,
     ))
 }
 
@@ -262,6 +324,7 @@ pub fn start_local_api_server() {
                     .route("/", get(index))
                     .route("/api/handshake", post(api_handshake))
                     .route("/api/status", get(api_status))
+                    .route("/api/stats", get(|| async { Json(pos_stats()) }))
                     .route("/api/diag/login", get(api_diag_login))
                     .with_state(state)
                     .layer(CorsLayer::permissive());
