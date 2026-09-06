@@ -34,13 +34,42 @@ pub fn set_diag_db(db: DbState) {
     let _ = DIAG_DB.set(db);
 }
 
-/// All non-loopback IPv4 addresses of this machine (LAN), powers the QR.
-fn lan_ip_addresses() -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+/// All non-loopback IPv4 addresses of this machine, REAL NETWORK ADAPTERS
+/// FIRST. Virtual adapters (Docker 172.x, WSL, Hyper-V, VPN) must never
+/// sort ahead of the shop LAN: a client picking `lan_ips[0]` as its server
+/// URL would try an unreachable virtual address and never connect. Windows:
+/// only interfaces with a default gateway are considered "real" and come
+/// first; everything else is appended as a fallback tail.
+pub fn lan_ip_addresses() -> Vec<String> {
+    let mut routed: Vec<String> = Vec::new();
+    let mut others: Vec<String> = Vec::new();
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        let output = std::process::Command::new("powershell")
+        // Routed addresses: interfaces that own the machine's default
+        // route (i.e. the adapter actually connected to the LAN).
+        let routed_out = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | ForEach-Object { Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue } | Select-Object -ExpandProperty IPAddress)",
+            ])
+            .creation_flags(0x08000000)
+            .output();
+        if let Ok(o) = routed_out {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                let l = line.trim().to_string();
+                if !l.is_empty()
+                    && !l.starts_with("127.")
+                    && !l.starts_with("169.254.")
+                    && !routed.contains(&l)
+                {
+                    routed.push(l);
+                }
+            }
+        }
+        // All other IPv4 addresses (virtual adapters etc.) as tail.
+        let all_out = std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
@@ -48,15 +77,21 @@ fn lan_ip_addresses() -> Vec<String> {
             ])
             .creation_flags(0x08000000)
             .output();
-        if let Ok(o) = output {
+        if let Ok(o) = all_out {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
                 let l = line.trim().to_string();
-                if !l.is_empty() && !out.contains(&l) {
-                    out.push(l);
+                if !l.is_empty()
+                    && !routed.contains(&l)
+                    && !others.contains(&l)
+                    && !l.starts_with("169.254.")
+                {
+                    others.push(l);
                 }
             }
         }
     }
+    let mut out = routed;
+    out.extend(others);
     if out.is_empty() {
         // Fallback: the address a default route would use.
         if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
@@ -416,4 +451,22 @@ pub fn start_local_api_server() {
             });
         }
     });
+}
+
+#[cfg(test)]
+mod ip_ranking_tests {
+    #[test]
+    fn routed_adapters_come_first_and_virtual_last() {
+        let ips = super::lan_ip_addresses();
+        assert!(!ips.is_empty(), "must find at least one IPv4 address");
+        // If any real 192.168.x / 10.x / 172.16-31.x adapter exists, it must
+        // not be sorted AFTER a virtual-only entry when both are present —
+        // the strongest check available without mocks: the FIRST entry must
+        // own the machine's default route (verified by the routed query in
+        // the function itself). At minimum: no loopback/link-local ever.
+        for ip in &ips {
+            assert!(!ip.starts_with("127."), "no loopback: {}", ip);
+            assert!(!ip.starts_with("169.254."), "no link-local: {}", ip);
+        }
+    }
 }

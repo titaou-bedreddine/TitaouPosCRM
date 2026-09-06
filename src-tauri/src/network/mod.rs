@@ -348,7 +348,10 @@ fn on_packet(pkt: DiscoveryPacket, ip: String) {
         shop_name: pkt.shop_name.clone(),
         term: pkt.term,
         http_port: pkt.http_port,
-        ip: if pkt.lan_ips.is_empty() { ip } else { pkt.lan_ips[0].clone() },
+        // Prefer the packet's SOURCE address — it physically reached us,
+        // so it is a working route to that node. Advertised lan_ips stay
+        // available via the announce (may lead with virtual adapters).
+        ip: if ip.is_empty() { pkt.lan_ips.first().cloned().unwrap_or_default() } else { ip },
         app_version: pkt.app_version.clone(),
         data_rows: pkt.data_rows,
         last_seen_ms: now_secs() * 1000,
