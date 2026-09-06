@@ -574,5 +574,21 @@
   "emp_present": "Present",
   "emp_print_qr": "Print employee QR card",
   "supplier_print_qr": "Print supplier QR card",
-  "app_version": "App version"
+  "app_version": "App version",
+  "net_mode_disabled": "LAN Network Off",
+  "net_mode_server": "● Shop Server",
+  "net_mode_connected": "● Shop Connected",
+  "net_mode_searching": "● Searching for server…",
+  "net_mode_reconnecting": "● Reconnecting…",
+  "net_mode_offline": "● Offline",
+  "net_status_label": "Status",
+  "net_role_label": "Role",
+  "net_this_pc": "This PC",
+  "net_coordinator": "Coordinator (Server)",
+  "net_devices": "Connected Devices",
+  "net_no_devices_yet": "No devices connected yet",
+  "net_no_devices_client": "Device list is managed by the server PC",
+  "net_recent_activity": "Recent Activity",
+  "net_term_label": "Term",
+  "net_refresh": "Refresh"
 }

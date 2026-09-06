@@ -85,6 +85,15 @@ fn configured_port(diag: Option<&DbState>) -> u16 {
     8080
 }
 
+/// Public accessors for the LAN network module (announce packets, status).
+pub fn configured_port_public() -> u16 {
+    configured_port(DIAG_DB.get())
+}
+
+pub fn lan_ip_addresses_public() -> Vec<String> {
+    lan_ip_addresses()
+}
+
 /// Real server status for Settings > Network: port, uptime, LAN IPs for
 /// the QR, and the handshake-verified device list — no demo data.
 pub fn server_status() -> serde_json::Value {
@@ -387,6 +396,9 @@ pub fn start_local_api_server() {
                     .route("/api/stats", get(|| async { Json(pos_stats()) }))
                     .route("/api/ws", get(ws_upgrade))
                     .route("/api/diag/login", get(api_diag_login))
+                    // LAN shop network API (/api/v1/*): health, join, auth,
+                    // whitelisted business invokes, WebSocket events.
+                    .merge(crate::network::server_api::v1_router())
                     .with_state(state)
                     .layer(CorsLayer::permissive());
 

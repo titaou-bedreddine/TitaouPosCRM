@@ -43,6 +43,60 @@ pub fn get_active_session(db: &DbState, _user_id: i64) -> Result<Option<CashSess
     drop(stmt);
     drop(conn);
 
+    finish_active_session(db, session)
+}
+
+/// LAN mode: the same active-session lookup but scoped to ONE register so
+/// two terminals never see (or auto-close) each other's session. The API
+/// layer maps every calling terminal to its own register row.
+pub fn get_active_session_for_register(db: &DbState, register_id: i64) -> Result<Option<CashSession>, String> {
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT cs.id, cs.register_id, cs.user_id, u.display_name, cs.opened_at, cs.closed_at,
+                    cs.opening_amount, cs.expected_cash, cs.actual_cash, cs.difference, cs.status, cs.notes
+             FROM cash_sessions cs
+             LEFT JOIN users u ON cs.user_id = u.id
+             WHERE cs.status = 'open' AND cs.register_id = ?1
+             ORDER BY cs.id DESC LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let session = match stmt.query_row([register_id], |row| {
+        Ok(CashSession {
+            id: row.get(0)?,
+            register_id: row.get(1)?,
+            user_id: row.get(2)?,
+            user_name: row.get(3)?,
+            opened_at: row.get(4)?,
+            closed_at: row.get(5)?,
+            opening_amount: row.get(6)?,
+            expected_cash: row.get(7)?,
+            actual_cash: row.get(8)?,
+            difference: row.get(9)?,
+            total_sales: Some(0),
+            total_expenses: Some(0),
+            current_balance: Some(row.get(7)?),
+            status: row.get(10)?,
+            notes: row.get(11)?,
+            is_stale: None,
+            is_archived: false,
+        })
+    }) {
+        Ok(s) => Some(s),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => return Err(e.to_string()),
+    };
+    drop(stmt);
+    drop(conn);
+
+    finish_active_session(db, session)
+}
+
+/// Shared tail of the active-session lookups: midnight-rollover auto-close
+/// plus sales/expense totals. (Extracted verbatim from the original
+/// `get_active_session` so both lookup variants behave identically.)
+fn finish_active_session(db: &DbState, session: Option<CashSession>) -> Result<Option<CashSession>, String> {
     match session {
         Some(mut s) => {
             // A session left open from a previous calendar day is stale: the
@@ -112,6 +166,57 @@ pub fn get_active_session(db: &DbState, _user_id: i64) -> Result<Option<CashSess
         }
         None => Ok(None),
     }
+}
+
+/// LAN mode: open a session for ONE register only — other terminals' open
+/// sessions are left untouched (single-PC behavior still closes all).
+pub fn open_session_for_register(db: &DbState, user_id: i64, register_id: i64, opening_amount: i64, notes: Option<String>) -> Result<CashSession, String> {
+    let mut conn = db.conn.lock().unwrap();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "UPDATE cash_sessions SET status = 'closed', closed_at = datetime('now','localtime') WHERE status = 'open' AND register_id = ?1",
+        [register_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status, notes, opened_at)
+         VALUES (?1, ?2, ?3, ?3, 'open', ?4, datetime('now','localtime'))",
+        rusqlite::params![register_id, user_id, opening_amount, notes],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let session_id = tx.last_insert_rowid();
+
+    tx.execute(
+        "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, notes)
+         VALUES (?1, ?2, 'opening_balance', ?3, 'Startup Cash / رصيد افتتاحي', ?4)",
+        rusqlite::params![session_id, user_id, opening_amount, notes],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(CashSession {
+        id: session_id,
+        register_id,
+        user_id,
+        user_name: Some("Cashier".to_string()),
+        opened_at: chrono::Local::now().to_rfc3339(),
+        closed_at: None,
+        opening_amount,
+        expected_cash: opening_amount,
+        actual_cash: None,
+        difference: None,
+        total_sales: Some(0),
+        total_expenses: Some(0),
+        current_balance: Some(opening_amount),
+        status: "open".to_string(),
+        notes,
+        is_stale: Some(false),
+        is_archived: false,
+    })
 }
 
 pub fn open_session(db: &DbState, user_id: i64, register_id: i64, opening_amount: i64, notes: Option<String>) -> Result<CashSession, String> {

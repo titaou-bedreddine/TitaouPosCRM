@@ -574,5 +574,21 @@
   "emp_present": "Présent",
   "emp_print_qr": "Imprimer la carte QR de l'employé",
   "supplier_print_qr": "Imprimer la carte QR du fournisseur",
-  "app_version": "Version de l'application"
+  "app_version": "Version de l'application",
+  "net_mode_disabled": "Réseau LAN désactivé",
+  "net_mode_server": "● Serveur de la boutique",
+  "net_mode_connected": "● Boutique connectée",
+  "net_mode_searching": "● Recherche du serveur…",
+  "net_mode_reconnecting": "● Reconnexion…",
+  "net_mode_offline": "● Hors ligne",
+  "net_status_label": "Statut",
+  "net_role_label": "Rôle",
+  "net_this_pc": "Ce PC",
+  "net_coordinator": "Coordinateur (serveur)",
+  "net_devices": "Appareils connectés",
+  "net_no_devices_yet": "Aucun appareil connecté pour le moment",
+  "net_no_devices_client": "La liste des appareils est gérée par le PC serveur",
+  "net_recent_activity": "Activité récente",
+  "net_term_label": "Terme (Term)",
+  "net_refresh": "Actualiser"
 }

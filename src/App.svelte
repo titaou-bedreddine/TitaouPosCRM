@@ -22,6 +22,8 @@
   import LoginView from './routes/auth/LoginView.svelte';
   import CashDrawerModal from './lib/components/CashDrawerModal.svelte';
   import FirstSetupWizard from './lib/components/FirstSetupWizard.svelte';
+  import NetworkStatusIndicator from './lib/components/NetworkStatusIndicator.svelte';
+  import { networkEvents } from './lib/stores/network';
 
     import { stockWarningModal } from './lib/stores/cart';
 
@@ -223,6 +225,17 @@
 
   $: if ($currentUser) {
     loadActiveSession();
+  }
+
+  // Real-time LAN events from the shop server: session events invalidate the
+  // locally cached register view so a connected terminal stays in sync.
+  let lastNetEventTs = 0;
+  $: if ($networkEvents[0] && $networkEvents[0].ts !== lastNetEventTs) {
+    lastNetEventTs = $networkEvents[0].ts;
+    const t0 = String($networkEvents[0].type || '');
+    if (t0.startsWith('session_') || t0 === 'settings_updated') {
+      loadActiveSession();
+    }
   }
 
   let sidebarVersion = '';
@@ -526,6 +539,9 @@
 
       <!-- Bottom User Profile & Network Status -->
       <div class="p-3 border-t border-pos-border/60 bg-slate-50 dark:bg-slate-800/40 space-y-2">
+        <!-- LAN shop network status indicator (click = details popup) -->
+        <NetworkStatusIndicator />
+
         <!-- Quick Open Cash Drawer Button -->
         <button
           type="button"

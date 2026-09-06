@@ -1,5 +1,6 @@
 use crate::auth::authenticate_user;
 use crate::database::DbState;
+pub mod network_cmds;
 use crate::models::{
     CartItem, Category, Customer, CustomerPaymentInput, DashboardStats, Employee, Expense, HeldSale,
     Payroll, EmployeeAdvance, EmployeeAdvanceInput, ProductPackaging, PackagingInput, Product, ProductInput, Purchase, PurchaseItem, CreatePurchaseInput, Sale, Supplier, SupplierPaymentInput, SupplierPaymentRow, Unit, User, UserAccount, Role,
@@ -913,6 +914,13 @@ if ($o.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 /// Backup Now — timestamped copy into the configured folder + retention.
 #[tauri::command]
 pub fn create_backup(db: State<'_, DbState>, tag: Option<String>) -> Result<String, String> {
+    // A connected CLIENT terminal has no authoritative database: backups of
+    // the shop data belong to the server PC (spec §51). Everything else
+    // (single PC, standalone, server) backs up its own SQLite as before.
+    let status = crate::network::status_snapshot();
+    if status.get("role").and_then(|r| r.as_str()) == Some("client") {
+        return Err("This terminal is a client — the shop database is backed up on the server PC.".to_string());
+    }
     settings_service::create_backup(&db, tag.as_deref().unwrap_or("manual"))
 }
 
@@ -922,6 +930,11 @@ pub fn create_backup(db: State<'_, DbState>, tag: Option<String>) -> Result<Stri
 /// schedule, or it would back up on every tick.
 #[tauri::command]
 pub fn run_scheduled_backup(db: State<'_, DbState>) -> Result<(), String> {
+    // Client terminals never back up the (server-owned) shop database.
+    let status = crate::network::status_snapshot();
+    if status.get("role").and_then(|r| r.as_str()) == Some("client") {
+        return Ok(());
+    }
     settings_service::run_scheduled_backup(&db);
     Ok(())
 }

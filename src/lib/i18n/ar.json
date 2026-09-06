@@ -574,5 +574,21 @@
   "emp_present": "حاضر",
   "emp_print_qr": "طباعة بطاقة QR للموظف",
   "supplier_print_qr": "طباعة بطاقة QR للمورد",
-  "app_version": "إصدار التطبيق"
+  "app_version": "إصدار التطبيق",
+  "net_mode_disabled": "شبكة LAN معطلة",
+  "net_mode_server": "● خادم المتجر",
+  "net_mode_connected": "● متصل بالمتجر",
+  "net_mode_searching": "● بحث عن الخادم…",
+  "net_mode_reconnecting": "● إعادة الاتصال…",
+  "net_mode_offline": "● غير متصل",
+  "net_status_label": "الحالة",
+  "net_role_label": "الدور",
+  "net_this_pc": "هذا الجهاز",
+  "net_coordinator": "المنسّق (الخادم)",
+  "net_devices": "الأجهزة المتصلة",
+  "net_no_devices_yet": "لا توجد أجهزة متصلة بعد",
+  "net_no_devices_client": "قائمة الأجهزة تُدار من خادم المتجر",
+  "net_recent_activity": "النشاط الأخير",
+  "net_term_label": "الدورة (Term)",
+  "net_refresh": "تحديث"
 }

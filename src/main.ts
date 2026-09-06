@@ -1,6 +1,13 @@
 import { mount } from 'svelte';
 import './app.css';
 import App from './App.svelte';
+import { installInvokePatch, initNetwork } from './lib/stores/network';
+
+// Client-mode invoke routing MUST be installed before the app mounts so the
+// very first command (e.g. get_setting on the first-run wizard) already
+// flows through the LAN shop layer when this PC is a connected client.
+installInvokePatch();
+initNetwork();
 
 const app = mount(App, {
   target: document.getElementById('app')!,

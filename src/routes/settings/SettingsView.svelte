@@ -804,7 +804,101 @@
   }
   $: if (currentTab === 'network') {
     refreshServerStatus();
+    refreshLanStatus();
   }
+
+  // ----- LAN shop network (TitaouPOS Network: server / client / automatic) -----
+  let lanStatus: any = null;
+  let lanBusy = '';
+  let lanMsg = '';
+  let lanError = '';
+  let lanAdvancedOpen = false;
+  let lanManualAddr = '';
+  let lanProbed: any = null;
+  let lanShopNameInput = '';
+
+  async function refreshLanStatus() {
+    lanStatus = await invoke<any>('network_get_status').catch(() => null);
+  }
+
+  function lanBusyWrap(key: string, fn: () => Promise<void>) {
+    return async () => {
+      lanBusy = key;
+      lanMsg = '';
+      lanError = '';
+      try {
+        await fn();
+      } catch (e: any) {
+        lanError = typeof e === 'string' ? e : e?.message || String(e);
+      } finally {
+        lanBusy = '';
+        await refreshLanStatus();
+      }
+    };
+  }
+
+  const lanSetRole = (role: string) =>
+    lanBusyWrap('role', async () => {
+      await invoke('network_set_role', { role });
+      lanMsg = `Role set to ${role}`;
+    });
+
+  const lanToggleEnabled = () =>
+    lanBusyWrap('enabled', async () => {
+      await invoke('network_set_flags', { enabled: !(lanStatus?.enabled ?? true) });
+    });
+
+  const lanToggleDiscovery = () =>
+    lanBusyWrap('discovery', async () => {
+      await invoke('network_set_flags', { autodiscovery: !(lanStatus?.autodiscovery ?? true) });
+    });
+
+  const lanToggleReconnect = () =>
+    lanBusyWrap('reconnect', async () => {
+      await invoke('network_set_flags', { autoreconnect: !(lanStatus?.autoreconnect ?? true) });
+    });
+
+  const lanBecomeServer = () =>
+    lanBusyWrap('server', async () => {
+      await invoke('network_become_server', { shopName: lanShopNameInput.trim() || null });
+      lanMsg = 'This PC is now the shop server';
+    });
+
+  const lanProbeManual = () =>
+    lanBusyWrap('probe', async () => {
+      lanProbed = await invoke('network_probe_server', { addr: lanManualAddr });
+    });
+
+  const lanJoinManual = () =>
+    lanBusyWrap('join', async () => {
+      await invoke('network_join_server', {
+        addr: lanManualAddr,
+        shopId: lanProbed?.shop_id || '',
+      });
+      lanMsg = 'Joined the shop network';
+    });
+
+  const lanLeave = () =>
+    lanBusyWrap('leave', async () => {
+      await invoke('network_leave_shop');
+      lanMsg = 'Left the shop network';
+    });
+
+  const lanOpenFirewall = () =>
+    lanBusyWrap('firewall', async () => {
+      lanMsg = await invoke<string>('network_open_firewall');
+    });
+
+  const lanBlockDevice = (nodeId: string, blocked: boolean) =>
+    lanBusyWrap('block', async () => {
+      await invoke('network_block_device', { nodeId, blocked });
+    });
+
+  const lanRemoveDevice = (nodeId: string) =>
+    lanBusyWrap('remove', async () => {
+      await invoke('network_remove_device', { nodeId });
+    });
+
   $: if (currentTab === 'import_export') {
     refreshBackups();
   }
@@ -2372,6 +2466,178 @@
           <h2 class="text-base font-black text-pos-text">Local Network & Android Mobile App Sync</h2>
           <p class="text-xs text-pos-muted">Connect Android scanners, waiter tablets, and inventory devices via Wi-Fi</p>
         </div>
+
+        <!-- ============ TitaouPOS SHOP NETWORK (LAN multi-PC) ============ -->
+        <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-4">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full {lanStatus?.mode === 'connected' || lanStatus?.serving ? 'bg-emerald-500 animate-pulse' : lanStatus?.mode === 'searching' || lanStatus?.mode === 'reconnecting' ? 'bg-amber-500 animate-pulse' : lanStatus?.mode === 'offline' ? 'bg-rose-500' : 'bg-slate-400'}"></span>
+                TitaouPOS Shop Network (LAN)
+              </h3>
+              <p class="text-xs text-pos-muted mt-0.5">
+                Multi-PC operation: one shop, one authoritative database, automatic discovery over the local network.
+              </p>
+            </div>
+            <button type="button" on:click={refreshLanStatus} class="p-1.5 text-pos-muted hover:text-pos-text rounded-lg cursor-pointer" title="Refresh">
+              <RefreshCw class="w-4 h-4" />
+            </button>
+          </div>
+
+          {#if lanMsg}
+            <p class="text-[11px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl px-3 py-2">✅ {lanMsg}</p>
+          {/if}
+          {#if lanError}
+            <p class="text-[11px] font-bold text-rose-600 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl px-3 py-2">❌ {lanError}</p>
+          {/if}
+
+          <!-- Status grid -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div class="p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+              <p class="text-[9px] font-black text-pos-muted uppercase">Status</p>
+              <p class="text-xs font-black text-pos-text capitalize">{lanStatus?.mode || '…'}</p>
+            </div>
+            <div class="p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+              <p class="text-[9px] font-black text-pos-muted uppercase">Shop</p>
+              <p class="text-xs font-black text-pos-text truncate">{lanStatus?.shop_name || '—'}</p>
+            </div>
+            <div class="p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+              <p class="text-[9px] font-black text-pos-muted uppercase">This PC</p>
+              <p class="text-xs font-black text-pos-text truncate">{lanStatus?.pc_name || '—'}</p>
+              <p class="text-[8px] font-mono text-pos-muted truncate">{lanStatus?.node_id || ''}</p>
+            </div>
+            <div class="p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+              <p class="text-[9px] font-black text-pos-muted uppercase">Coordinator</p>
+              <p class="text-xs font-black text-pos-text truncate">{lanStatus?.coordinator?.pc_name || (lanStatus?.serving ? lanStatus?.pc_name : '—')}</p>
+              <p class="text-[8px] font-mono text-pos-muted truncate">
+                {lanStatus?.server_url ? lanStatus.server_url.replace('http://','') : (lanStatus?.serving ? (lanStatus?.lan_ips?.[0] || '') + ':' + (lanStatus?.port || 8080) : '—')}
+              </p>
+            </div>
+          </div>
+
+          <!-- Role switcher -->
+          <div class="grid grid-cols-3 gap-2">
+            <button type="button" on:click={lanSetRole('server')} disabled={lanBusy === 'role'}
+              class="py-2 rounded-xl text-xs font-black cursor-pointer transition {lanStatus?.role === 'server' ? 'bg-sky-600 text-white shadow-md' : 'bg-white dark:bg-slate-900 text-pos-text border border-pos-border hover:border-sky-400'}">
+              Server
+            </button>
+            <button type="button" on:click={lanSetRole('client')} disabled={lanBusy === 'role'}
+              class="py-2 rounded-xl text-xs font-black cursor-pointer transition {lanStatus?.role === 'client' ? 'bg-sky-600 text-white shadow-md' : 'bg-white dark:bg-slate-900 text-pos-text border border-pos-border hover:border-sky-400'}">
+              Client
+            </button>
+            <button type="button" on:click={lanSetRole('automatic')} disabled={lanBusy === 'role'}
+              class="py-2 rounded-xl text-xs font-black cursor-pointer transition {lanStatus?.role === 'automatic' ? 'bg-sky-600 text-white shadow-md' : 'bg-white dark:bg-slate-900 text-pos-text border border-pos-border hover:border-sky-400'}">
+              Automatic (recommended)
+            </button>
+          </div>
+
+          <!-- Toggles + actions -->
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" on:click={lanToggleEnabled} disabled={lanBusy === 'enabled'}
+              class="px-3 py-1.5 rounded-lg text-[10px] font-black cursor-pointer {lanStatus?.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-200 dark:bg-slate-700 text-pos-muted'}">
+              Networking: {lanStatus?.enabled ? 'ON' : 'OFF'}
+            </button>
+            <button type="button" on:click={lanToggleDiscovery} disabled={lanBusy === 'discovery'}
+              class="px-3 py-1.5 rounded-lg text-[10px] font-black cursor-pointer {lanStatus?.autodiscovery ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-200 dark:bg-slate-700 text-pos-muted'}">
+              Auto Discovery: {lanStatus?.autodiscovery ? 'ON' : 'OFF'}
+            </button>
+            <button type="button" on:click={lanToggleReconnect} disabled={lanBusy === 'reconnect'}
+              class="px-3 py-1.5 rounded-lg text-[10px] font-black cursor-pointer {lanStatus?.autoreconnect ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-200 dark:bg-slate-700 text-pos-muted'}">
+              Auto Reconnect: {lanStatus?.autoreconnect ? 'ON' : 'OFF'}
+            </button>
+            <button type="button" on:click={lanOpenFirewall} disabled={lanBusy === 'firewall'}
+              class="px-3 py-1.5 bg-white dark:bg-slate-900 border border-pos-border hover:border-sky-400 text-pos-text rounded-lg text-[10px] font-black cursor-pointer">
+              Allow through Windows Firewall
+            </button>
+          </div>
+
+          <!-- Become server (shop name) / Leave -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div class="p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border space-y-2">
+              <p class="text-[10px] font-black text-pos-muted uppercase">Become the shop server</p>
+              <input type="text" bind:value={lanShopNameInput} placeholder="{lanStatus?.shop_name || 'Shop name (optional)'}" class="w-full px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-lg text-xs font-bold text-pos-text outline-none" />
+              <button type="button" on:click={lanBecomeServer} disabled={lanBusy === 'server'}
+                class="w-full py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-black rounded-lg cursor-pointer">
+                Create / Own the Shop Network
+              </button>
+            </div>
+            <div class="p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border space-y-2 flex flex-col justify-between">
+              <p class="text-[10px] font-black text-pos-muted uppercase">Membership</p>
+              <p class="text-[10px] text-pos-muted font-bold">
+                {#if lanStatus?.shop_id}
+                  Joined shop <span class="font-mono">{lanStatus.shop_id.slice(0, 11)}…</span> — leaving keeps all data; the server keeps its own copy.
+                {:else}
+                  This PC is not a member of any shop yet. Automatic mode will join/discover one, or become a server above.
+                {/if}
+              </p>
+              <button type="button" on:click={lanLeave} disabled={lanBusy === 'leave' || !lanStatus?.shop_id}
+                class="w-full py-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 border border-rose-200 dark:border-rose-800 text-[10px] font-black rounded-lg cursor-pointer disabled:opacity-40">
+                Leave Shop Network
+              </button>
+            </div>
+          </div>
+
+          <!-- Manual server (advanced) -->
+          <div>
+            <button type="button" on:click={() => (lanAdvancedOpen = !lanAdvancedOpen)} class="text-[10px] font-black text-sky-600 hover:text-sky-700 cursor-pointer">
+              {lanAdvancedOpen ? '▾' : '▸'} Advanced: connect by server IP (no discovery)
+            </button>
+            {#if lanAdvancedOpen}
+              <div class="mt-2 p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border space-y-2">
+                <div class="flex gap-1.5">
+                  <input type="text" bind:value={lanManualAddr} placeholder="192.168.8.102:8080" class="flex-1 px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-lg text-xs font-mono font-bold text-pos-text outline-none" />
+                  <button type="button" on:click={lanProbeManual} disabled={lanBusy === 'probe' || !lanManualAddr.trim()} class="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-pos-text text-[10px] font-black rounded-lg cursor-pointer disabled:opacity-40">Probe</button>
+                </div>
+                {#if lanProbed}
+                  <div class="flex items-center justify-between p-2 bg-emerald-50 dark:bg-emerald-950/40 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                    <p class="text-[10px] font-black text-pos-text">{lanProbed.shop_name || 'Shop'} • server: {lanProbed.server_pc} • v{lanProbed.app_version}</p>
+                    <button type="button" on:click={lanJoinManual} disabled={lanBusy === 'join'} class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black rounded-lg cursor-pointer">Join this shop</button>
+                  </div>
+                {/if}
+                {#if lanStatus?.manual_server}
+                  <p class="text-[9px] font-mono text-pos-muted">Manual override active: {lanStatus.manual_server}</p>
+                {/if}
+              </div>
+            {/if}
+          </div>
+
+          <!-- Connected terminals (server view: real registered devices) -->
+          <div class="p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+            <p class="text-[10px] font-black text-pos-muted uppercase mb-2">
+              Connected TitaouPOS Terminals ({lanStatus?.devices_count ?? 0})
+            </p>
+            {#if lanStatus?.devices?.length}
+              <div class="space-y-1.5">
+                {#each lanStatus.devices as d}
+                  <div class="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-pos-border/60">
+                    <div class="min-w-0">
+                      <p class="text-xs font-black text-pos-text flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full {d.online ? 'bg-emerald-500' : 'bg-slate-400'}"></span>
+                        {d.pc_name}
+                      </p>
+                      <p class="text-[9px] font-mono text-pos-muted truncate">{d.node_id} • {d.ip} • v{d.app_version} • seen {d.last_seen_secs_ago}s ago</p>
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                      <button type="button" on:click={() => lanBlockDevice(d.node_id, true)} disabled={lanBusy === 'block'} class="px-2 py-1 bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 text-[9px] font-black rounded-md cursor-pointer">Block</button>
+                      <button type="button" on:click={() => lanRemoveDevice(d.node_id)} disabled={lanBusy === 'remove'} class="px-2 py-1 bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 text-[9px] font-black rounded-md cursor-pointer">Remove</button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-[10px] text-pos-muted font-bold">
+                {#if lanStatus?.serving}
+                  No other terminals connected yet — they join automatically in Automatic mode, or via the first-run wizard.
+                {:else if lanStatus?.mode === 'connected'}
+                  Device list is served by the coordinator PC.
+                {:else}
+                  —
+                {/if}
+              </p>
+            {/if}
+          </div>
+        </div>
+        <!-- ============ /TitaouPOS SHOP NETWORK ============ -->
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <!-- Server Status & QR Connection (REAL data from the embedded server) -->

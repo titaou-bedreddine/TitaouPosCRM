@@ -10,6 +10,11 @@ export function logout() {
   // A fresh login always starts in SALE mode — the previous user may have
   // left the POS in purchase/broken mode.
   import('./cart').then(({ posMode }) => posMode.set('sale')).catch(() => {});
+  // LAN client mode: drop the user's API token from memory (the device
+  // stays registered). Never blocks logout.
+  import('@tauri-apps/api/core')
+    .then(({ invoke }) => invoke('network_logout').catch(() => {}))
+    .catch(() => {});
 }
 
 export function hasPermission(user: User | null, permissionCode: string): boolean {

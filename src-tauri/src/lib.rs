@@ -2,6 +2,7 @@ pub mod auth;
 pub mod commands;
 pub mod database;
 pub mod models;
+pub mod network;
 pub mod printing;
 pub mod server;
 pub mod services;
@@ -17,6 +18,9 @@ pub fn run() {
     crate::services::settings_service::run_startup_backup(&db_state);
 
     server::set_diag_db(DbState::new().expect("diag db"));
+    // The LAN shop API shares the same authoritative SQLite file (its own
+    // WAL connection) — set BEFORE the server starts serving /api/v1.
+    network::server_api::set_api_db(DbState::new().expect("lan api db"));
     server::start_local_api_server();
 
     tauri::Builder::default()
@@ -32,6 +36,11 @@ pub fn run() {
             }
         }))
         .manage(db_state)
+        .setup(|app| {
+            // LAN shop networking: discovery, election, client/server roles.
+            network::init(app.handle().clone(), DbState::new().expect("network db"));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::login,
             commands::get_active_users,
@@ -152,6 +161,24 @@ pub fn run() {
             commands::list_app_notifications,
             commands::dismiss_app_notification,
             commands::get_server_status,
+            // LAN shop network
+            commands::network_cmds::network_get_status,
+            commands::network_cmds::network_get_log,
+            commands::network_cmds::network_discovered_servers,
+            commands::network_cmds::network_set_setup,
+            commands::network_cmds::network_set_role,
+            commands::network_cmds::network_set_pc_name,
+            commands::network_cmds::network_set_flags,
+            commands::network_cmds::network_become_server,
+            commands::network_cmds::network_probe_server,
+            commands::network_cmds::network_join_server,
+            commands::network_cmds::network_leave_shop,
+            commands::network_cmds::network_block_device,
+            commands::network_cmds::network_remove_device,
+            commands::network_cmds::network_rename_device,
+            commands::network_cmds::network_logout,
+            commands::network_cmds::network_open_firewall,
+            commands::network_cmds::network_forward,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
