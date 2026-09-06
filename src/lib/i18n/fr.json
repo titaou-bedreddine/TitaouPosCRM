@@ -543,5 +543,20 @@
   "reopen_last_receipt": "Rouvrir le dernier reçu",
   "reprint_last_receipt": "Réimprimer le dernier reçu",
   "clear_debt": "Effacer la dette",
-  "backup_now": "Sauvegarder maintenant"
+  "backup_now": "Sauvegarder maintenant",
+  "sale_edited_tag": "Modifié",
+  "invoice_click_to_copy": "Cliquez le numéro de facture pour le copier",
+  "invoice_copied": "Copié !",
+  "sale_loaded_edit": "Reçu chargé pour modification — la validation le met à jour",
+  "sale_qr_not_found": "Reçu introuvable",
+  "label_preset_vprice": "Étiquette Prix Produit — 40×20 mm (code-barres)",
+  "label_preset_shelf": "Étiquette Rayon — 40×20 mm (sans code-barres)",
+  "label_print_success": "{n} étiquette(s) imprimée(s) avec succès",
+  "product_print_barcode_hint": "Imprimer étiquette prix ×{n} (une par unité en stock)",
+  "product_print_shelf_hint": "Imprimer étiquette rayon ×1",
+  "exp_click_hint": "Ouvrir les détails du bon",
+  "exp_view_hint": "Voir les détails",
+  "exp_print_hint": "Imprimer le bon",
+  "exp_deleted": "Dépense supprimée",
+  "btn_cancel": "Annuler"
 }

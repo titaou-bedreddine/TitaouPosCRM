@@ -192,8 +192,15 @@ pub fn print_receipt_job(
     let content_px = (content_rows + 8).min(img_h);
     let height_mm = ((content_px as f64) * 25.4 / dpi as f64).ceil().max(10.0);
 
+    // CRASH FIX (v0.5.19): the DIB is sized img_w × content_px but `bgra`
+    // still holds the FULL generous-height page — copy_nonoverlapping copied
+    // the whole oversized buffer into the smaller DIB = heap corruption =
+    // the process died on checkout with auto-print ON. Crop the slice.
+    let stride = (img_w as usize) * 4;
+    let cropped = &bgra[..stride * content_px as usize];
+
     // 3. GDI print ONE page of exactly width × height mm.
-    match gdi_print_bgra_pages(&bgra, img_w, content_px, width_mm, height_mm, 1, printer, job_title) {
+    match gdi_print_bgra_pages(cropped, img_w, content_px, width_mm, height_mm, 1, printer, job_title) {
         Ok(()) => finish(
             true,
             "gdi-dynamic-receipt",

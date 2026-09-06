@@ -11,6 +11,11 @@
   export let query = '';
   export let searchType: 'all' | 'name' | 'barcode' | 'price' | 'qr' = 'all';
   export let onSearch: () => void;
+  // Receipt QR scan (`SALE:<number>`): the POS opens the sale for
+  // edit/reprint. Return true when the payload was consumed.
+  export let onSaleQrScan: ((payload: string) => Promise<boolean>) | null = null;
+  // Purchase QR scan (`PUR:<invoice>`): jumps to the purchases page.
+  export let onPurchaseQrScan: ((payload: string) => void) | null = null;
   // POS rule: when > 0, the search bar auto-refocuses after N idle seconds.
   export let autofocusSeconds = 0;
 
@@ -70,6 +75,23 @@
 
   async function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
+      // Receipt / purchase QR payloads route to their own flows — they are
+      // NOT product barcodes (scanning a receipt QR opens it for reprint /
+      // edit; a purchase QR jumps to the invoice).
+      const q = query.trim().toUpperCase();
+      if (q.startsWith('SALE:') && onSaleQrScan) {
+        const consumed = await onSaleQrScan(query.trim());
+        if (consumed) {
+          query = '';
+          return;
+        }
+      }
+      if (q.startsWith('PUR:') && onPurchaseQrScan) {
+        onPurchaseQrScan(query.trim());
+        query = '';
+        return;
+      }
+
       // Auto-normalize if scanning numeric barcode with AZERTY/Arabic keyboard active
       if (searchType === 'barcode' || /^[&é"'\(-è_çà0-9١-٩]+$/.test(query.trim())) {
         query = normalizeBarcode(query);

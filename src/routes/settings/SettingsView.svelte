@@ -1177,6 +1177,9 @@
   // PERF: the unified RECEIPT live preview (invoices tab) also rebuilds only
   // while that tab is visible — the same fix as the label previews.
   let unifiedPreviewBuilt: { html: string; title: string; paperWidthMm: number } | null = null;
+  // Offline QR for the live preview so the "QR Code Verification" toggle
+  // is visible and testable right here.
+  let previewQrDataUrl = '';
   $: if (currentTab === 'invoices') {
     unifiedPreviewBuilt = buildUnifiedReceipt({
       saleNumber: 'TEST-0001',
@@ -1195,6 +1198,7 @@
       amountPaid: 600,
       change: 10,
       settings: settings as Record<string, string>,
+      qrDataUrl: previewQrDataUrl || undefined,
     });
   }
 
@@ -1462,8 +1466,8 @@
         <!-- Invoice / Receipt Printer Selection -->
         <div class="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-pos-border flex items-center justify-between gap-4">
           <div class="min-w-0">
-            <h4 class="text-xs font-black text-pos-text">Invoice / Receipt Printer (طابعة الوصولات)</h4>
-            <p class="text-[11px] text-pos-muted">Prints receipts, invoices and vouchers. Empty = system default printer.</p>
+            <h4 class="text-xs font-black text-pos-text">Receipt Printer — the ONE selector (طابعة الوصولات)</h4>
+            <p class="text-[11px] text-pos-muted">Prints receipts, invoices and vouchers via the native Windows print API. Empty = system default printer.</p>
           </div>
           <select
             bind:value={settings.invoice_printer_name}
@@ -1503,17 +1507,6 @@
                 <span>Printer & Page Sizing (إعدادات الطابعة والورق)</span>
               </h3>
               <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label class="block text-xs font-bold text-pos-muted mb-1">Receipt Printer</label>
-                  <select bind:value={settings.receipt_printer} class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs text-pos-text font-bold">
-                    <option value="Xprinter XP-DT427B">Xprinter XP-DT427B</option>
-                    <option value="Epson TM-T20III">Epson TM-T20III</option>
-                    <option value="Bixolon SRP-350">Bixolon SRP-350</option>
-                    <option value="Generic 80mm">Generic Thermal 80mm</option>
-                    <option value="Generic 58mm">Generic Thermal 58mm</option>
-                  </select>
-                </div>
-
                 <div>
                   <label class="block text-xs font-bold text-pos-muted mb-1">Paper Roll Width</label>
                   <select bind:value={settings.receipt_paper_width} class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs text-pos-text font-bold">
@@ -2090,8 +2083,8 @@
                   on:change={autoSaveSettings}
                   class="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer"
                 >
-                  <option value="vprice40x20">Vertical Price — 40×20 mm (barcode + rotated price)</option>
-                  <option value="shelf40x20">Shelf Price — 40×20 mm (name + big price, no barcode)</option>
+                  <option value="vprice40x20">{t('label_preset_vprice')}</option>
+                  <option value="shelf40x20">{t('label_preset_shelf')}</option>
                 </select>
                 <button
                   type="button"
@@ -2188,7 +2181,7 @@
           {#each LABEL_PRESET_IDS as pid}
             <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border space-y-3">
               <div class="flex items-center justify-between gap-2">
-                <span dir="ltr" class="text-xs font-black text-pos-text">{LABEL_PRESETS[pid].name}</span>
+                <span dir="ltr" class="text-xs font-black text-pos-text">{t(pid === 'vprice40x20' ? 'label_preset_vprice' : 'label_preset_shelf')}</span>
                 <span dir="ltr" class="text-[9px] font-mono bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">
                   {LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm} mm
                 </span>

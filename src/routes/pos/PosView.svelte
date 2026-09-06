@@ -15,6 +15,8 @@
 
   // Route navigation for F7 (products) / F8 (register) / F9 (sales).
   export let onNavigate: (route: string) => void = () => {};
+  // Purchase QR scan (PUR:<invoice>) → App opens the purchases page.
+  export let onOpenPurchase: ((invoiceNumber: string) => void) | null = null;
   // From notifications: open this product's editor as soon as the POS loads.
   export let initialOpenProductId: number | null = null;
   export let onProductOpened: () => void = () => {};
@@ -170,6 +172,8 @@
   let isUnknownBarcodeModalOpen = false;
   // Last-receipt reopen/reprint modal (top bar button).
   let isLastReceiptOpen = false;
+  // Banner for receipt-QR scan results (SALE: payload lookup).
+  let qrSaleNotice = '';
   // Purchase mode: the product waiting for its new supplier price.
   let purchasePriceTarget: Product | null = null;
   let unknownScannedBarcode = '';
@@ -319,6 +323,14 @@
   async function handleScannedBarcode(rawBarcode: string) {
     const code = normalizeBarcode(rawBarcode).trim();
     if (!code) return;
+
+    // Receipt QR payloads (SALE:<number>) open the sale for edit/reprint —
+    // they are NOT product barcodes.
+    if (code.toUpperCase().startsWith('SALE:')) {
+      await handleSaleQrScan(code);
+      searchQuery = '';
+      return;
+    }
 
     try {
       const list = await invoke<Product[]>('search_products', {
@@ -578,11 +590,17 @@
     if (!el.closest('[data-supplier-selector]')) isSupplierSelectorOpen = false;
   }
 
-  // "Edit in POS" from the last-receipt modal: load the sale's items into
-  // the cart; the existing originSaleId mechanism updates the sale in
+  // "Edit in POS" from the last-receipt modal or a scanned receipt QR:
+  // the CURRENT cart is HELD first (never silently lost), then the sale's
+  // items load; the existing originSaleId mechanism updates the sale in
   // place on checkout (no duplicate row, same receipt number).
   async function handleEditLastSaleInPos(sale: any) {
     try {
+      // Park the active cart before replacing it (editing a receipt with
+      // items in the cart must HOLD it, never discard).
+      if ($cartItems.length > 0) {
+        await holdCurrentSale(`[${$posMode.toUpperCase()} MODE]`);
+      }
       const items = await invoke<any[]>('get_sale_items', { saleId: sale.id });
       const mapped = items.map((i) => ({
         product_id: i.product_id,
@@ -606,6 +624,32 @@
     } catch (e) {
       console.error('Failed to load last sale for editing:', e);
     }
+  }
+
+  // Receipt QR scan (payload `SALE:<sale_number>`, printed on every
+  // receipt): opens that sale in the POS for reprint/edit. The current
+  // cart is held first; the sale loads in EDIT mode (originSaleId) so
+  // checkout updates it in place. Returns true when the payload was a
+  // sale QR (consumed, do not treat it as a product barcode).
+  async function handleSaleQrScan(rawPayload: string): Promise<boolean> {
+    const payload = rawPayload.trim();
+    if (!payload.toUpperCase().startsWith('SALE:')) return false;
+    const saleNumber = payload.slice(5).trim();
+    if (!saleNumber) return true;
+    try {
+      const res = await invoke<any | null>('get_sale_by_number', { saleNumber });
+      if (!res) {
+        qrSaleNotice = `❌ ${t('sale_qr_not_found')}: #${saleNumber}`;
+      } else {
+        await handleEditLastSaleInPos(res.sale);
+        qrSaleNotice = `🧾 ${t('sale_loaded_edit')}: #${res.sale.sale_number}`;
+      }
+    } catch (e: any) {
+      console.error('Sale QR lookup failed:', e);
+      qrSaleNotice = '❌ ' + (typeof e === 'string' ? e : e?.message || 'Lookup failed');
+    }
+    setTimeout(() => (qrSaleNotice = ''), 5000);
+    return true;
   }
 
   onMount(async () => {
@@ -1072,6 +1116,13 @@
     </div>
   {/if}
 
+  {#if qrSaleNotice}
+    <div class="bg-indigo-600 text-white px-4 py-2 text-xs font-bold flex items-center justify-between shadow-md animate-in slide-in-from-top-2">
+      <span>{qrSaleNotice}</span>
+      <button on:click={() => (qrSaleNotice = '')} class="underline cursor-pointer">{t('pos_dismiss')}</button>
+    </div>
+  {/if}
+
   <!-- Main POS Workspace -->
   <div class="flex-1 flex overflow-hidden p-2.5 gap-2.5">
     <!-- LEFT PANEL: Search, Category Pills, Catalog Grid -->
@@ -1084,6 +1135,8 @@
             bind:searchType
             onSearch={loadProducts}
             autofocusSeconds={autofocusTimerSeconds}
+            onSaleQrScan={handleSaleQrScan}
+            onPurchaseQrScan={(payload) => onOpenPurchase?.(payload)}
           />
         </div>
 

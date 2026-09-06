@@ -171,6 +171,18 @@
     }
   }
 
+  // Click the invoice number to copy it (hint under the modal header).
+  let invoiceCopied = false;
+  async function copyInvoiceNumber(num: string) {
+    try {
+      await navigator.clipboard.writeText(num);
+      invoiceCopied = true;
+      setTimeout(() => (invoiceCopied = false), 1800);
+    } catch {
+      console.warn('clipboard write failed');
+    }
+  }
+
   function promptProtectedDelete() {
     deleteError = '';
     adminPassword = '';
@@ -402,7 +414,12 @@
               on:click={() => openSaleDetails(s)}
               class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition cursor-pointer"
             >
-              <td class="p-3 font-mono font-bold text-sky-600">#{s.sale_number}</td>
+              <td class="p-3 font-mono font-bold text-sky-600">
+                #{s.sale_number}
+                {#if s.is_edited}
+                  <span class="ms-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t('sale_edited_tag')}</span>
+                {/if}
+              </td>
               <td class="p-3 font-mono text-pos-muted">{s.created_at}</td>
               <td class="p-3 font-bold text-pos-text">{s.user_name || 'Admin'}</td>
               <td class="p-3 text-pos-muted">{s.customer_name || 'Client Comptoir'}</td>
@@ -459,8 +476,20 @@
             <ShoppingBag class="w-5 h-5" />
           </div>
           <div>
-            <h3 class="font-black text-base text-pos-text">Sale Invoice #{selectedSale.sale_number}</h3>
+            <h3 class="font-black text-base text-pos-text flex items-center gap-2">
+              <button
+                type="button"
+                on:click={() => copyInvoiceNumber(selectedSale!.sale_number)}
+                class="hover:text-sky-600 transition cursor-pointer"
+                title={t('invoice_click_to_copy')}
+              >Sale Invoice #{selectedSale.sale_number}</button>
+              {#if invoiceCopied}<span class="text-[10px] font-black text-emerald-600">{t('invoice_copied')}</span>{/if}
+              {#if selectedSale.is_edited}
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t('sale_edited_tag')}</span>
+              {/if}
+            </h3>
             <p class="text-xs text-pos-muted">{selectedSale.created_at} • Cashier: {selectedSale.user_name || 'Admin'}</p>
+            <p class="text-[10px] text-pos-muted">{t('invoice_click_to_copy')}</p>
           </div>
         </div>
         <button on:click={() => (isDetailModalOpen = false)} class="text-pos-muted hover:text-pos-text p-1.5 rounded-xl cursor-pointer">

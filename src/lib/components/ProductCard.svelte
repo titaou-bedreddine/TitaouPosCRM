@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Product } from '../types';
-  import { t, currentLocale } from '../i18n';
+  import { t, tf, currentLocale } from '../i18n';
   import { addToCart, isRefundMode } from '../stores/cart';
   import PrintLabelModal from './PrintLabelModal.svelte';
   import { Package, Plus, Edit2, AlertTriangle, AlertOctagon, QrCode, Tag, Pin, PinOff, ChevronUp, ChevronDown } from 'lucide-svelte';
@@ -239,7 +239,7 @@
         type="button"
         on:click={openPrintSticker}
         class="w-6 h-6 rounded-lg bg-white/90 dark:bg-slate-800/90 text-sky-600 hover:scale-110 shadow-xs flex items-center justify-center cursor-pointer transition"
-        title="Print Barcode Sticker (x{Math.max(1, Math.floor(product.current_stock || 0))})"
+        title={tf('product_print_barcode_hint', { n: String(Math.max(1, Math.floor(product.current_stock || 0))) })}
       >
         <QrCode class="w-3.5 h-3.5" />
       </button>
@@ -247,7 +247,7 @@
         type="button"
         on:click={openPrintShelf}
         class="w-6 h-6 rounded-lg bg-white/90 dark:bg-slate-800/90 text-emerald-600 hover:scale-110 shadow-xs flex items-center justify-center cursor-pointer transition"
-        title="Print Shelf Tag (x1)"
+        title={t('product_print_shelf_hint')}
       >
         <Tag class="w-3.5 h-3.5" />
       </button>

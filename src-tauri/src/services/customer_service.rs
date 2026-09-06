@@ -8,7 +8,8 @@ pub fn list_customers(db: &DbState) -> Result<Vec<Customer>, String> {
         .prepare(
             "SELECT c.id, c.name, c.phone, c.email, c.address, c.rc, c.nif, c.nis, c.ai, c.qr_code,
                     c.balance, c.initial_debt, c.notes, c.is_active, c.created_at,
-                    COALESCE(SUM(s.total_amount), 0) as total_purchases
+                    COALESCE(SUM(s.total_amount), 0) as total_purchases,
+                    COALESCE(c.pinned, 0), COALESCE(c.pin_order, 0)
              FROM customers c
              LEFT JOIN sales s ON c.id = s.customer_id AND s.status = 'completed'
              WHERE c.is_active = 1
@@ -36,6 +37,8 @@ pub fn list_customers(db: &DbState) -> Result<Vec<Customer>, String> {
                 is_active: row.get(13)?,
                 created_at: row.get(14)?,
                 total_purchases: Some(row.get(15)?),
+                pinned: row.get::<_, i64>(16)? == 1,
+                pin_order: row.get(17)?,
             })
         })
         .map_err(|e| e.to_string())?;

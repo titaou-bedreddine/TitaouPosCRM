@@ -267,6 +267,10 @@ pub struct Sale {
     /// Total UNITS across all lines (Σ quantity) — lines ≠ units.
     #[serde(default)]
     pub units_sold: f64,
+    /// True when the sale was re-checkout-edited in place (replace_sale
+    /// stamps "MODIFIED" into notes) — drives the localized EDITED badge.
+    #[serde(default)]
+    pub is_edited: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -287,6 +291,10 @@ pub struct Customer {
     pub notes: Option<String>,
     pub is_active: bool,
     pub created_at: String,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub pin_order: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -328,6 +336,10 @@ pub struct Supplier {
     pub notes: Option<String>,
     pub is_active: bool,
     pub created_at: String,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub pin_order: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

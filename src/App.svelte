@@ -33,6 +33,11 @@
   } from 'lucide-svelte';
 
   let currentRoute = 'pos';
+  // Purchase QR scan (PUR:<invoice>): open the purchases page focused on
+  // that invoice.
+  let purchasesFocusInvoice: string | null = null;
+  // Sidebar drawer-kick feedback (success/failure shown under the button).
+  let drawerMsg = '';
 
   // Route-level access control. Administrators see everything; a Cashier is
   // limited to POS, sales history, expenses and customers (so they can
@@ -518,15 +523,20 @@
         <button
           type="button"
           on:click={async () => {
+            drawerMsg = '';
             try {
               const s = await invoke<Record<string, string>>('get_all_settings');
-              await invoke('open_serial_cash_drawer', {
+              const res = await invoke<string>('open_serial_cash_drawer', {
                 comPort: parseInt(s['drawer_com_port'] || '1', 10) || 1,
                 baudRate: parseInt(s['drawer_baud_rate'] || '9600', 10) || 9600,
               });
-            } catch (e) {
+              drawerMsg = '✅ ' + res;
+            } catch (e: any) {
+              // Visible failure — the sidebar kick used to die silently.
+              drawerMsg = '❌ ' + (typeof e === 'string' ? e : e?.message || String(e));
               console.warn('Drawer kick failed:', e);
             }
+            setTimeout(() => (drawerMsg = ''), 5000);
           }}
           class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-pointer transition"
           title="Open Cash Drawer (F10)"
@@ -534,6 +544,9 @@
           <CreditCard class="w-4 h-4" />
           <span>{t('btn_drawer')}</span>
         </button>
+        {#if drawerMsg}
+          <p class="text-[9px] font-bold px-1 {drawerMsg.startsWith('✅') ? 'text-emerald-600' : 'text-rose-600'}" title={drawerMsg}>{drawerMsg}</p>
+        {/if}
 
         <!-- Clean User Card Horizontal with Compact Language Selector -->
         <div class="p-2 bg-pos-card rounded-xl border border-pos-border shadow-xs space-y-2">
@@ -668,13 +681,13 @@
 
       <div class="flex-1 overflow-hidden">
         {#if currentRoute === 'pos'}
-          <PosView onNavigate={(r) => (currentRoute = r)} initialOpenProductId={posOpenProductId} onProductOpened={() => (posOpenProductId = null)} />
+          <PosView onNavigate={(r) => (currentRoute = r)} initialOpenProductId={posOpenProductId} onProductOpened={() => (posOpenProductId = null)} onOpenPurchase={(inv) => { purchasesFocusInvoice = inv; currentRoute = 'purchases'; }} />
         {:else if currentRoute === 'sales'}
           <SalesView onRequestPosRoute={() => (currentRoute = 'pos')} />
         {:else if currentRoute === 'cash'}
           <CashRegisterView />
         {:else if currentRoute === 'purchases'}
-          <PurchasesView />
+          <PurchasesView focusInvoice={purchasesFocusInvoice} />
         {:else if currentRoute === 'customers'}
         <CustomersView />
       {:else if currentRoute === 'suppliers'}

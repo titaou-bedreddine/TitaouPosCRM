@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { t, tf } from '../i18n';
   import { invoke } from '@tauri-apps/api/core';
   import type { Product } from '../types';
   import { printLabelSilently, type LabelPrintOutcome } from '../utils/printer';
@@ -35,21 +36,12 @@
   $: shopName = settings.shop_name_fr || 'TitaouPOS';
   $: barcode = product?.barcodes?.[0] || product?.sku || '';
 
-  // Default preset resolved WITHOUT a reactive statement (the old $:if
-  // created a widthMm → labelType → settings → labelType cycle): computed
-  // when the modal opens, from the settings already loaded on mount.
-  function resolveDefaultPreset(): LabelPresetId {
-    const configured = settings.label_preset_id;
-    if (configured === 'shelf40x20') return 'shelf40x20';
-    return 'vprice40x20';
-  }
-
   $: if (isOpen) {
     labelType = initialType;
     copies = initialQty;
     // Shelf etiquette opened as such prefers the shelf preset; otherwise
     // the configured default from Settings wins.
-    presetId = initialType === 'etiquette' ? 'shelf40x20' : resolveDefaultPreset();
+    presetId = initialType === 'etiquette' ? 'shelf40x20' : 'vprice40x20';
     zoom = 1;
   }
 
@@ -132,18 +124,26 @@
           <div class="grid grid-cols-2 gap-2">
             <button
               type="button"
-              on:click={() => { presetId = 'vprice40x20'; }}
+              on:click={() => {
+                presetId = 'vprice40x20';
+                // Printing price stickers: one per unit in stock.
+                copies = Math.max(1, Math.floor(product?.current_stock ?? 1));
+              }}
               class="px-2.5 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center text-center gap-0.5 {presetId === 'vprice40x20' ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 shadow-xs' : 'border-pos-border bg-slate-50 dark:bg-slate-800/40 text-pos-muted hover:text-pos-text'}"
             >
-              <span class="leading-tight">Vertical Price</span>
+              <span class="leading-tight">{t('label_preset_vprice')}</span>
               <span class="text-[10px] opacity-75 font-mono">40×20 mm</span>
             </button>
             <button
               type="button"
-              on:click={() => { presetId = 'shelf40x20'; }}
+              on:click={() => {
+                presetId = 'shelf40x20';
+                // Shelf tags: ONE per product.
+                copies = 1;
+              }}
               class="px-2.5 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center text-center gap-0.5 {presetId === 'shelf40x20' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 shadow-xs' : 'border-pos-border bg-slate-50 dark:bg-slate-800/40 text-pos-muted hover:text-pos-text'}"
             >
-              <span class="leading-tight">Shelf Price</span>
+              <span class="leading-tight">{t('label_preset_shelf')}</span>
               <span class="text-[10px] opacity-75 font-mono">40×20 mm</span>
             </button>
           </div>
@@ -204,23 +204,28 @@
             </style>
           </div>
 
-          <!-- Print job diagnostics (exact-media pipeline) -->
+          <!-- Print result: SUCCESS is a small one-liner (no technical
+               details); failures keep the full diagnostics for debugging. -->
           {#if printOutcome}
-            <div class="rounded-xl border p-2.5 text-[10px] font-mono {printOutcome.ok ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300' : 'border-amber-300 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'}">
-              <div class="flex items-start gap-1.5">
-                {#if printOutcome.ok}
-                  <CheckCircle2 class="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                {:else}
+            {#if printOutcome.ok}
+              <div class="rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 p-2 text-[11px] font-bold flex items-center gap-1.5">
+                <CheckCircle2 class="w-4 h-4 shrink-0" />
+                <span>✅ {tf('label_print_success', { n: String(copies) })}</span>
+              </div>
+            {:else}
+              <div class="rounded-xl border p-2.5 text-[10px] font-mono border-rose-300 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300">
+                <div class="flex items-start gap-1.5">
                   <AlertTriangle class="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                {/if}
-                <div class="space-y-0.5 leading-relaxed">
-                  <div class="font-bold">{printOutcome.message}</div>
-                  <div>Printer: {printOutcome.diagnostics.printer} • DPI: {printOutcome.diagnostics.dpi}</div>
-                  <div>Media: {printOutcome.diagnostics.media_width_mm}×{printOutcome.diagnostics.media_height_mm}mm • Pages: {printOutcome.diagnostics.page_count} • Raster: {printOutcome.diagnostics.raster_width_px}×{printOutcome.diagnostics.raster_height_px}px</div>
-                  <div>Generated print: {printOutcome.diagnostics.print_width_mm}mm × {printOutcome.diagnostics.print_height_mm}mm total</div>
+                  <div class="space-y-0.5 leading-relaxed">
+                    <div class="font-bold">{printOutcome.message}</div>
+                    {#if printOutcome.diagnostics}
+                      <div>Printer: {printOutcome.diagnostics.printer} • DPI: {printOutcome.diagnostics.dpi}</div>
+                      <div>Media: {printOutcome.diagnostics.media_width_mm}×{printOutcome.diagnostics.media_height_mm}mm • Pages: {printOutcome.diagnostics.page_count}</div>
+                    {/if}
+                  </div>
                 </div>
               </div>
-            </div>
+            {/if}
           {/if}
         {/if}
 

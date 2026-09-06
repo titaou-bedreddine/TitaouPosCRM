@@ -238,7 +238,8 @@ pub fn list_sales(
                 s.total_amount, s.paid_amount, s.change_amount, s.payment_status, s.status, s.created_at,
                 (SELECT sp.payment_method FROM sale_payments sp WHERE sp.sale_id = s.id ORDER BY sp.amount DESC LIMIT 1) as payment_method,
                 (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as lines_sold,
-                (SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si WHERE si.sale_id = s.id) as units_sold
+                (SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si WHERE si.sale_id = s.id) as units_sold,
+                CASE WHEN s.notes LIKE '%MODIFIED%' THEN 1 ELSE 0 END as is_edited
          FROM sales s
          LEFT JOIN users u ON s.user_id = u.id
          LEFT JOIN customers c ON s.customer_id = c.id
@@ -288,6 +289,7 @@ pub fn list_sales(
                 items: None,
                 lines_sold: row.get(17)?,
                 units_sold: row.get(18)?,
+                is_edited: row.get::<_, i64>(19)? == 1,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -296,26 +298,44 @@ pub fn list_sales(
     Ok(list)
 }
 
+/// Look up ONE sale by its receipt number (the receipt QR payload is
+/// `SALE:<sale_number>` — scanning it in the POS opens the sale for
+/// reprint/edit). None when no sale carries that number.
+pub fn get_sale_by_number(db: &DbState, sale_number: &str) -> Result<Option<(Sale, Vec<CartItem>)>, String> {
+    get_sale_by_query(db, "WHERE s.sale_number = ?1", &[&sale_number])
+}
+
 /// The most recent completed sale, with its items — powers "Reopen/Reprint
 /// Last Receipt" straight from the POS. None until the first sale exists.
 pub fn get_last_sale(db: &DbState) -> Result<Option<(Sale, Vec<CartItem>)>, String> {
+    get_sale_by_query(db, "", &[])
+}
+
+/// Shared sale+items loader for get_last_sale / get_sale_by_number.
+fn get_sale_by_query(
+    db: &DbState,
+    where_clause: &str,
+    params: &[&dyn rusqlite::ToSql],
+) -> Result<Option<(Sale, Vec<CartItem>)>, String> {
     let conn = db.conn.lock().unwrap();
     let sale: Option<Sale> = {
         let mut stmt = conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT s.id, s.sale_number, s.session_id, s.user_id, u.display_name,
                         s.customer_id, c.name, s.subtotal, s.discount_amount, s.tax_amount,
                         s.total_amount, s.paid_amount, s.change_amount, s.payment_status, s.status, s.created_at,
                         (SELECT sp.payment_method FROM sale_payments sp WHERE sp.sale_id = s.id ORDER BY sp.amount DESC LIMIT 1),
-                        0, 0
+                        0, 0, CASE WHEN s.notes LIKE '%MODIFIED%' THEN 1 ELSE 0 END
                  FROM sales s
                  LEFT JOIN users u ON s.user_id = u.id
                  LEFT JOIN customers c ON s.customer_id = c.id
+                 {}
                  ORDER BY s.id DESC LIMIT 1",
-            )
+                where_clause
+            ))
             .map_err(|e| e.to_string())?;
         let mut rows = stmt
-            .query_map([], |row| {
+            .query_map(params, |row| {
                 Ok(Sale {
                     id: row.get(0)?,
                     sale_number: row.get(1)?,
@@ -337,6 +357,7 @@ pub fn get_last_sale(db: &DbState) -> Result<Option<(Sale, Vec<CartItem>)>, Stri
                     items: None,
                     lines_sold: 0,
                     units_sold: 0.0,
+                    is_edited: false,
                 })
             })
             .map_err(|e| e.to_string())?;

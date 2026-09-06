@@ -19,6 +19,9 @@
   } from 'lucide-svelte';
 
   let purchases: Purchase[] = [];
+  // Deep-link: a scanned purchase QR (PUR:<invoice>) opens this invoice's
+  // preview as soon as the list has loaded.
+  export let focusInvoice: string | null = null;
   // Three-state column sort: asc -> desc -> default.
   let sortKey: string | null = null;
   let sortDir: 'asc' | 'desc' | null = null;
@@ -224,6 +227,18 @@
   onMount(async () => {
     await loadData();
   });
+
+  // Deep-link from a scanned purchase QR: once the list lands, open the
+  // matching invoice's preview (print / edit / delete live there).
+  $: if (focusInvoice && purchases.length > 0) {
+    const target = purchases.find((p) => p.invoice_number === focusInvoice);
+    if (target) {
+      openPreview(target);
+      focusInvoice = null;
+    } else {
+      focusInvoice = null;
+    }
+  }
 
   async function loadData() {
     try {
@@ -435,6 +450,18 @@
       errorMsg = typeof e === 'string' ? e : e.message || 'Failed to save purchase';
     } finally {
       isSaving = false;
+    }
+  }
+
+  // Click the invoice number to copy it (hint under the modal header).
+  let invoiceCopied = false;
+  async function copyInvoiceNumber(num: string) {
+    try {
+      await navigator.clipboard.writeText(num);
+      invoiceCopied = true;
+      setTimeout(() => (invoiceCopied = false), 1800);
+    } catch {
+      console.warn('clipboard write failed');
     }
   }
 
@@ -863,8 +890,17 @@
     <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
       <div class="flex items-center justify-between px-6 py-4 border-b border-pos-border bg-slate-50 dark:bg-slate-800/60">
         <div>
-          <h3 class="font-black text-base text-pos-text">Purchase Invoice #{previewPurchase.invoice_number}</h3>
+          <h3 class="font-black text-base text-pos-text flex items-center gap-2">
+            <button
+              type="button"
+              on:click={() => copyInvoiceNumber(previewPurchase!.invoice_number)}
+              class="hover:text-sky-600 transition cursor-pointer"
+              title={t('invoice_click_to_copy')}
+            >Purchase Invoice #{previewPurchase.invoice_number}</button>
+            {#if invoiceCopied}<span class="text-[10px] font-black text-emerald-600">{t('invoice_copied')}</span>{/if}
+          </h3>
           <p class="text-xs text-pos-muted">{previewPurchase.date} • {previewPurchase.supplier_name || '—'} • Total {previewPurchase.total.toLocaleString()} DZD (Paid {previewPurchase.paid_amount.toLocaleString()})</p>
+          <p class="text-[10px] text-pos-muted">{t('invoice_click_to_copy')}</p>
         </div>
         <button on:click={() => (previewPurchase = null)} class="text-pos-muted hover:text-pos-text p-1.5 rounded-xl cursor-pointer">
           <X class="w-5 h-5" />

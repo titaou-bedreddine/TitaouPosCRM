@@ -11,7 +11,8 @@
   Printer,
     Package, Plus, Edit2, Trash2, QrCode,
     ArrowUpDown, AlertTriangle, Tag, LayoutGrid,
-    List, DollarSign, TrendingUp, Boxes, Check, X
+    List, DollarSign, TrendingUp, Boxes, Check, X,
+    Pin, PinOff
   } from 'lucide-svelte';
 
   let products: Product[] = [];
@@ -39,6 +40,17 @@
     return sortDir === 'asc' ? '▲' : '▼';
   }
   $: sortedProducts = sortRows(products, sortKey, sortDir, products);
+
+  // Pin/unpin a product: pinned products float to the top (same system as
+  // the POS grid — shared toggle_product_pin backend).
+  async function toggleProductPin(p: Product) {
+    try {
+      await invoke('toggle_product_pin', { productId: p.id, pinned: !p.pinned });
+      await loadProducts();
+    } catch (e) {
+      console.warn('Pin failed:', e);
+    }
+  }
   let categories: Category[] = [];
   let units: Unit[] = [];
 
@@ -536,6 +548,18 @@
                     title="Print Shelf Tag"
                   >
                     <Tag class="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    on:click={() => toggleProductPin(p)}
+                    class="p-1.5 rounded-lg transition cursor-pointer {p.pinned ? 'bg-amber-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-pos-muted hover:text-amber-500'}"
+                    title={p.pinned ? 'Unpin (إزالة التثبيت)' : 'Pin to top (تثبيت)'}
+                  >
+                    {#if p.pinned}
+                      <PinOff class="w-3.5 h-3.5" />
+                    {:else}
+                      <Pin class="w-3.5 h-3.5" />
+                    {/if}
                   </button>
                 </div>
               </div>

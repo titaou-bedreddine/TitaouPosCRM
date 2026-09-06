@@ -543,5 +543,20 @@
   "reopen_last_receipt": "فتح آخر وصل",
   "reprint_last_receipt": "إعادة طباعة آخر وصل",
   "clear_debt": "مصالحة الدين",
-  "backup_now": "نسخ احتياطي الآن"
+  "backup_now": "نسخ احتياطي الآن",
+  "sale_edited_tag": "معدل",
+  "invoice_click_to_copy": "انقر على رقم الفاتورة لنسخه",
+  "invoice_copied": "تم النسخ!",
+  "sale_loaded_edit": "تم فتح الوصل للتعديل — عند إتمام البيع سيُحدَّث",
+  "sale_qr_not_found": "الوصل غير موجود",
+  "label_preset_vprice": "ملصق سعر المنتج — 40×20 مم (باركود)",
+  "label_preset_shelf": "بطاقة سعر الرف — 40×20 مم (بدون باركود)",
+  "label_print_success": "تمت طباعة {n} ملصق بنجاح",
+  "product_print_barcode_hint": "طباعة ملصق السعر ×{n} (وحدة لكل قطعة بالمخزون)",
+  "product_print_shelf_hint": "طباعة بطاقة الرف ×1",
+  "exp_click_hint": "فتح تفاصيل السند",
+  "exp_view_hint": "عرض التفاصيل",
+  "exp_print_hint": "طباعة السند",
+  "exp_deleted": "تم حذف المصروف",
+  "btn_cancel": "إلغاء"
 }

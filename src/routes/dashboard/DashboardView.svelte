@@ -3,7 +3,7 @@
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
   import type { DashboardStats } from '../../lib/types';
-  import { TrendingUp, ShoppingBag, AlertTriangle, ArrowDownRight, DollarSign, Wallet, Trophy, RefreshCw, Layers, Eye, Pencil, Printer, X } from 'lucide-svelte';
+  import { TrendingUp, ShoppingBag, AlertTriangle, ArrowDownRight, DollarSign, Wallet, Trophy, RefreshCw, Layers, Eye, Pencil, Printer, X, Trash2, CheckCircle2 } from 'lucide-svelte';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
@@ -23,6 +23,69 @@
   let suppliersList: any[] = [];
   let productsList: any[] = [];
   let expensesList: any[] = [];
+  // Expense detail modal (opened by clicking an expense line on the
+  // Expenses tab): reprint / edit / delete like the sale-history popup.
+  let expenseDetail: any = null;
+  let expenseDetailItems: boolean = false;
+  let isDeletingExpense = false;
+  let expenseDeleted = false;
+
+  async function openExpenseDetail(e: any) {
+    expenseDetail = e;
+    expenseDeleted = false;
+  }
+  function closeExpenseDetail() {
+    // If the expense was deleted, the dashboard numbers must refresh.
+    if (expenseDeleted) {
+      loadStats();
+    }
+    expenseDetail = null;
+  }
+  async function deleteExpenseDetail() {
+    if (!expenseDetail) return;
+    try {
+      isDeletingExpense = true;
+      await invoke('delete_expense', { expenseId: expenseDetail.id });
+      isDeletingExpense = false;
+      expenseDeleted = true;
+      expenseDetail = null;
+      loadStats();
+    } catch (err: any) {
+      isDeletingExpense = false;
+      console.error('Delete expense failed:', err);
+    }
+  }
+  async function printExpenseDetail() {
+    if (!expenseDetail) return;
+    try {
+      const settings = await invoke<Record<string, string>>('get_all_settings');
+      const shopName = settings['shop_name_fr'] || 'TitaouPOS';
+      const shopPhone = settings['shop_phone'] || '0553444057';
+      const shopAddress = settings['shop_address'] || 'Alger Centre';
+      const exp = expenseDetail;
+      const html = `<div style="width: 72mm; font-family: monospace; font-size: 10px; text-align: center; margin: 0 auto; padding: 2mm;">
+        <p style="font-size: 14px; font-weight: 900; margin: 0; text-transform: uppercase;">${shopName}</p>
+        <p style="font-size: 8px; margin: 2px 0;">${shopAddress} • Tél: ${shopPhone}</p>
+        <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
+        <p style="font-size: 11px; font-weight: 900; background: #000; color: #fff; padding: 2px 0; margin: 2px 0;">BON DE DÉCAISSEMENT / سند صرف</p>
+        <div style="display: flex; justify-content: space-between; font-size: 9px; font-weight: bold; margin-top: 4px;">
+          <span>BON #${exp.expense_number}</span><span>${exp.date}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 8px;">
+          <span>Bénéficiaire: ${exp.recipient || 'Divers'}</span><span>${exp.category_name || 'Général'}</span>
+        </div>
+        <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
+        <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 900;">
+          <span>MONTANT:</span><span>${exp.amount.toLocaleString()} DZD</span>
+        </div>
+        <p style="font-size: 7px; color: #666; margin-top: 8px;">TitaouPOS • ${new Date().toLocaleString()}</p>
+      </div>`;
+      const r = await printHtmlSilently(html, 'Voucher #' + exp.expense_number, { widthMm: 72 });
+      if (!r.ok) console.error('Voucher print failed:', r.message);
+    } catch (err) {
+      console.error(err);
+    }
+  }
   let movementsList: any[] = [];
   let versementSales: any[] = [];
   // Versement ticket modal: details + re-print. The actions in the versement
@@ -433,20 +496,29 @@
               <th class="p-2.5 text-start">Category</th>
               <th class="p-2.5 text-start">User</th>
               <th class="p-2.5 text-end">Amount</th>
+              <th class="p-2.5 text-end">Actions</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-pos-border/40">
             {#each expensesFiltered.slice(0, 30) as e}
-              <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+              <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 cursor-pointer" on:click={() => openExpenseDetail(e)} title={t('exp_click_hint')}>
                 <td class="p-2.5 font-mono font-bold text-rose-600">#{e.expense_number}</td>
                 <td class="p-2.5 font-mono text-pos-muted">{e.date}</td>
                 <td class="p-2.5 font-bold text-pos-text">{e.category_name || 'Général'}</td>
                 <td class="p-2.5 text-pos-muted">{e.user_name || 'User #' + e.user_id}</td>
                 <td class="p-2.5 text-end font-mono font-black text-rose-600">{e.amount.toLocaleString()} DZD</td>
+                <td class="p-2.5 text-end whitespace-nowrap">
+                  <div class="inline-flex items-center gap-1">
+                    <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); }} class="p-1 text-pos-muted hover:text-sky-600 rounded-lg cursor-pointer" title={t('exp_view_hint')}><Eye class="w-3.5 h-3.5" /></button>
+                    <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); }} class="p-1 text-pos-muted hover:text-amber-600 rounded-lg cursor-pointer" title={t('exp_edit')}><Pencil class="w-3.5 h-3.5" /></button>
+                    <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); deleteExpenseDetail(); }} class="p-1 text-pos-muted hover:text-rose-600 rounded-lg cursor-pointer" title={t('exp_delete_title')}><Trash2 class="w-3.5 h-3.5" /></button>
+                    <button type="button" on:click={(ev) => { ev.stopPropagation(); openExpenseDetail(e); setTimeout(printExpenseDetail, 50); }} class="p-1 text-pos-muted hover:text-sky-600 rounded-lg cursor-pointer" title={t('exp_print_hint')}><Printer class="w-3.5 h-3.5" /></button>
+                  </div>
+                </td>
               </tr>
             {/each}
             {#if expensesFiltered.length === 0}
-              <tr><td colspan="5" class="p-6 text-center text-pos-muted">No expenses in the selected range.</td></tr>
+              <tr><td colspan="6" class="p-6 text-center text-pos-muted">No expenses in the selected range.</td></tr>
             {/if}
           </tbody>
         </table>
@@ -611,6 +683,59 @@
         <button on:click={() => (versementDetail = null)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">
           {t('btn_close')}
         </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Expense Detail Modal (from the Expenses tab): view / reprint / delete -->
+{#if expenseDetail}
+  <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" on:keydown={(e) => { if (e.key === 'Escape') closeExpenseDetail(); }}>
+    <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-150">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-pos-border bg-slate-50 dark:bg-slate-800/50">
+        <h3 class="font-black text-sm text-pos-text flex items-center gap-2">
+          <DollarSign class="w-4 h-4 text-rose-500" />
+          <span>{t('exp_voucher')} #{expenseDetail.expense_number}</span>
+        </h3>
+        <button on:click={closeExpenseDetail} class="text-pos-muted hover:text-pos-text p-1 rounded-lg cursor-pointer"><X class="w-4 h-4" /></button>
+      </div>
+
+      <div class="p-5 space-y-3 text-xs">
+        {#if expenseDeleted}
+          <p class="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold flex items-center gap-2"><CheckCircle2 class="w-4 h-4" /> {t('exp_deleted')}</p>
+        {/if}
+        <div class="grid grid-cols-2 gap-2">
+          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('date')}</p><p class="font-bold text-pos-text">{expenseDetail.date}</p></div>
+          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_category')}</p><p class="font-bold text-pos-text">{expenseDetail.category_name || 'Général'}</p></div>
+          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_beneficiary')}</p><p class="font-bold text-pos-text">{expenseDetail.recipient || 'Divers'}</p></div>
+          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_user_col')}</p><p class="font-bold text-pos-text">{expenseDetail.user_name || 'User #' + expenseDetail.user_id}</p></div>
+          <div><p class="text-pos-muted font-bold text-[10px] uppercase">{t('exp_amount_col')}</p><p class="font-black font-mono text-rose-600 text-base">{expenseDetail.amount.toLocaleString()} DZD</p></div>
+          <div><p class="text-pos-muted font-bold text-[10px] uppercase">Payment</p><p class="font-bold text-pos-text uppercase">{expenseDetail.payment_method}</p></div>
+        </div>
+        {#if expenseDetail.notes}
+          <div class="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-pos-border text-pos-muted">{expenseDetail.notes}</div>
+        {/if}
+      </div>
+
+      <div class="px-5 py-3.5 border-t border-pos-border bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          on:click={deleteExpenseDetail}
+          disabled={isDeletingExpense}
+          class="px-4 py-2 bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/60 dark:hover:bg-rose-900 text-rose-800 dark:text-rose-300 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer"
+        >
+          <Trash2 class="w-4 h-4" /><span>{isDeletingExpense ? '…' : t('btn_delete')}</span>
+        </button>
+        <div class="flex gap-2">
+          <button on:click={closeExpenseDetail} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">{t('btn_cancel')}</button>
+          <button
+            type="button"
+            on:click={printExpenseDetail}
+            class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"
+          >
+            <Printer class="w-4 h-4" /><span>{t('exp_voucher')}</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

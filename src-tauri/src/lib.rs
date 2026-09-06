@@ -65,6 +65,7 @@ pub fn run() {
             commands::list_sales,
             commands::get_sale_items,
             commands::get_last_sale,
+            commands::get_sale_by_number,
             commands::hold_sale,
             commands::list_held_sales,
             commands::delete_held_sale,

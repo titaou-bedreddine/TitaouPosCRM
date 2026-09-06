@@ -36,8 +36,9 @@ export interface UnifiedReceiptContext {
   change: number;
   paymentMethod: string;
   // shop + receipt settings (raw app_settings map; missing keys fall back
-  // to the same defaults every other printer used before).
-  settings: Record<string, string | undefined>;
+  // to the same defaults every other printer used before). Values may be
+  // DB strings ('true') or pre-normalized booleans from the Settings UI.
+  settings: Record<string, any>;
   qrDataUrl?: string;
   copyLabel?: string;
   isCredit?: boolean;
@@ -45,10 +46,15 @@ export interface UnifiedReceiptContext {
   versementRemaining?: number;
 }
 
-function bool(s: Record<string, string | undefined>, key: string, dflt = true): boolean {
+function bool(s: Record<string, any>, key: string, dflt = true): boolean {
   const v = s[key];
   if (v === undefined || v === null || v === '') return dflt;
-  return v === 'true' || v === '1';
+  // SettingsView normalizes toggles to real booleans; the DB returns
+  // 'true'/'false' strings — accept BOTH (the old string-only check made
+  // the live settings preview ignore every toggle).
+  if (v === true || v === 'true' || v === '1') return true;
+  if (v === false || v === 'false' || v === '0') return false;
+  return dflt;
 }
 
 /** Shared settings-driven options for the single professional template. */

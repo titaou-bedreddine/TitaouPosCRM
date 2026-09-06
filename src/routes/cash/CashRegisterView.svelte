@@ -64,6 +64,25 @@
   let deleteError = '';
   let isSubmittingDelete = false;
 
+  // Shared popup keyboard UX: Enter confirms the focused modal, Esc
+  // closes it. Pair with the autofocus action on the first field.
+  function modalKey(e: KeyboardEvent, confirm: () => void, close: () => void) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirm();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+    }
+  }
+  // Svelte action: focus the first field the moment a modal mounts.
+  function autoFocus(node: HTMLInputElement) {
+    setTimeout(() => {
+      node.focus();
+      node.select();
+    }, 60);
+  }
+
   // Debt & versement KPIs for the register page
   let totalUnpaidDebt = 0;
   let totalPaidDebt = 0;
@@ -724,8 +743,8 @@
     <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div class="bg-pos-card border border-pos-border rounded-xl p-5 w-full max-w-sm space-y-3">
         <h3 class="font-extrabold text-sm text-pos-text">Cash Deposit (إيداع نقدي)</h3>
-        <input type="number" bind:value={amount} on:focus={(e) => (e.target as HTMLInputElement).select()} placeholder="Amount DZD" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-lg font-mono font-bold text-pos-text" />
-        <input type="text" bind:value={reason} placeholder="Reason / Notes" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-xs text-pos-text" />
+        <input use:autoFocus type="number" bind:value={amount} on:keydown={(e) => modalKey(e, handleDeposit, () => (isDepositOpen = false))} on:focus={(e) => (e.target as HTMLInputElement).select()} placeholder="Amount DZD" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-lg font-mono font-bold text-pos-text" />
+        <input type="text" bind:value={reason} on:keydown={(e) => modalKey(e, handleDeposit, () => (isDepositOpen = false))} placeholder="Reason / Notes" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-xs text-pos-text" />
         <div class="flex justify-end gap-2 pt-2">
           <button on:click={() => isDepositOpen = false} class="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded">Cancel</button>
           <button on:click={handleDeposit} class="px-4 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded">Confirm</button>
@@ -738,8 +757,8 @@
     <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div class="bg-pos-card border border-pos-border rounded-xl p-5 w-full max-w-sm space-y-3">
         <h3 class="font-extrabold text-sm text-pos-text">Cash Withdrawal (سحب نقدي / مصروف)</h3>
-        <input type="number" bind:value={amount} on:focus={(e) => (e.target as HTMLInputElement).select()} placeholder="Amount DZD" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-lg font-mono font-bold text-pos-text" />
-        <input type="text" bind:value={reason} placeholder="Reason / Notes" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-xs text-pos-text" />
+        <input use:autoFocus type="number" bind:value={amount} on:keydown={(e) => modalKey(e, handleWithdraw, () => (isWithdrawOpen = false))} on:focus={(e) => (e.target as HTMLInputElement).select()} placeholder="Amount DZD" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-lg font-mono font-bold text-pos-text" />
+        <input type="text" bind:value={reason} on:keydown={(e) => modalKey(e, handleWithdraw, () => (isWithdrawOpen = false))} placeholder="Reason / Notes" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-xs text-pos-text" />
         <div class="flex justify-end gap-2 pt-2">
           <button on:click={() => isWithdrawOpen = false} class="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded">Cancel</button>
           <button on:click={handleWithdraw} class="px-4 py-1.5 bg-amber-600 text-white text-xs font-bold rounded">Confirm</button>
@@ -754,7 +773,7 @@
         <h3 class="font-extrabold text-sm text-pos-text">Close Cash Session (إغلاق الصندوق)</h3>
         <div>
           <label class="block text-xs font-bold text-pos-muted mb-1">{t('reg_counted_cash')} (DZD)</label>
-          <input type="number" bind:value={countedCash} on:focus={(e) => (e.target as HTMLInputElement).select()} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-xl font-mono font-bold text-pos-text" />
+          <input use:autoFocus type="number" bind:value={countedCash} on:keydown={(e) => modalKey(e, handleCloseSession, () => (isCloseOpen = false))} on:focus={(e) => (e.target as HTMLInputElement).select()} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-xl font-mono font-bold text-pos-text" />
         </div>
         <input type="text" bind:value={closeNotes} placeholder="Closing notes..." class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded text-xs text-pos-text" />
         <div class="flex justify-end gap-2 pt-2">
@@ -781,8 +800,10 @@
         <div>
           <label class="block text-xs font-bold text-pos-muted mb-1">Opening Cash Amount (DZD) *</label>
           <input
+            use:autoFocus
             type="number"
             bind:value={startupAmount}
+            on:keydown={(e) => modalKey(e, handleStartupSession, () => (isStartupOpen = false))}
             on:focus={(e) => (e.target as HTMLInputElement).select()}
             min="0"
             class="w-full px-3 py-2.5 bg-slate-100 dark:bg-slate-800 border-2 border-emerald-500/40 focus:border-emerald-500 rounded-xl text-lg font-mono font-black text-pos-text outline-none"
@@ -843,8 +864,10 @@
         <div>
           <label class="block text-xs font-bold text-pos-muted mb-1">New Opening Amount (DZD) *</label>
           <input
+            use:autoFocus
             type="number"
             bind:value={editOpeningAmount}
+            on:keydown={(e) => modalKey(e, handleEditOpeningBalance, () => (isEditOpeningOpen = false))}
             min="0"
             class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-lg font-mono font-black text-pos-text outline-none focus:ring-2 focus:ring-sky-500"
           />

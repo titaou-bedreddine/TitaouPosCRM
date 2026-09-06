@@ -28,7 +28,7 @@ pub fn print_html_direct(db: State<'_, DbState>, html: String, title: String, pa
     let width_mm = paper.as_ref().map(|p| p.width_mm).unwrap_or(80.0);
     let fixed_height_mm = paper.as_ref().and_then(|p| p.height_mm);
     // Receipt printer override (Settings → Printing); empty = Windows default.
-    let printer = settings.get("receipt_printer_name").cloned().unwrap_or_default();
+    let printer = settings.get("invoice_printer_name").cloned().unwrap_or_default();
     let printer_opt = if printer.trim().is_empty() { None } else { Some(printer.as_str()) };
     let dpi: u32 = settings
         .get("receipt_printer_dpi")
@@ -973,6 +973,16 @@ pub struct DebtClearEntry {
 #[tauri::command]
 pub fn get_last_sale(db: State<'_, DbState>) -> Result<Option<LastSalePayload>, String> {
     let Some((sale, items)) = sales_service::get_last_sale(&db)? else {
+        return Ok(None);
+    };
+    Ok(Some(LastSalePayload { sale, items }))
+}
+
+/// One sale by receipt number + its items â receipt QR scan in the POS
+/// (`SALE:<sale_number>`) opens the sale here for reprint/edit.
+#[tauri::command]
+pub fn get_sale_by_number(db: State<'_, DbState>, saleNumber: String) -> Result<Option<LastSalePayload>, String> {
+    let Some((sale, items)) = sales_service::get_sale_by_number(&db, &saleNumber)? else {
         return Ok(None);
     };
     Ok(Some(LastSalePayload { sale, items }))

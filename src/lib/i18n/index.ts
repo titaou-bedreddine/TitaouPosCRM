@@ -40,6 +40,12 @@ export function t(key: string, lang?: Language): string {
   return dictionaries[active]?.[key] || dictionaries['en']?.[key] || key;
 }
 
+/** t() with {placeholder} interpolation: tf('key', { n: '5' }). */
+export function tf(key: string, params: Record<string, string>, lang?: Language): string {
+  const raw = t(key, lang);
+  return raw.replace(/\{(\w+)\}/g, (_, name: string) => params[name] ?? `{${name}}`);
+}
+
 export const translationStore = derived(currentLocale, ($lang) => (key: string) => {
   return dictionaries[$lang]?.[key] || dictionaries['en']?.[key] || key;
 });

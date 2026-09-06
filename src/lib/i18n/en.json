@@ -543,5 +543,20 @@
   "reopen_last_receipt": "Reopen Last Receipt",
   "reprint_last_receipt": "Reprint Last Receipt",
   "clear_debt": "Clear Debt",
-  "backup_now": "Backup Now"
+  "backup_now": "Backup Now",
+  "sale_edited_tag": "Edited",
+  "invoice_click_to_copy": "Click the invoice number to copy it",
+  "invoice_copied": "Copied!",
+  "sale_loaded_edit": "Receipt loaded for editing — checkout updates it in place",
+  "sale_qr_not_found": "Receipt not found",
+  "label_preset_vprice": "Product Price Label — 40×20 mm (barcode)",
+  "label_preset_shelf": "Shelf Price Tag — 40×20 mm (no barcode)",
+  "label_print_success": "Printed {n} label(s) successfully",
+  "product_print_barcode_hint": "Print price sticker ×{n} (one per unit in stock)",
+  "product_print_shelf_hint": "Print shelf tag ×1",
+  "exp_click_hint": "Open voucher details",
+  "exp_view_hint": "View details",
+  "exp_print_hint": "Print voucher",
+  "exp_deleted": "Expense deleted",
+  "btn_cancel": "Cancel"
 }

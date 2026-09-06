@@ -55,6 +55,9 @@ export interface Product {
   is_active: boolean;
   barcodes: string[];
   total_sold?: number;
+  /** Pinned products float to the top of the POS grid and stock page. */
+  pinned?: boolean;
+  pin_order?: number;
 }
 
 export interface ProductInput {
@@ -158,6 +161,8 @@ export interface Sale {
   lines_sold?: number;
   /** Total UNITS across lines (A×2 + B×5 = 7 units). */
   units_sold?: number;
+  /** True when the sale was edited in place (localized EDITED badge). */
+  is_edited?: boolean;
 }
 
 export interface Customer {
@@ -176,7 +181,9 @@ export interface Customer {
   total_purchases?: number;
   notes?: string;
   is_active: boolean;
-  created_at: string;
+  created_at: string;  /** Pinned customers float to the top of the list. */
+  pinned?: boolean;
+  pin_order?: number;
 }
 
 export interface Supplier {
@@ -194,7 +201,9 @@ export interface Supplier {
   balance: number;
   notes?: string;
   is_active: boolean;
-  created_at: string;
+  created_at: string;  /** Pinned suppliers float to the top of the list. */
+  pinned?: boolean;
+  pin_order?: number;
 }
 
 export interface Purchase {

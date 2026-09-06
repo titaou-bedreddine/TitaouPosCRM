@@ -20,6 +20,14 @@
   let isSubmitting = false;
   let errorMsg = '';
 
+  // Focus the amount field as soon as the modal opens (Enter confirms).
+  function autofocusSelect(node: HTMLInputElement) {
+    setTimeout(() => {
+      node.focus();
+      node.select();
+    }, 60);
+  }
+
   // Clear-debt (forgiveness) sub-modal state.
   let showClearPanel = false;
   let clearReason = '';
@@ -180,6 +188,8 @@
             <input
               type="number"
               bind:value={paymentAmount}
+              on:keydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRecordPayment(); } else if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
+              use:autofocusSelect
               on:focus={(e) => (e.target as HTMLInputElement).select()}
               class="w-full px-3 py-2 bg-pos-card border border-pos-border rounded-lg text-lg font-bold font-mono text-pos-text outline-none focus:ring-2 focus:ring-sky-500"
             />

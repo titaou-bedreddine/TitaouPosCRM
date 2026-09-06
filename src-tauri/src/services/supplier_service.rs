@@ -6,7 +6,8 @@ pub fn list_suppliers(db: &DbState) -> Result<Vec<Supplier>, String> {
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn
         .prepare(
-            "SELECT id, name, contact_person, phone, email, address, rc, nif, nis, ai, qr_code, balance, notes, is_active, created_at
+            "SELECT id, name, contact_person, phone, email, address, rc, nif, nis, ai, qr_code, balance, notes, is_active, created_at,
+                    COALESCE(pinned, 0), COALESCE(pin_order, 0)
              FROM suppliers
              WHERE is_active = 1
              ORDER BY COALESCE(pinned, 0) DESC, COALESCE(pin_order, 0) ASC, id DESC",
@@ -31,6 +32,8 @@ pub fn list_suppliers(db: &DbState) -> Result<Vec<Supplier>, String> {
                 notes: row.get(12)?,
                 is_active: row.get(13)?,
                 created_at: row.get(14)?,
+                pinned: row.get::<_, i64>(15)? == 1,
+                pin_order: row.get(16)?,
             })
         })
         .map_err(|e| e.to_string())?;
