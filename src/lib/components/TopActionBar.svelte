@@ -6,7 +6,6 @@
     cartItems, globalDiscountMode, heldSalesList,
     holdCurrentSale, heldNotification, posMode
   } from '../stores/cart';
-  import { printHtmlDirectly } from '../utils/printer';
   import {
     PlusCircle, Trash2, Undo2, Percent, CreditCard,
     PauseCircle, Printer, DollarSign, Languages, Check,

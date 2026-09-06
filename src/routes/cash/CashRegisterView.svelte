@@ -7,7 +7,7 @@
   import { currentUser } from '../../lib/stores/auth';
   import { DollarSign, ArrowDownCircle, ArrowUpCircle, Lock, RefreshCw, Plus, CheckCircle, Check, Search, Wallet, TrendingUp, ArrowDownRight, Layers, Banknote, Wallet as WalletIcon, Edit2, Archive, ArchiveRestore, Trash2, AlertTriangle, X } from 'lucide-svelte';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
-  import { printHtmlDirectly } from '../../lib/utils/printer';
+  import { printHtmlSilently } from '../../lib/utils/printer';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
 
   let currentTab: 'current' | 'history' = 'current';
@@ -332,7 +332,8 @@
       '<p style="text-align:center;font-size:9px;">TitaouPOS &bull; ' + new Date().toLocaleString() + '</p>',
       '</div>',
     ].join('');
-    printHtmlDirectly(html, 'Session Report #' + snap.id);
+    const r = await printHtmlSilently(html, 'Session Report #' + snap.id, { widthMm: 80 });
+    if (!r.ok) console.error('Session report print failed:', r.message);
   }
 
   async function handleCloseSession() {

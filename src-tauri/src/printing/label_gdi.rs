@@ -217,6 +217,8 @@ fn rasterize_html(html: &str, px_w: i32, px_h: i32, dpi: u32) -> Result<Vec<u8>,
     let stamp = chrono::Local::now().timestamp_subsec_nanos();
     let html_path = tmp.join(format!("titaou_label_{}.html", stamp));
     let png_path = tmp.join(format!("titaou_label_{}.png", stamp));
+    let user_data = tmp.join(format!("titaou_profile_{}", stamp));
+    let _ = std::fs::create_dir_all(&user_data);
     std::fs::write(&html_path, html).map_err(|e| e.to_string())?;
 
     // The label HTML sizes everything in CSS mm (96 dpi reference). A device
@@ -235,8 +237,13 @@ fn rasterize_html(html: &str, px_w: i32, px_h: i32, dpi: u32) -> Result<Vec<u8>,
             "--headless",
             "--disable-gpu",
             "--no-first-run",
-            "--hide-scrollbars",
-            "--default-background-color=FFFFFFFF",
+            "--disable-extensions",
+            "--disable-crash-reporter",
+            "--no-pdf-header-footer",
+            // CRITICAL: an isolated profile. Without it, a running Edge/Chrome
+            // instance hijacks the launch — the flags are ignored, a visible
+            // tab opens and no screenshot is ever produced.
+            &format!("--user-data-dir={}", user_data.to_string_lossy()),
             &format!("--window-size={},{}", css_w, css_h),
             &format!("--force-device-scale-factor={}", scale),
             &screenshot_arg,
@@ -245,6 +252,7 @@ fn rasterize_html(html: &str, px_w: i32, px_h: i32, dpi: u32) -> Result<Vec<u8>,
         .output()
         .map_err(|e| format!("failed to launch browser: {}", e))?;
     let _ = std::fs::remove_file(&html_path);
+    let _ = std::fs::remove_dir_all(&user_data);
     if !output.status.success() {
         let _ = std::fs::remove_file(&png_path);
         return Err("headless browser exited with an error".into());
@@ -280,6 +288,8 @@ fn rasterize_html_measure(html: &str, _css_w: i32) -> Result<i32, String> {
     let stamp = chrono::Local::now().timestamp_subsec_nanos();
     let html_path = tmp.join(format!("titaou_measure_{}.html", stamp));
     let pdf_path = tmp.join(format!("titaou_measure_{}.pdf", stamp));
+    let user_data = tmp.join(format!("titaou_profile_{}", stamp));
+    let _ = std::fs::create_dir_all(&user_data);
     std::fs::write(&html_path, html).map_err(|e| e.to_string())?;
 
     let browser = find_browser()?;
@@ -291,13 +301,20 @@ fn rasterize_html_measure(html: &str, _css_w: i32) -> Result<i32, String> {
             "--headless",
             "--disable-gpu",
             "--no-first-run",
+            "--disable-extensions",
+            "--disable-crash-reporter",
             "--print-to-pdf-no-header",
+            "--no-pdf-header-footer",
+            // CRITICAL: isolated profile — a running Edge would otherwise
+            // hijack the launch (visible tab, no PDF) and measurement fails.
+            &format!("--user-data-dir={}", user_data.to_string_lossy()),
             &pdf_arg,
             &url,
         ])
         .output()
         .map_err(|e| format!("failed to launch browser: {}", e))?;
     let _ = std::fs::remove_file(&html_path);
+    let _ = std::fs::remove_dir_all(&user_data);
     if !output.status.success() || !pdf_path.exists() {
         let _ = std::fs::remove_file(&pdf_path);
         return Err("measurement render failed".into());

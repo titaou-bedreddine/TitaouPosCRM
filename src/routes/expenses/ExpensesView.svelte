@@ -6,9 +6,9 @@
   import type { Expense } from '../../lib/types';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
-  import { printHtmlDirectly } from '../../lib/utils/printer';
+  import { printHtmlSilently } from '../../lib/utils/printer';
+  import { entityQrPayload } from '../../lib/utils/printer';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
-  import { entityQrPayload, entityQrUrl } from '../../lib/utils/printer';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import {
     Plus, DollarSign, Trash2, Eye, Printer, X, Check, Pencil,
@@ -189,7 +189,8 @@
           </div>
         </div>
       `;
-      printHtmlDirectly(html, 'Voucher #' + exp.expense_number);
+      const r = await printHtmlSilently(html, 'Voucher #' + exp.expense_number, { widthMm: 72 });
+      if (!r.ok) alert('Print failed: ' + r.message);
     } catch (e: any) {
       alert('Error printing voucher: ' + (e.message || e));
     }

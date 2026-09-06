@@ -5,22 +5,20 @@
   import AboutView from '../about/AboutView.svelte';
   import ShortcutsEditor from '../../lib/components/ShortcutsEditor.svelte';
   import { currentUser } from '../../lib/stores/auth';
-  import { printHtmlDirectly, printLabelSilently, entityQrDataUrl } from '../../lib/utils/printer';
-  import { buildProfessionalReceiptHtml } from '../../lib/printing/professionalReceipt';
+  import { printLabelSilently, printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
+  import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
   import {
     LABEL_PRESETS,
     LABEL_PRESET_IDS,
     buildLabelPresetHtml,
     type LabelPresetId,
   } from '../../lib/printing/labelPresets';
-  import { getLanguage } from '../../lib/i18n';
-  import JsBarcode from 'jsbarcode';
   import {
     Sliders, User, Building, Printer, Smartphone, Download,
     ShieldCheck, RefreshCw, AlertOctagon, Check, Copy, Key,
     QrCode, Image as ImageIcon, Upload, Tag, ArrowRight,
     Wifi, HardDrive, FileText, CheckCircle2, History, Laptop,
-    Scale, Bell, Send, CreditCard, Keyboard, Type, Bold, Eye,
+    Scale, Bell, Send, CreditCard, Keyboard, Eye,
     Users, UserPlus, Edit2, Trash2, Shield, Lock, Info, Pin, Plus
   } from 'lucide-svelte';
 
@@ -112,49 +110,16 @@
     shortcut_f11: 'Split / TPE Payment',
     shortcut_f12: 'Clear Active Cart',
 
-    // Barcode Labels & Presets
-    barcode_label_width: '50',
-    label_presets: '',
-    // Currently selected built-in label preset — every label print location
-    // (product modal, batch printing, shelf etiquette) defaults to it.
+    // Barcode Labels — ONE unified preset system (v0.5.17). The legacy
+    // sticker_*/shelf_* px settings and the saved-preset JSON are removed;
+    // only the current built-in preset id is stored.
     label_preset_id: 'vprice40x20',
-    sticker_content_position: 'top', // top | middle | bottom
-    shelf_content_position: 'top',
-    barcode_label_height: '30',
-    sticker_show_shop_name: 'true',
-    sticker_show_product_name: 'true',
-    sticker_show_barcode: 'true',
-    sticker_show_price: 'true',
-    sticker_name_font_size: '9',
-    sticker_name_bold: 'true',
-    sticker_price_font_size: '12',
-    sticker_price_bold: 'true',
-    sticker_barcode_font_size: '10',
-    shelf_tag_width: '60',
-    shelf_tag_height: '40',
-    shelf_show_shop_name: 'true',
-    shelf_show_product_name: 'true',
-    shelf_show_price: 'true',
-    shelf_show_ref: 'true',
-    shelf_name_font_size: '11',
-    shelf_name_bold: 'true',
-    shelf_price_font_size: '18',
-    shelf_price_bold: 'true',
-    shelf_ref_font_size: '8',
-
-    // Thermal Receipt Style & Content
-    receipt_font_family: 'monospace',
+    label_printer_dpi: '203',
     receipt_header: 'مرحباً بكم في سوبرماركت تيتاو',
     receipt_footer: 'Les articles retournés doivent être présentés sous 48h',
-    // Receipt template preset: 'professional' ("80 mm – Professional Sales
-    // Receipt" graphic preset — default) or 'standard' (monospace ticket).
-    receipt_preset: 'professional',
     receipt_thank_you: 'MERCI POUR VOTRE CONFIANCE !',
     receipt_show_barcode: 'true',
     shop_website: '',
-    // Exact-media label pipeline (print_label_job): DPI of the label printer
-    // above. Empty label_printer = Windows default printer.
-    label_printer_dpi: '203',
     // Pricing defaults for new products
     default_margin_percent: '20',
     price_round_step: '5',
@@ -164,20 +129,10 @@
     receipt_show_address: 'true',
     receipt_show_phone: 'true',
     receipt_show_rc_nif: 'true',
-    receipt_show_header_note: 'true',
     receipt_show_cashier: 'true',
     receipt_show_date: 'true',
-    receipt_show_tax: 'true',
     receipt_show_footer: 'true',
     receipt_show_qr: 'true',
-    receipt_header_font_size: '14',
-    receipt_header_bold: 'true',
-    receipt_body_font_size: '10',
-    receipt_body_bold: 'false',
-    receipt_total_font_size: '13',
-    receipt_total_bold: 'true',
-    receipt_footer_font_size: '8',
-    receipt_footer_bold: 'false',
 
     // Backup system (v0.5.16): startup/close/scheduled/retention/location.
     backup_on_startup: 'false',
@@ -290,121 +245,6 @@
   let previewBarcodeNumber = '613000000001';
   let previewProductName = 'Lait Candia 1L Entier';
   let previewPrice = 120;
-  let settingsBarcodeSvgEl: SVGSVGElement;
-
-  function renderSettingsBarcode() {
-    if (!settingsBarcodeSvgEl) return;
-    try {
-      JsBarcode(settingsBarcodeSvgEl, previewBarcodeNumber, {
-        format: previewBarcodeNumber.length === 13 ? 'EAN13' : 'CODE128',
-        width: 1.5,
-        height: 35,
-        displayValue: true,
-        fontSize: parseInt(settings.sticker_barcode_font_size || '10'),
-        margin: 0,
-        background: '#ffffff',
-        lineColor: '#000000',
-      });
-    } catch (e) {
-      try {
-        JsBarcode(settingsBarcodeSvgEl, previewBarcodeNumber, {
-          format: 'CODE128',
-          width: 1.5, height: 35, displayValue: true,
-          fontSize: parseInt(settings.sticker_barcode_font_size || '10'), margin: 0,
-          background: '#ffffff', lineColor: '#000000',
-        });
-      } catch {}
-    }
-  }
-
-  $: if (settingsBarcodeSvgEl && currentTab === 'barcodes') {
-    tick().then(renderSettingsBarcode);
-  }
-
-
-  // ----- Label presets (sticker + shelf saved configurations) -----
-  // Stored as JSON in app_settings.label_presets:
-  // { "Preset name": { ...sticker/shelf settings } }
-  let labelPresets: Record<string, Record<string, string>> = {};
-  let newPresetName = '';
-
-  function labelPresetKeys(): string[] {
-    // Which settings make up a label preset.
-    return [
-      'barcode_label_width', 'barcode_label_height', 'sticker_orientation',
-      'sticker_show_shop_name', 'sticker_show_product_name', 'sticker_show_barcode',
-      'sticker_show_price', 'sticker_name_font_size', 'sticker_name_bold',
-      'sticker_price_font_size', 'sticker_price_bold', 'sticker_barcode_font_size',
-      'sticker_text_align', 'sticker_content_position',
-      'shelf_tag_width', 'shelf_tag_height', 'shelf_tag_orientation',
-      'shelf_tag_show_shop', 'shelf_tag_show_name', 'shelf_tag_show_price',
-      'shelf_tag_show_ref', 'shelf_tag_name_size', 'shelf_tag_price_size',
-      'shelf_tag_ref_size', 'shelf_text_align', 'shelf_content_position',
-    ].filter((k) => k in settings);
-  }
-
-  async function loadLabelPresets() {
-    try {
-      const raw = await invoke<string | null>('get_setting', { key: 'label_presets' });
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') {
-          labelPresets = parsed;
-        }
-      }
-    } catch {
-      labelPresets = {};
-    }
-  }
-
-  async function persistLabelPresets() {
-    try {
-      await invoke('set_setting', {
-        key: 'label_presets',
-        value: JSON.stringify(labelPresets),
-      });
-      triggerSaveNotification('Preset saved / تم حفظ الإعداد');
-    } catch (e: any) {
-      triggerSaveNotification('Preset save failed: ' + (e?.message || e));
-    }
-  }
-
-  async function saveCurrentLabelPreset() {
-    const name = newPresetName.trim();
-    if (!name) {
-      triggerSaveNotification('Enter a preset name first');
-      return;
-    }
-    const snapshot: Record<string, string> = {};
-    for (const key of labelPresetKeys()) {
-      snapshot[key] = String(settings[key] ?? '');
-    }
-    labelPresets = { ...labelPresets, [name]: snapshot };
-    newPresetName = '';
-    await persistLabelPresets();
-  }
-
-  async function applyLabelPreset(name: string) {
-    const preset = labelPresets[name];
-    if (!preset) return;
-    for (const [k, v] of Object.entries(preset)) {
-      (settings as any)[k] = v;
-    }
-    await invoke('set_multiple_settings', {
-      settings: Object.fromEntries(
-        Object.entries(settings).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)])
-      ),
-    });
-    triggerSaveNotification(`Preset "${name}" applied / تم تطبيق الإعداد`);
-  }
-
-  async function deleteLabelPreset(name: string) {
-    const copy = { ...labelPresets };
-    delete copy[name];
-    labelPresets = copy;
-    await persistLabelPresets();
-  }
-
   // Factory Reset
   let resetType = 'transactions_only';
   let resetConfirm = '';
@@ -524,7 +364,6 @@
     // open: it blocked interaction for seconds. It now loads only when a
     // tab that actually shows a printer picker is opened (see the reactive
     // trigger below); presets & shortcuts are quick SQL and load now.
-    loadLabelPresets().catch(() => {});
     loadShortcutBindings().catch(() => {});
     try {
       const v = await invoke<string>('get_app_version');
@@ -567,33 +406,15 @@
     'pos_auto_capture_barcode',
     'require_pin_for_discount',
     'hold_sale_require_note',
-    'sticker_show_shop_name',
-    'sticker_show_product_name',
-    'sticker_show_barcode',
-    'sticker_show_price',
-    'sticker_name_bold',
-    'sticker_price_bold',
-    'shelf_show_shop_name',
-    'shelf_show_product_name',
-    'shelf_show_price',
-    'shelf_show_ref',
-    'shelf_name_bold',
-    'shelf_price_bold',
     'receipt_show_barcode',
     'receipt_show_shop_name',
     'receipt_show_address',
     'receipt_show_phone',
     'receipt_show_rc_nif',
-    'receipt_show_header_note',
     'receipt_show_cashier',
     'receipt_show_date',
-    'receipt_show_tax',
     'receipt_show_footer',
     'receipt_show_qr',
-    'receipt_header_bold',
-    'receipt_body_bold',
-    'receipt_total_bold',
-    'receipt_footer_bold',
     'backup_on_startup',
     'backup_on_close',
     'backup_scheduled_enabled',
@@ -662,8 +483,6 @@
       quietWindowList = parseQuietWindows(settings.telegram_quiet_windows || '');
       const h = await invoke<string>('get_hwid');
       if (h) hwid = h;
-      await tick();
-      renderSettingsBarcode();
     } catch (e) {
       console.error(e);
     }
@@ -973,8 +792,9 @@
       const ip = serverStatus?.lan_ips?.[0];
       if (ip) {
         const { entityQrDataUrl } = await import('../../lib/utils/printer');
-        const payload = `TITAOUPOS|${ip}|${serverStatus.port}`;
-        serverQrDataUrl = await entityQrDataUrl(payload, 240).catch(() => '');
+        // The QR IS a URL: scanning it opens the server's landing page
+        // (real LAN address — never localhost/127.0.0.1).
+        serverQrDataUrl = await entityQrDataUrl(`http://${ip}:${serverStatus.port}/`, 240).catch(() => '');
       } else {
         serverQrDataUrl = '';
       }
@@ -1304,151 +1124,33 @@
     return isNaN(n) ? dflt : n;
   }
 
-  function testPrintReceipt() {
-    const fontFamily = settings.receipt_font_family || 'monospace';
-    const showShop = toBool(settings.receipt_show_shop_name);
-    const showAddress = toBool(settings.receipt_show_address);
-    const showPhone = toBool(settings.receipt_show_phone);
-    const showRcNif = toBool(settings.receipt_show_rc_nif);
-    const showCashier = toBool(settings.receipt_show_cashier);
-    const showDate = toBool(settings.receipt_show_date);
-    const showTax = toBool(settings.receipt_show_tax);
-    const showFooter = toBool(settings.receipt_show_footer);
-    const showQr = toBool(settings.receipt_show_qr);
-
-    const headerSize = toInt(settings.receipt_header_font_size, 14);
-    const headerBold = toBool(settings.receipt_header_bold);
-    const bodySize = toInt(settings.receipt_body_font_size, 11);
-    const bodyBold = toBool(settings.receipt_body_bold, false);
-    const totalSize = toInt(settings.receipt_total_font_size, 14);
-    const totalBold = toBool(settings.receipt_total_bold);
-    const footerSize = toInt(settings.receipt_footer_font_size, 9);
-    const footerBold = toBool(settings.receipt_footer_bold, false);
-    const headerAlign = settings.receipt_header_align || 'center';
-    const footerAlign = settings.receipt_footer_align || 'center';
-
-    const html = `
-      <div style="font-family: ${fontFamily}; font-size: ${bodySize}px; font-weight: ${bodyBold ? 'bold' : 'normal'}; width: ${settings.receipt_paper_width === '58mm' ? '230px' : '300px'}; padding: 10px; background: #fff; color: #000; box-sizing: border-box;">
-        <div style="text-align: ${headerAlign}; padding-bottom: 8px; border-bottom: 1px dashed #000;">
-          ${showShop ? `<h2 style="font-size: ${headerSize}px; font-weight: ${headerBold ? '900' : 'normal'}; margin: 0 0 2px 0;">${settings.shop_name_fr || 'TitaouPOS'}</h2>` : ''}
-          ${showShop && settings.shop_name_ar ? `<p style="font-size: 11px; font-weight: bold; margin: 0;">${settings.shop_name_ar}</p>` : ''}
-          ${showAddress ? `<p style="font-size: 9px; color: #444; margin: 1px 0;">${settings.shop_address || 'Alger, Algérie'}</p>` : ''}
-          ${showPhone ? `<p style="font-size: 9px; color: #444; margin: 1px 0;">Tél: ${settings.shop_phone || '0553444057'}</p>` : ''}
-          ${showRcNif ? `<p style="font-size: 8px; color: #444; margin: 1px 0;">RC: ${settings.shop_rc || '16/00-123456B22'} | NIF: ${settings.shop_nif || '0016160123456'}</p>` : ''}
-          ${settings.receipt_header ? `<p style="font-size: 9px; font-weight: bold; margin: 2px 0; font-style: italic;">${settings.receipt_header}</p>` : ''}
-          ${showDate ? `<p style="font-size: 8px; color: #666; margin-top: 4px;">${new Date().toLocaleString()}</p>` : ''}
-        </div>
-        <div style="padding: 4px 0; border-bottom: 1px dashed #000; font-size: 9px; display: flex; justify-content: space-between;">
-          <span>TEST RECEIPT #0001</span>
-          ${showCashier ? `<span>Caisse: ${$currentUser?.display_name || 'Admin'}</span>` : ''}
-        </div>
-        <div style="padding: 6px 0; border-bottom: 1px dashed #000;">
-          <table style="width: 100%; font-size: ${bodySize}px; font-weight: ${bodyBold ? 'bold' : 'normal'};">
-            <thead>
-              <tr style="border-bottom: 1px solid #ccc;"><th style="text-align: left;">Article</th><th style="text-align: center;">Qté</th><th style="text-align: right;">P.U</th><th style="text-align: right;">Total</th></tr>
-            </thead>
-            <tbody>
-              <tr><td style="font-weight: bold;">Article Démo Test 1</td><td style="text-align: center;">1</td><td style="text-align: right;">100</td><td style="text-align: right; font-weight: bold;">100 DZD</td></tr>
-              <tr><td style="font-weight: bold;">Article Démo Test 2</td><td style="text-align: center;">2</td><td style="text-align: right;">75</td><td style="text-align: right; font-weight: bold;">150 DZD</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div style="padding: 6px 0; font-size: ${totalSize}px; font-weight: ${totalBold ? '900' : 'normal'}; display: flex; justify-content: space-between; border-top: 1px dashed #000;">
-          <span>TOTAL:</span>
-          <span>250 DZD</span>
-        </div>
-        ${showTax ? `<div style="font-size: 8px; color: #555; display: flex; justify-content: space-between; padding-bottom: 4px;"><span>Dont TVA (19%):</span><span>40 DZD</span></div>` : ''}
-        ${showFooter ? `
-          <div style="text-align: ${footerAlign}; padding-top: 6px; font-size: ${footerSize}px; font-weight: ${footerBold ? 'bold' : 'normal'}; border-top: 1px dashed #000; color: #444;">
-            ${settings.receipt_footer || '*** Merci de votre visite - شكراً لزيارتكم ***'}
-          </div>
-        ` : ''}
-        ${showQr ? `
-          <div style="text-align: center; padding-top: 6px;">
-            <div style="display: inline-block; padding: 2px 6px; background: #eee; border: 1px solid #ccc; font-family: monospace; font-size: 7px; border-radius: 3px;">
-              [QR: TITAOU-VTE-0001]
-            </div>
-          </div>
-        ` : ''}
-      </div>
-    `;
-    printHtmlDirectly(html, 'Test Receipt');
-  }
-
-  function testPrintBarcode() {
-    let w = toInt(settings.barcode_label_width, 50);
-    let h = toInt(settings.barcode_label_height, 30);
-    const portrait = String(settings.sticker_orientation || '') === 'portrait';
-    if (portrait) {
-      const temp = w; w = h; h = temp;
-    }
-    const showShop = toBool(settings.sticker_show_shop_name);
-    const showName = toBool(settings.sticker_show_product_name);
-    const showBarcode = toBool(settings.sticker_show_barcode);
-    const showPrice = toBool(settings.sticker_show_price);
-    const nameSize = toInt(settings.sticker_name_font_size, 12);
-    const nameBold = toBool(settings.sticker_name_bold);
-    const priceSize = toInt(settings.sticker_price_font_size, 16);
-    const priceBold = toBool(settings.sticker_price_bold);
-    const barcodeSize = toInt(settings.sticker_barcode_font_size, 10);
-    const align = settings.sticker_text_align || 'center';
-    const flexAlign = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
-
-    // Render the barcode straight into the print HTML with the current
-    // settings so unsaved font-size changes are reflected on the test.
-    let barcodeSvgHtml = '';
-    if (showBarcode) {
-      try {
-        const tmp = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        JsBarcode(tmp, previewBarcodeNumber, {
-          format: previewBarcodeNumber.length === 13 ? 'EAN13' : 'CODE128',
-          width: 1.8, height: 44, displayValue: true,
-          fontSize: barcodeSize, margin: 0,
-          background: '#ffffff', lineColor: '#000000',
-        });
-        barcodeSvgHtml = tmp.outerHTML;
-      } catch {
-        barcodeSvgHtml = `<p style="font-family:monospace;font-size:10px;">${previewBarcodeNumber}</p>`;
-      }
-    }
-
-    const html = `
-      <div style="width: ${w}mm; height: ${h}mm; text-align: ${align}; font-family: sans-serif; padding: 2mm; box-sizing: border-box; display: flex; flex-direction: column; align-items: ${flexAlign}; justify-content: center; background: #fff;">
-        ${showShop ? `<p style="font-weight: bold; font-size: 10px; text-transform: uppercase; color: #444; margin: 0; width: 100%; text-align: ${align};">${settings.shop_name_fr || 'TitaouPOS'}</p>` : ''}
-        ${showName ? `<p style="font-size: ${nameSize}px; font-weight: ${nameBold ? '900' : 'normal'}; margin: 2px 0; overflow: hidden; white-space: nowrap; max-width: 100%; width: 100%; text-align: ${align};">${previewProductName}</p>` : ''}
-        ${showBarcode ? `<div style="max-width: 100%; overflow: hidden; display: flex; justify-content: ${flexAlign}; align-items: center; margin: 1px 0; width: 100%;">${barcodeSvgHtml}</div>` : ''}
-        ${showPrice ? `<p style="font-size: ${priceSize}px; font-weight: ${priceBold ? '900' : 'normal'}; font-family: monospace; margin: 2px 0; width: 100%; text-align: ${align};">${previewPrice} DZD</p>` : ''}
-      </div>
-    `;
-    printHtmlDirectly(html, 'Test Barcode Sticker', { widthMm: w, heightMm: h });
-  }
-
-  function testPrintShelfTag() {
-    let w = toInt(settings.shelf_tag_width, 60);
-    let h = toInt(settings.shelf_tag_height, 40);
-    if (String(settings.shelf_orientation) === 'portrait') {
-      const temp = w; w = h; h = temp;
-    }
-    const showShop = toBool(settings.shelf_show_shop_name);
-    const showName = toBool(settings.shelf_show_product_name);
-    const showPrice = toBool(settings.shelf_show_price);
-    const showRef = toBool(settings.shelf_show_ref);
-    const nameSize = toInt(settings.shelf_name_font_size, 16);
-    const nameBold = toBool(settings.shelf_name_bold);
-    const priceSize = toInt(settings.shelf_price_font_size, 28);
-    const priceBold = toBool(settings.shelf_price_bold);
-    const refSize = toInt(settings.shelf_ref_font_size, 10);
-    const align = settings.shelf_text_align || 'center';
-
-    const html = `
-      <div style="width: ${w}mm; height: ${h}mm; border: 2px solid #000; padding: 3mm; font-family: sans-serif; text-align: ${align}; box-sizing: border-box; background: #fff; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
-        ${showShop ? `<div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; border-bottom: 1.5px solid #000; padding-bottom: 2px;"><span>${settings.shop_name_fr || 'TitaouPOS'}</span><span style="color: #059669; font-weight: 900;">DISPO</span></div>` : ''}
-        ${showName ? `<p style="font-size: ${nameSize}px; font-weight: ${nameBold ? '900' : 'normal'}; margin: 4px 0; line-height: 1.2; text-align: ${align}; width: 100%;">${previewProductName}</p>` : ''}
-        ${showPrice ? `<div style="background: #000; color: #fff; padding: 6px; font-size: ${priceSize}px; font-weight: ${priceBold ? '900' : 'normal'}; margin: 4px 0; font-family: monospace; border-radius: 4px; text-align: ${align}; width: 100%;">${previewPrice} DZD</div>` : ''}
-        ${showRef ? `<div style="display: flex; justify-content: space-between; font-size: ${refSize}px; font-weight: bold; width: 100%;"><span>Ref: ${previewBarcodeNumber}</span><span>TVA 19% Incl.</span></div>` : ''}
-      </div>
-    `;
-    printHtmlDirectly(html, 'Test Shelf Tag', { widthMm: w, heightMm: h });
+  // Unified receipt test print: the SAME builder the POS uses, printed via
+  // the native silent pipeline with the configured paper width.
+  let testPrintMsg = '';
+  async function testPrintReceipt() {
+    testPrintMsg = '';
+    const qr = await entityQrDataUrl('SALE:TEST-0001', 240).catch(() => undefined);
+    const built = buildUnifiedReceipt({
+      saleNumber: 'TEST-0001',
+      saleDate: new Date().toLocaleString('fr-FR'),
+      cashierName: $currentUser?.display_name || 'Admin',
+      customerName: 'Client Comptoir',
+      paymentMethod: 'ESPÈCES',
+      items: [
+        { name: 'Eau Minérale 1.5L', quantity: 2, unitPrice: 120, totalPrice: 240 },
+        { name: 'Lait UHT Entier 1L', quantity: 1, unitPrice: 150, totalPrice: 150 },
+        { name: 'Café Moulu 250g', quantity: 1, unitPrice: 200, totalPrice: 200 },
+      ],
+      subtotal: 590,
+      discount: 0,
+      grandTotal: 590,
+      amountPaid: 600,
+      change: 10,
+      settings: settings as Record<string, string>,
+      qrDataUrl: qr,
+    });
+    const r = await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
+    testPrintMsg = r.ok ? '✅ Test receipt sent to the printer (silent).' : '❌ ' + r.message;
   }
 
   // ----- Built-in 40×20 mm thermal presets (Vertical Price / Shelf Price) -----
@@ -1472,6 +1174,30 @@
       ) as Record<LabelPresetId, string>)
     : ({} as Record<LabelPresetId, string>);
 
+  // PERF: the unified RECEIPT live preview (invoices tab) also rebuilds only
+  // while that tab is visible — the same fix as the label previews.
+  let unifiedPreviewBuilt: { html: string; title: string; paperWidthMm: number } | null = null;
+  $: if (currentTab === 'invoices') {
+    unifiedPreviewBuilt = buildUnifiedReceipt({
+      saleNumber: 'TEST-0001',
+      saleDate: new Date().toLocaleString('fr-FR'),
+      cashierName: 'Admin',
+      customerName: 'Client Comptoir',
+      paymentMethod: 'ESPÈCES',
+      items: [
+        { name: 'Eau Minérale 1.5L', quantity: 2, unitPrice: 120, totalPrice: 240 },
+        { name: 'Lait UHT Entier 1L', quantity: 1, unitPrice: 150, totalPrice: 150 },
+        { name: 'Café Moulu 250g', quantity: 1, unitPrice: 200, totalPrice: 200 },
+      ],
+      subtotal: 590,
+      discount: 0,
+      grandTotal: 590,
+      amountPaid: 600,
+      change: 10,
+      settings: settings as Record<string, string>,
+    });
+  }
+
   let builtinTestMsg = '';
 
   async function testPrintBuiltinLabel(id: LabelPresetId) {
@@ -1490,54 +1216,8 @@
       });
       builtinTestMsg = (outcome.ok ? '✅ ' : '❌ ') + outcome.message;
     } catch (e: any) {
-      // Backend command unavailable (dev/old binary) → browser print.
-      printHtmlDirectly(
-        def.build(builtinLabelData),
-        `Test ${def.name}`,
-        { widthMm: def.widthMm, heightMm: def.heightMm }
-      );
-      builtinTestMsg = '⚠ Browser print fallback (exact-media backend not available)';
+      builtinTestMsg = '❌ ' + (typeof e === 'string' ? e : e?.message || String(e));
     }
-  }
-
-  async function testPrintProfessionalReceipt() {
-    const d = new Date();
-    const paperW = String(settings.receipt_paper_width) === '58mm' ? 58 : 80;
-    const qr = await entityQrDataUrl('SALE:TEST-0001', 240).catch(() => undefined);
-    const html = buildProfessionalReceiptHtml({
-      shopName: String(settings.shop_name_fr || 'TITAOU POS'),
-      shopTagline: String(settings.receipt_header || ''),
-      shopAddress: String(settings.shop_address || ''),
-      shopPhone: String(settings.shop_phone || ''),
-      shopWebsite: String(settings.shop_website || ''),
-      shopLogoDataUrl: settings.shop_logo_base64 || undefined,
-      invoiceNumber: 'TEST-0001',
-      invoiceBarcode: `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')} 0001256`,
-      dateStr: d.toLocaleDateString('fr-FR'),
-      timeStr: d.toLocaleTimeString('fr-FR'),
-      cashierName: $currentUser?.display_name || 'Admin',
-      customerName: 'Client Comptoir',
-      paymentMethod: 'ESPÈCES',
-      items: [
-        { name: 'Eau Minérale 1.5L', quantity: 2, unitPrice: 120, totalPrice: 240 },
-        { name: 'Lait UHT Entier 1L', quantity: 1, unitPrice: 150, totalPrice: 150 },
-        { name: 'Café Moulu 250g', quantity: 1, unitPrice: 200, totalPrice: 200 },
-      ],
-      subtotal: 590,
-      discount: 0,
-      grandTotal: 590,
-      amountPaid: 600,
-      change: 10,
-      currency: String(settings.default_currency || 'DA'),
-      qrDataUrl: qr,
-      showQr: toBool(settings.receipt_show_qr),
-      showBarcode: toBool(settings.receipt_show_barcode),
-      thankYou: String(settings.receipt_thank_you || 'MERCI POUR VOTRE CONFIANCE !'),
-      returnPolicy: String(settings.receipt_footer || ''),
-      lang: getLanguage(),
-      paperWidthMm: paperW,
-    });
-    printHtmlDirectly(html, 'Test Professional Receipt', { widthMm: paperW });
   }
 
 </script>
@@ -1868,25 +1548,16 @@
               </div>
             </div>
 
-            <!-- Receipt Template Preset: Standard vs 80mm Professional -->
+            <!-- ONE unified receipt template (v0.5.17): the old
+                 standard/professional selector is gone — the professional
+                 graphic template is THE receipt, and every toggle below
+                 applies to it everywhere. -->
             <div class="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-3">
               <h3 class="font-black text-xs text-pos-text flex items-center gap-1.5">
                 <FileText class="w-4 h-4 text-sky-500" />
-                <span>Receipt Template Preset (قالب الوصل)</span>
+                <span>Receipt Content (محتوى الوصل)</span>
               </h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-xs font-bold text-pos-muted mb-1">Sale Receipt Template</label>
-                  <select
-                    bind:value={settings.receipt_preset}
-                    on:change={autoSaveSettings}
-                    class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer"
-                  >
-                    <option value="professional">80 mm — Professional (graphic, QR + barcode) — Default</option>
-                    <option value="standard">Standard — Monospace Ticket</option>
-                  </select>
-                  <p class="text-[9px] text-pos-muted mt-1">Applied to auto-printed sale receipts. Arabic/French/English labels adapt to the UI language.</p>
-                </div>
                 <div>
                   <label class="block text-xs font-bold text-pos-muted mb-1">Thank-you Message (footer)</label>
                   <input type="text" bind:value={settings.receipt_thank_you} on:change={autoSaveSettings} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
@@ -1895,13 +1566,8 @@
                   <label class="block text-xs font-bold text-pos-muted mb-1">Shop Website (receipt header)</label>
                   <input type="text" bind:value={settings.shop_website} on:change={autoSaveSettings} placeholder="www.titaoupos.dz" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
                 </div>
-                <div class="flex items-end">
-                  <button on:click={testPrintProfessionalReceipt} class="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-pos-text font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition">
-                    <Printer class="w-3.5 h-3.5 text-sky-500" />
-                    <span>Test Print Professional Receipt</span>
-                  </button>
-                </div>
               </div>
+              <p class="text-[10px] text-pos-muted">Printed silently through the Windows print API (GDI) — never a browser dialog. The live preview on the right is exactly what prints.</p>
             </div>
 
             <!-- Section Content Visibility Toggles -->
@@ -1942,11 +1608,6 @@
                 </label>
 
                 <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_tax} class="rounded text-sky-600" />
-                  <span>Tax / TVA Breakdown</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
                   <input type="checkbox" bind:checked={settings.receipt_show_footer} class="rounded text-sky-600" />
                   <span>Footer Note / Policy</span>
                 </label>
@@ -1963,178 +1624,23 @@
               </div>
             </div>
 
-            <!-- Typography, Font Sizing & Bold Options -->
-            <div class="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-3">
-              <h3 class="font-black text-xs text-pos-text flex items-center gap-1.5">
-                <Type class="w-4 h-4 text-sky-500" />
-                <span>Font Sizing, Bold Formatting & Alignment (حجم الخط والمحاذاة)</span>
-              </h3>
-
-              <!-- Alignment row -->
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pb-1 border-b border-pos-border/40">
-                <div>
-                  <label class="block text-[11px] font-bold text-pos-muted mb-1">Header Alignment (محاذاة الرأس)</label>
-                  <select bind:value={settings.receipt_header_align} class="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text">
-                    <option value="center">Center / في الوسط</option>
-                    <option value="left">Left / محاذاة لليسار</option>
-                    <option value="right">Right / محاذاة لليمين</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-[11px] font-bold text-pos-muted mb-1">Footer Policy Alignment (محاذاة التذييل)</label>
-                  <select bind:value={settings.receipt_footer_align} class="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text">
-                    <option value="center">Center / في الوسط</option>
-                    <option value="left">Left / محاذاة لليسار</option>
-                    <option value="right">Right / محاذاة لليمين</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                <!-- Header Font Size & Bold -->
-                <div class="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-pos-border space-y-1.5">
-                  <span class="text-[11px] font-bold text-pos-muted block">Shop Header</span>
-                  <div class="flex items-center gap-1.5">
-                    <input type="number" min="6" max="64" bind:value={settings.receipt_header_font_size} class="w-16 px-2 py-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs font-bold font-mono outline-none" />
-                    <span class="text-[10px] text-pos-muted">px</span>
-                  </div>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer pt-1">
-                    <input type="checkbox" bind:checked={settings.receipt_header_bold} class="rounded text-sky-600" />
-                    <span>Bold (عريض)</span>
-                  </label>
-                </div>
-
-                <!-- Body / Items Font Size & Bold -->
-                <div class="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-pos-border space-y-1.5">
-                  <span class="text-[11px] font-bold text-pos-muted block">Items & Rows</span>
-                  <div class="flex items-center gap-1.5">
-                    <input type="number" min="6" max="48" bind:value={settings.receipt_body_font_size} class="w-16 px-2 py-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs font-bold font-mono outline-none" />
-                    <span class="text-[10px] text-pos-muted">px</span>
-                  </div>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer pt-1">
-                    <input type="checkbox" bind:checked={settings.receipt_body_bold} class="rounded text-sky-600" />
-                    <span>Bold (عريض)</span>
-                  </label>
-                </div>
-
-                <!-- Total Amount Font Size & Bold -->
-                <div class="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-pos-border space-y-1.5">
-                  <span class="text-[11px] font-bold text-pos-muted block">Total Amount</span>
-                  <div class="flex items-center gap-1.5">
-                    <input type="number" min="6" max="64" bind:value={settings.receipt_total_font_size} class="w-16 px-2 py-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs font-bold font-mono outline-none" />
-                    <span class="text-[10px] text-pos-muted">px</span>
-                  </div>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer pt-1">
-                    <input type="checkbox" bind:checked={settings.receipt_total_bold} class="rounded text-sky-600" />
-                    <span>Bold (عريض)</span>
-                  </label>
-                </div>
-
-                <!-- Footer Font Size & Bold -->
-                <div class="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-pos-border space-y-1.5">
-                  <span class="text-[11px] font-bold text-pos-muted block">Footer Policy</span>
-                  <div class="flex items-center gap-1.5">
-                    <input type="number" min="6" max="48" bind:value={settings.receipt_footer_font_size} class="w-16 px-2 py-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs font-bold font-mono outline-none" />
-                    <span class="text-[10px] text-pos-muted">px</span>
-                  </div>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer pt-1">
-                    <input type="checkbox" bind:checked={settings.receipt_footer_bold} class="rounded text-sky-600" />
-                    <span>Bold (عريض)</span>
-                  </label>
-                </div>
-              </div>
-            </div>
           </div>
 
-          <!-- Right Col: Live Dynamic Receipt Preview -->
+          <!-- Right Col: LIVE unified receipt preview — the exact HTML the
+               printer receives (same builder as POS auto-print). -->
           <div class="bg-slate-100 dark:bg-slate-900/60 p-4 rounded-2xl flex flex-col items-center justify-start border border-pos-border space-y-2">
             <span class="text-[10px] font-black text-pos-muted uppercase tracking-wider">Live Receipt Preview ({settings.receipt_paper_width || '80mm'})</span>
-            <div
-              style="font-family: {settings.receipt_font_family || 'monospace'}; font-size: {settings.receipt_body_font_size || '10'}px; font-weight: {settings.receipt_body_bold === 'true' || settings.receipt_body_bold === true ? 'bold' : 'normal'}; width: {settings.receipt_paper_width === '58mm' ? '200px' : '260px'};"
-              class="bg-white text-black p-3.5 shadow-md space-y-2 border border-slate-300 transition-all rounded-sm leading-tight"
-            >
-              <!-- Header -->
-              <div style="text-align: {settings.receipt_header_align || 'center'};" class="pb-1 border-b border-dashed border-slate-400">
-                {#if (settings.receipt_show_shop_name ?? 'true') !== 'false' && (settings.receipt_show_shop_name ?? true) !== false}
-                  <p style="font-size: {settings.receipt_header_font_size || '14'}px; font-weight: {(settings.receipt_header_bold ?? 'true') !== 'false' && (settings.receipt_header_bold ?? true) !== false ? '900' : 'normal'};" class="leading-tight">
-                    {settings.shop_name_fr || 'TitaouPOS'}
-                  </p>
-                  {#if settings.shop_name_ar}
-                    <p class="font-bold text-[10px]">{settings.shop_name_ar}</p>
-                  {/if}
-                {/if}
-                {#if (settings.receipt_show_address ?? 'true') !== 'false' && (settings.receipt_show_address ?? true) !== false}
-                  <p class="text-[8px] text-gray-600">{settings.shop_address || 'Alger Centre, Algérie'}</p>
-                {/if}
-                {#if (settings.receipt_show_phone ?? 'true') !== 'false' && (settings.receipt_show_phone ?? true) !== false}
-                  <p class="text-[8px] text-gray-600">Tél: {settings.shop_phone || '0553444057'}</p>
-                {/if}
-                {#if (settings.receipt_show_rc_nif ?? 'true') !== 'false' && (settings.receipt_show_rc_nif ?? true) !== false}
-                  <p class="text-[7px] text-gray-500">RC: {settings.shop_rc || '16/00-0123456B22'} | NIF: {settings.shop_nif || '0016160123456'}</p>
-                {/if}
-                {#if settings.receipt_header}
-                  <p class="text-[8px] font-bold text-sky-800 mt-0.5 italic">{settings.receipt_header}</p>
-                {/if}
-              </div>
-
-              <!-- Ticket info -->
-              <div class="py-0.5 border-b border-dashed border-slate-400 flex justify-between text-[8px]">
-                <span>TICKET #9842</span>
-                {#if (settings.receipt_show_cashier ?? 'true') !== 'false' && (settings.receipt_show_cashier ?? true) !== false}
-                  <span>Caisse: Admin</span>
-                {/if}
-              </div>
-
-              <!-- Items list -->
-              <div class="space-y-0.5 py-1 border-b border-dashed border-slate-400 text-[9px]">
-                <div class="flex justify-between font-bold">
-                  <span>1x Sucre Cevital 1kg</span>
-                  <span>100 DZD</span>
-                </div>
-                <div class="flex justify-between font-bold">
-                  <span>2x Lait Candia 1L</span>
-                  <span>240 DZD</span>
-                </div>
-              </div>
-
-              <!-- Taxes -->
-              {#if (settings.receipt_show_tax ?? 'true') !== 'false' && (settings.receipt_show_tax ?? true) !== false}
-                <div class="text-[8px] text-gray-600 py-0.5 border-b border-dashed border-slate-400 flex justify-between">
-                  <span>Total HT: 285 DZD</span>
-                  <span>TVA (19%): 55 DZD</span>
-                </div>
-              {/if}
-
-              <!-- Total -->
-              <div
-                style="font-size: {settings.receipt_total_font_size || '13'}px; font-weight: {(settings.receipt_total_bold ?? 'true') !== 'false' && (settings.receipt_total_bold ?? true) !== false ? '900' : 'normal'};"
-                class="flex justify-between pt-1"
-              >
-                <span>TOTAL:</span>
-                <span>340 DZD</span>
-              </div>
-
-              <!-- Footer -->
-              {#if (settings.receipt_show_footer ?? 'true') !== 'false' && (settings.receipt_show_footer ?? true) !== false}
-                <div
-                  style="font-size: {settings.receipt_footer_font_size || '8'}px; font-weight: {settings.receipt_footer_bold === 'true' || settings.receipt_footer_bold === true ? 'bold' : 'normal'}; text-align: {settings.receipt_footer_align || 'center'};"
-                  class="pt-1 text-gray-600 border-t border-dashed border-slate-400"
-                >
-                  {settings.receipt_footer || '*** Merci de votre visite ***'}
-                </div>
-              {/if}
-
-              <!-- QR Code -->
-              {#if (settings.receipt_show_qr ?? 'true') !== 'false' && (settings.receipt_show_qr ?? true) !== false}
-                <div class="text-center pt-0.5">
-                  <div class="inline-block px-2 py-0.5 bg-slate-100 border border-slate-300 font-mono text-[7px] text-gray-600 rounded">
-                    [QR: TITAOU-VTE-9842]
-                  </div>
-                </div>
-              {/if}
+            <div class="bg-white shadow-md overflow-hidden">
+              {@html unifiedPreviewBuilt?.html || ''}
             </div>
           </div>
         </div>
+
+        {#if testPrintMsg}
+          <div class="p-2.5 rounded-xl text-[11px] font-bold {testPrintMsg.startsWith('✅') ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300' : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-300'}">
+            {testPrintMsg}
+          </div>
+        {/if}
 
         <!-- Serial Cash Drawer Settings -->
         <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-3">
@@ -2557,13 +2063,15 @@
 
     </div>
 
-    <!-- 3. BARCODE LABELS TAB (Two Distinct Sections with Live Previews & Full Customization) -->
+    <!-- 3. BARCODE & SHELF LABELS TAB — ONE unified preset system (v0.5.17).
+         The legacy px-based sticker/shelf sections and the saved-preset JSON
+         are removed: one current preset, live preview, native silent print. -->
     <div class:hidden={currentTab !== 'barcodes'}>
       <div class="max-w-5xl space-y-6">
         <div class="flex items-center justify-between">
           <div>
-            <h2 class="text-base font-black text-pos-text">Barcode & Shelf Label Generator / ملصقات الباركود وبطاقات الرف</h2>
-            <p class="text-xs text-pos-muted">Custom thermal sticker rolls (50x30mm) and shelf price tags with live presets, fonts, and dimensions</p>
+            <h2 class="text-base font-black text-pos-text">Label Presets — Barcode Stickers & Shelf Tags (قوالب الملصقات)</h2>
+            <p class="text-xs text-pos-muted">One current preset used by every label print: product modal, batch printing, shelf etiquette. mm-exact, silent, no print dialog.</p>
           </div>
           <button on:click={saveAllSettings} class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5">
             <Check class="w-4 h-4" />
@@ -2571,459 +2079,144 @@
           </button>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <!-- SECTION 1: Product Barcode Sticker -->
-          <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-4 flex flex-col justify-between">
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
-                  <Tag class="w-4 h-4 text-sky-500" />
-                  <span>1. Product Sticker Preset (ملصق باركود)</span>
-                </h3>
-                <span class="text-[10px] font-mono bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300 px-2 py-0.5 rounded-full font-bold">Thermal Roll</span>
-              </div>
-
-              <!-- Live Real Sticker Preview -->
-              <div
-                style="text-align: {settings.sticker_text_align || 'center'};"
-                class="p-4 bg-white text-slate-900 border-2 border-dashed border-slate-300 rounded-xl flex flex-col justify-center space-y-1.5 shadow-inner min-h-[140px] w-full"
-              >
-                {#if (settings.sticker_show_shop_name ?? 'true') !== 'false' && (settings.sticker_show_shop_name ?? true) !== false}
-                  <span class="text-[10px] text-slate-500 font-bold uppercase block" style="text-align: {settings.sticker_text_align || 'center'};">{settings.shop_name_fr || 'TitaouPOS Supermarché'}</span>
-                {/if}
-                {#if (settings.sticker_show_product_name ?? 'true') !== 'false' && (settings.sticker_show_product_name ?? true) !== false}
-                  <p
-                    style="font-size: {settings.sticker_name_font_size || '12'}px; font-weight: {(settings.sticker_name_bold ?? 'true') !== 'false' && (settings.sticker_name_bold ?? true) !== false ? '900' : 'normal'}; text-align: {settings.sticker_text_align || 'center'};"
-                    class="text-slate-900 line-clamp-1 leading-tight block"
-                  >
-                    {previewProductName}
-                  </p>
-                {/if}
-                {#if (settings.sticker_show_barcode ?? 'true') !== 'false' && (settings.sticker_show_barcode ?? true) !== false}
-                  <div class="w-full flex py-0.5 overflow-hidden" style="justify-content: {settings.sticker_text_align === 'left' ? 'flex-start' : settings.sticker_text_align === 'right' ? 'flex-end' : 'center'};">
-                    <svg bind:this={settingsBarcodeSvgEl} class="max-w-full"></svg>
-                  </div>
-                {/if}
-                {#if (settings.sticker_show_price ?? 'true') !== 'false' && (settings.sticker_show_price ?? true) !== false}
-                  <span
-                    style="font-size: {settings.sticker_price_font_size || '16'}px; font-weight: {(settings.sticker_price_bold ?? 'true') !== 'false' && (settings.sticker_price_bold ?? true) !== false ? '900' : 'normal'}; text-align: {settings.sticker_text_align || 'center'};"
-                    class="text-slate-900 font-mono leading-none block"
-                  >
-                    {previewPrice} DZD
-                  </span>
-                {/if}
-              </div>
-
-              <!-- Dimensions, Orientation & Alignment -->
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Width (mm)</label>
-                  <input type="number" bind:value={settings.barcode_label_width} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold font-mono outline-none" />
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Height (mm)</label>
-                  <input type="number" bind:value={settings.barcode_label_height} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold font-mono outline-none" />
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Orientation (الاتجاه)</label>
-                  <select bind:value={settings.sticker_orientation} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold">
-                    <option value="landscape">Landscape (عرضي)</option>
-                    <option value="portrait">Portrait (طولي)</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Alignment (المحاذاة)</label>
-                  <select bind:value={settings.sticker_text_align} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold">
-                    <option value="center">Center / وسط</option>
-                    <option value="left">Left / يسار</option>
-                    <option value="right">Right / يمين</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Content Position (الموضع)</label>
-                  <select bind:value={settings.sticker_content_position} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold">
-                    <option value="top">Top / أعلى</option>
-                    <option value="middle">Middle / وسط</option>
-                    <option value="bottom">Bottom / أسفل</option>
-                  </select>
-                </div>
-              </div>
-
-              <!-- Label Presets -->
-              <div class="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-2">
-                <span class="text-[10px] font-bold text-pos-muted uppercase tracking-wider block">Label Presets (إعدادات جاهزة)</span>
-                <div class="flex items-center gap-2">
-                  <input
-                    type="text"
-                    bind:value={newPresetName}
-                    placeholder="Preset name (Ex: Fardeau 60x40)..."
-                    class="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs font-bold text-pos-text outline-none"
-                  />
-                  <button
-                    type="button"
-                    on:click={saveCurrentLabelPreset}
-                    class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-black rounded-lg cursor-pointer"
-                  >
-                    Save Preset
-                  </button>
-                </div>
-                {#if Object.keys(labelPresets).length > 0}
-                  <div class="flex items-center gap-1.5 flex-wrap">
-                    {#each Object.keys(labelPresets) as pname}
-                      <div class="flex items-center gap-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg overflow-hidden">
-                        <button
-                          type="button"
-                          on:click={() => applyLabelPreset(pname)}
-                          class="px-2.5 py-1 text-[10px] font-black text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950 cursor-pointer"
-                          title="Apply this preset"
-                        >
-                          {pname}
-                        </button>
-                        <button
-                          type="button"
-                          on:click={() => deleteLabelPreset(pname)}
-                          class="px-1.5 py-1 text-[10px] text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950 cursor-pointer border-s border-pos-border"
-                          title="Delete preset"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-
-              <!-- Display Fields Checkboxes -->
-              <div class="space-y-1.5 pt-1">
-                <span class="text-[10px] font-bold text-pos-muted uppercase tracking-wider block">Fields to Show (العناصر الظاهرة)</span>
-                <div class="grid grid-cols-2 gap-1.5">
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
-                    <input type="checkbox" bind:checked={settings.sticker_show_shop_name} class="rounded text-sky-600" />
-                    <span>Shop Name</span>
-                  </label>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
-                    <input type="checkbox" bind:checked={settings.sticker_show_product_name} class="rounded text-sky-600" />
-                    <span>Product Name</span>
-                  </label>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
-                    <input type="checkbox" bind:checked={settings.sticker_show_barcode} class="rounded text-sky-600" />
-                    <span>Real Barcode</span>
-                  </label>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
-                    <input type="checkbox" bind:checked={settings.sticker_show_price} class="rounded text-sky-600" />
-                    <span>Sale Price</span>
-                  </label>
-                </div>
-              </div>
-
-              <!-- Sizing & Formatting -->
-              <div class="space-y-1.5 pt-1">
-                <span class="text-[10px] font-bold text-pos-muted uppercase tracking-wider block">Font Sizes & Bold Styling (الأحجام والخط)</span>
-                <div class="grid grid-cols-3 gap-2">
-                  <div class="p-2 bg-white dark:bg-slate-900 rounded-lg border border-pos-border space-y-1">
-                    <span class="text-[9px] font-bold text-pos-muted block">Name Size (px)</span>
-                    <input type="number" min="4" max="72" bind:value={settings.sticker_name_font_size} class="w-full px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-xs font-bold font-mono outline-none" />
-                    <label class="flex items-center gap-1 text-[10px] font-bold text-pos-text cursor-pointer pt-0.5">
-                      <input type="checkbox" bind:checked={settings.sticker_name_bold} class="rounded text-sky-600" />
-                      <span>Bold</span>
-                    </label>
-                  </div>
-
-                  <div class="p-2 bg-white dark:bg-slate-900 rounded-lg border border-pos-border space-y-1">
-                    <span class="text-[9px] font-bold text-pos-muted block">Price Size (px)</span>
-                    <input type="number" min="4" max="72" bind:value={settings.sticker_price_font_size} class="w-full px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-xs font-bold font-mono outline-none" />
-                    <label class="flex items-center gap-1 text-[10px] font-bold text-pos-text cursor-pointer pt-0.5">
-                      <input type="checkbox" bind:checked={settings.sticker_price_bold} class="rounded text-sky-600" />
-                      <span>Bold</span>
-                    </label>
-                  </div>
-
-                  <div class="p-2 bg-white dark:bg-slate-900 rounded-lg border border-pos-border space-y-1">
-                    <span class="text-[9px] font-bold text-pos-muted block">Code Size (px)</span>
-                    <input type="number" min="4" max="48" bind:value={settings.sticker_barcode_font_size} on:input={renderSettingsBarcode} class="w-full px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-xs font-bold font-mono outline-none" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <button on:click={testPrintBarcode} class="w-full py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition mt-3">
-              <Printer class="w-3.5 h-3.5" />
-              <span>Test Print Barcode Sticker ({settings.barcode_label_width || 50}x{settings.barcode_label_height || 30}mm)</span>
-            </button>
-          </div>
-
-          <!-- SECTION 2: Shelf Price Etiquette -->
-          <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-4 flex flex-col justify-between">
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
-                  <Tag class="w-4 h-4 text-emerald-500" />
-                  <span>2. Shelf Etiquette Preset (بطاقة رف وسعر)</span>
-                </h3>
-                <span class="text-[10px] font-mono bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">Gondola Tag</span>
-              </div>
-
-              <!-- Live Shelf Tag Preview -->
-              <div
-                style="text-align: {settings.shelf_text_align || 'center'};"
-                class="p-4 bg-white text-slate-900 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col justify-between space-y-2 shadow-inner min-h-[140px] w-full"
-              >
-                {#if (settings.shelf_show_shop_name ?? 'true') !== 'false' && (settings.shelf_show_shop_name ?? true) !== false}
-                  <div class="w-full flex justify-between text-[10px] font-bold text-slate-500 border-b pb-0.5">
-                    <span>{settings.shop_name_fr || 'TitaouPOS'}</span>
-                    <span class="text-emerald-600 font-bold">DISPO EN RAYON</span>
-                  </div>
-                {/if}
-                {#if (settings.shelf_show_product_name ?? 'true') !== 'false' && (settings.shelf_show_product_name ?? true) !== false}
-                  <h4
-                    style="font-size: {settings.shelf_name_font_size || '16'}px; font-weight: {(settings.shelf_name_bold ?? 'true') !== 'false' && (settings.shelf_name_bold ?? true) !== false ? '900' : 'normal'}; text-align: {settings.shelf_text_align || 'center'};"
-                    class="text-slate-900 leading-tight py-0.5 block"
-                  >
-                    {previewProductName}
-                  </h4>
-                {/if}
-                {#if (settings.shelf_show_price ?? 'true') !== 'false' && (settings.shelf_show_price ?? true) !== false}
-                  <div
-                    style="font-size: {settings.shelf_price_font_size || '28'}px; font-weight: {(settings.shelf_price_bold ?? 'true') !== 'false' && (settings.shelf_price_bold ?? true) !== false ? '900' : 'normal'}; text-align: {settings.shelf_text_align || 'center'};"
-                    class="w-full bg-slate-900 text-white font-mono rounded py-1 px-2 block"
-                  >
-                    {previewPrice} DZD
-                  </div>
-                {/if}
-                {#if (settings.shelf_show_ref ?? 'true') !== 'false' && (settings.shelf_show_ref ?? true) !== false}
-                  <div class="w-full flex justify-between font-bold text-slate-500 pt-0.5" style="font-size: {settings.shelf_ref_font_size || '10'}px;">
-                    <span>Ref: {previewBarcodeNumber}</span>
-                    <span>TVA 19% Incl.</span>
-                  </div>
-                {/if}
-              </div>
-
-              <!-- Dimensions, Orientation & Alignment -->
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Width (mm)</label>
-                  <input type="number" bind:value={settings.shelf_tag_width} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold font-mono outline-none" />
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Height (mm)</label>
-                  <input type="number" bind:value={settings.shelf_tag_height} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold font-mono outline-none" />
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Orientation (الاتجاه)</label>
-                  <select bind:value={settings.shelf_orientation} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold">
-                    <option value="landscape">Landscape (عرضي)</option>
-                    <option value="portrait">Portrait (طولي)</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Alignment (المحاذاة)</label>
-                  <select bind:value={settings.shelf_text_align} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold">
-                    <option value="center">Center / وسط</option>
-                    <option value="left">Left / يسار</option>
-                    <option value="right">Right / يمين</option>
-                  </select>
-                  <label class="block text-[10px] font-bold text-pos-muted mb-1 mt-2">Content Position (الموضع)</label>
-                  <select bind:value={settings.shelf_content_position} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold">
-                    <option value="top">Top / أعلى</option>
-                    <option value="middle">Middle / وسط</option>
-                    <option value="bottom">Bottom / أسفل</option>
-                  </select>
-                </div>
-              </div>
-
-              <!-- Display Fields Checkboxes -->
-              <div class="space-y-1.5 pt-1">
-                <span class="text-[10px] font-bold text-pos-muted uppercase tracking-wider block">Fields to Show (العناصر الظاهرة)</span>
-                <div class="grid grid-cols-2 gap-1.5">
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
-                    <input type="checkbox" bind:checked={settings.shelf_show_shop_name} class="rounded text-emerald-600" />
-                    <span>Shop Header</span>
-                  </label>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
-                    <input type="checkbox" bind:checked={settings.shelf_show_product_name} class="rounded text-emerald-600" />
-                    <span>Product Name</span>
-                  </label>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
-                    <input type="checkbox" bind:checked={settings.shelf_show_price} class="rounded text-emerald-600" />
-                    <span>Sale Price</span>
-                  </label>
-                  <label class="flex items-center gap-1.5 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
-                    <input type="checkbox" bind:checked={settings.shelf_show_ref} class="rounded text-emerald-600" />
-                    <span>Ref / Barcode</span>
-                  </label>
-                </div>
-              </div>
-
-              <!-- Sizing & Formatting -->
-              <div class="space-y-1.5 pt-1">
-                <span class="text-[10px] font-bold text-pos-muted uppercase tracking-wider block">Font Sizes & Bold Styling (الأحجام والخط)</span>
-                <div class="grid grid-cols-3 gap-2">
-                  <div class="p-2 bg-white dark:bg-slate-900 rounded-lg border border-pos-border space-y-1">
-                    <span class="text-[9px] font-bold text-pos-muted block">Name Size (px)</span>
-                    <input type="number" min="6" max="80" bind:value={settings.shelf_name_font_size} class="w-full px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-xs font-bold font-mono outline-none" />
-                    <label class="flex items-center gap-1 text-[10px] font-bold text-pos-text cursor-pointer pt-0.5">
-                      <input type="checkbox" bind:checked={settings.shelf_name_bold} class="rounded text-emerald-600" />
-                      <span>Bold</span>
-                    </label>
-                  </div>
-
-                  <div class="p-2 bg-white dark:bg-slate-900 rounded-lg border border-pos-border space-y-1">
-                    <span class="text-[9px] font-bold text-pos-muted block">Price Size (px)</span>
-                    <input type="number" min="8" max="96" bind:value={settings.shelf_price_font_size} class="w-full px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-xs font-bold font-mono outline-none" />
-                    <label class="flex items-center gap-1 text-[10px] font-bold text-pos-text cursor-pointer pt-0.5">
-                      <input type="checkbox" bind:checked={settings.shelf_price_bold} class="rounded text-emerald-600" />
-                      <span>Bold</span>
-                    </label>
-                  </div>
-
-                  <div class="p-2 bg-white dark:bg-slate-900 rounded-lg border border-pos-border space-y-1">
-                    <span class="text-[9px] font-bold text-pos-muted block">Ref Size (px)</span>
-                    <input type="number" min="4" max="48" bind:value={settings.shelf_ref_font_size} class="w-full px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-xs font-bold font-mono outline-none" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <button on:click={testPrintShelfTag} class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition mt-3">
-              <Printer class="w-3.5 h-3.5" />
-              <span>Test Print Shelf Tag ({settings.shelf_tag_width || 60}x{settings.shelf_tag_height || 40}mm)</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- SECTION 3: Built-in 40×20 mm Thermal Presets -->
-        <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-4">
-          <div>
-            <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
-              <Tag class="w-4 h-4 text-amber-500" />
-              <span>3. Built-in Thermal Presets — 40×20 mm (قوالب جاهزة)</span>
-            </h3>
-            <p class="text-xs text-pos-muted mt-1">
-              mm-exact presets with real scannable barcode, auto-fitting text and rotated price — select them from any product's
-              <span class="font-bold">Print Label</span> modal. Printed size stays exactly 40×20 mm at 203/300/600 DPI.
-            </p>
-          </div>
-
-          <!-- Preset quick-select: every printing location respects the chosen preset -->
-          <div class="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-            <div class="md:col-span-2">
-              <label class="block text-[10px] font-bold text-pos-muted mb-1">Current Label Preset (القالب الحالي) — used by every label print</label>
+        <!-- Current preset + live preview data -->
+        <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="space-y-4">
+            <div>
+              <label class="block text-[11px] font-bold text-pos-muted mb-1">Current Preset (القالب الحالي) — default everywhere labels print</label>
               <div class="flex gap-2">
                 <select
                   bind:value={settings.label_preset_id}
                   on:change={autoSaveSettings}
-                  class="flex-1 px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-lg text-xs font-bold text-pos-text outline-none cursor-pointer"
+                  class="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer"
                 >
                   <option value="vprice40x20">Vertical Price — 40×20 mm (barcode + rotated price)</option>
                   <option value="shelf40x20">Shelf Price — 40×20 mm (name + big price, no barcode)</option>
                 </select>
                 <button
                   type="button"
-                  on:click={() => { settings.label_preset_id = 'vprice40x20'; autoSaveSettings(); triggerSaveNotification('Preset reset to Vertical Price 40×20'); }}
-                  class="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-pos-text text-[10px] font-black rounded-lg cursor-pointer shrink-0"
+                  on:click={() => { settings.label_preset_id = 'vprice40x20'; autoSaveSettings(); triggerSaveNotification('Preset reset to the built-in Vertical Price 40×20'); }}
+                  class="px-3 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-pos-text text-[10px] font-black rounded-xl cursor-pointer shrink-0"
                   title="Reset to the built-in default preset"
                 >
                   Reset to Preset
                 </button>
               </div>
-              <p class="text-[9px] text-pos-muted mt-1">The chosen preset is the default everywhere labels print (product modal, batch printing, shelf etiquette).</p>
             </div>
-            <div class="text-center">
-              <span class="text-[9px] font-bold text-pos-muted block">Live preview</span>
-              {#if settings.label_preset_id === 'shelf40x20' && builtinLabelPreviews['shelf40x20']}
-                <div style="width: calc(40mm * 1.4); height: calc(20mm * 1.4); margin: 0 auto; position: relative; overflow: hidden;">
-                  <div style="width: 40mm; height: 20mm; transform: scale(1.4); transform-origin: top left;">
-                    {@html builtinLabelPreviews['shelf40x20']}
+
+            <!-- Preview data (drives the live label + receipt previews) -->
+            <div class="grid grid-cols-1 gap-3">
+              <div>
+                <label class="block text-[10px] font-bold text-pos-muted mb-1">Preview product name</label>
+                <input type="text" bind:value={previewProductName} class="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs font-bold text-pos-text outline-none" />
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Preview barcode</label>
+                  <input type="text" bind:value={previewBarcodeNumber} class="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs font-mono font-bold text-pos-text outline-none" />
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-pos-muted mb-1">Preview price (DZD)</label>
+                  <input type="number" bind:value={previewPrice} class="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs font-mono font-bold text-pos-text outline-none" />
+                </div>
+              </div>
+            </div>
+
+            <p class="text-[10px] text-pos-muted bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-lg p-2.5">
+              Layout, typography and barcode geometry are built into each mm-true preset — what you see in the preview is
+              exactly what prints, at 203/300/600 DPI, with zero gaps and no print dialog.
+            </p>
+          </div>
+
+          <!-- Live preview of the CURRENT preset (2.2× scale) -->
+          <div class="space-y-2">
+            <span class="text-[10px] font-black text-pos-muted uppercase tracking-wider block text-center">Live Preview — current preset</span>
+            <div class="bg-white dark:bg-slate-900 border border-pos-border rounded-xl p-4 flex justify-center overflow-hidden">
+              {#if builtinLabelPreviews[settings.label_preset_id as LabelPresetId]}
+                <div style="width: calc(40mm * 2.2); height: calc(20mm * 2.2); position: relative; overflow: hidden;">
+                  <div style="width: 40mm; height: 20mm; transform: scale(2.2); transform-origin: top left;">
+                    {@html builtinLabelPreviews[settings.label_preset_id as LabelPresetId]}
                   </div>
                 </div>
-              {:else if builtinLabelPreviews['vprice40x20']}
-                <div style="width: calc(40mm * 1.4); height: calc(20mm * 1.4); margin: 0 auto; position: relative; overflow: hidden;">
-                  <div style="width: 40mm; height: 20mm; transform: scale(1.4); transform-origin: top left;">
-                    {@html builtinLabelPreviews['vprice40x20']}
-                  </div>
-                </div>
+              {:else}
+                <p class="text-[11px] text-pos-muted py-8">Open the Barcode Labels tab to render the preview.</p>
               {/if}
             </div>
           </div>
+        </div>
 
-          <!-- Label printer hardware (exact-media silent pipeline) -->
-          <div class="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label class="block text-[10px] font-bold text-pos-muted mb-1">Label Printer (طابعة الملصقات)</label>
-              <select
-                bind:value={settings.label_printer}
-                on:change={autoSaveSettings}
-                class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-lg text-xs font-bold text-pos-text outline-none cursor-pointer"
-              >
-                <option value="">Default Windows Printer</option>
-                {#each printerList as pr}
-                  <option value={pr}>{pr}</option>
-                {/each}
-              </select>
-              <p class="text-[9px] text-pos-muted mt-1">Used by the exact-media pipeline: one 40×20mm page per copy, no gaps, silent.</p>
-            </div>
-            <div>
-              <label class="block text-[10px] font-bold text-pos-muted mb-1">Label Printer DPI</label>
-              <select
-                bind:value={settings.label_printer_dpi}
-                on:change={autoSaveSettings}
-                class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-lg text-xs font-bold text-pos-text outline-none cursor-pointer"
-              >
-                <option value="203">203 DPI (standard thermal)</option>
-                <option value="300">300 DPI (high-res)</option>
-                <option value="600">600 DPI (photo-grade)</option>
-              </select>
-              <p class="text-[9px] text-pos-muted mt-1">Match your Xprinter model's resolution for crisp bars.</p>
-            </div>
-            <div class="flex items-end">
-              <p class="text-[10px] text-pos-muted bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg p-2 w-full">
-                Multi-copy jobs print consecutively — Label 2 feeds right after Label 1. No A4 pages, no blank gaps, no print dialog.
-              </p>
-            </div>
+        <!-- Label printer hardware (exact-media silent pipeline) -->
+        <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-[10px] font-bold text-pos-muted mb-1">Label Printer (طابعة الملصقات)</label>
+            <select
+              bind:value={settings.label_printer}
+              on:change={autoSaveSettings}
+              class="w-full px-2.5 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer"
+            >
+              <option value="">Default Windows Printer</option>
+              {#each printerList as pr}
+                <option value={pr}>{pr}</option>
+              {/each}
+            </select>
+            <p class="text-[9px] text-pos-muted mt-1">Used by the exact-media pipeline: one page per label, no gaps, silent.</p>
           </div>
+          <div>
+            <label class="block text-[10px] font-bold text-pos-muted mb-1">Label Printer DPI</label>
+            <select
+              bind:value={settings.label_printer_dpi}
+              on:change={autoSaveSettings}
+              class="w-full px-2.5 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer"
+            >
+              <option value="203">203 DPI (standard thermal)</option>
+              <option value="300">300 DPI (high-res)</option>
+              <option value="600">600 DPI (photo-grade)</option>
+            </select>
+            <p class="text-[9px] text-pos-muted mt-1">Match your printer model's resolution for crisp bars.</p>
+          </div>
+          <div class="flex items-end">
+            <p class="text-[10px] text-pos-muted bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg p-2.5 w-full">
+              Multi-copy jobs print consecutively — Label 2 feeds right after Label 1. No A4 pages, no blank gaps, no dialog.
+            </p>
+          </div>
+        </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {#each LABEL_PRESET_IDS as pid}
-              <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border space-y-3">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-xs font-black text-pos-text">{LABEL_PRESETS[pid].name}</span>
-                  <span class="text-[9px] font-mono bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">
-                    {LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm} mm
-                  </span>
-                </div>
-                <div class="bg-slate-100 dark:bg-slate-800 rounded-xl p-2 flex justify-center overflow-hidden">
-                  <div style="width: calc(40mm * 2.2); height: calc(20mm * 2.2); flex: 0 0 auto;">
+        <!-- Built-in preset cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {#each LABEL_PRESET_IDS as pid}
+            <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border space-y-3">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-black text-pos-text">{LABEL_PRESETS[pid].name}</span>
+                <span class="text-[9px] font-mono bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">
+                  {LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm} mm
+                </span>
+              </div>
+              <div class="bg-slate-100 dark:bg-slate-800 rounded-xl p-2 flex justify-center overflow-hidden">
+                {#if builtinLabelPreviews[pid]}
+                  <div style="width: calc(40mm * 2.2); height: calc(20mm * 2.2); position: relative; overflow: hidden;">
                     <div style="width: 40mm; height: 20mm; transform: scale(2.2); transform-origin: top left;">
                       {@html builtinLabelPreviews[pid]}
                     </div>
                   </div>
-                </div>
-                <button
-                  type="button"
-                  on:click={() => testPrintBuiltinLabel(pid)}
-                  class="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition"
-                >
-                  <Printer class="w-3.5 h-3.5" />
-                  <span>Test Print 5× ({LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm}mm)</span>
-                </button>
+                {/if}
               </div>
-            {/each}
-          </div>
-          {#if builtinTestMsg}
-            <p class="text-[11px] font-bold font-mono text-pos-text bg-slate-100 dark:bg-slate-800 rounded-lg p-2 border border-pos-border">
-              {builtinTestMsg}
-            </p>
-          {/if}
+              <button
+                type="button"
+                on:click={() => testPrintBuiltinLabel(pid)}
+                class="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition"
+              >
+                <Printer class="w-3.5 h-3.5" />
+                <span>Test Print 5× ({LABEL_PRESETS[pid].widthMm}×{LABEL_PRESETS[pid].heightMm}mm)</span>
+              </button>
+            </div>
+          {/each}
         </div>
-
-        <div class="pt-4 border-t border-pos-border flex justify-end">
-          <button on:click={saveAllSettings} class="px-6 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5">
-            <Check class="w-4 h-4" />
-            <span>Save Label Settings</span>
-          </button>
-        </div>
+        {#if builtinTestMsg}
+          <p class="text-[11px] font-bold font-mono text-pos-text bg-slate-100 dark:bg-slate-800 rounded-lg p-2 border border-pos-border">
+            {builtinTestMsg}
+          </p>
+        {/if}
       </div>
-
 
     </div>
 

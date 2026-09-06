@@ -1,17 +1,17 @@
 /**
- * UNIFIED RECEIPT PRESET SYSTEM (v0.5.16).
+ * UNIFIED RECEIPT PRESET SYSTEM (v0.5.17).
  *
- * One helper builds EVERY receipt the app prints — POS auto-print, reprint
- * from Sales History, reopen-last-receipt, credit/versement copies, refund
- * tickets — from the same app_settings keys, so a settings change applies
- * everywhere at once. Two templates exist ("professional" graphic 80mm and
- * "standard" monospace); the choice rides the `receipt_preset` setting.
+ * One template, one builder, every receipt: POS auto-print, reprint from
+ * Sales History, reopen-last-receipt, credit/versement copies, refund
+ * tickets — all built here from the same app_settings keys, so a settings
+ * change applies everywhere at once. The old "standard" monospace preset
+ * and the per-page hardcoded formats are REMOVED; the professional graphic
+ * template is the single receipt and it honors every receipt_show_* toggle.
  *
  * All inputs are plain data (sale + items + shop settings), so callers
  * never re-implement layout or option parsing.
  */
 import { buildProfessionalReceiptHtml, type ProReceiptOptions } from './professionalReceipt';
-import { buildReceiptHtml } from '../utils/printer';
 import { getLanguage } from '../i18n';
 
 export interface UnifiedReceiptItem {
@@ -51,7 +51,7 @@ function bool(s: Record<string, string | undefined>, key: string, dflt = true): 
   return v === 'true' || v === '1';
 }
 
-/** Shared settings-driven options for the professional template. */
+/** Shared settings-driven options for the single professional template. */
 function proOptionsFromContext(c: UnifiedReceiptContext): ProReceiptOptions {
   const s = c.settings;
   const d = new Date(c.saleDate?.replace(' ', 'T') || Date.now());
@@ -65,6 +65,8 @@ function proOptionsFromContext(c: UnifiedReceiptContext): ProReceiptOptions {
     shopPhone: s['shop_phone'] || '',
     shopWebsite: s['shop_website'] || '',
     shopLogoDataUrl: s['shop_logo_base64'] || undefined,
+    shopRc: s['shop_rc'] || undefined,
+    shopNif: s['shop_nif'] || undefined,
     invoiceNumber: c.saleNumber,
     invoiceBarcode: c.saleNumber,
     dateStr: valid.toLocaleDateString('fr-FR'),
@@ -80,6 +82,14 @@ function proOptionsFromContext(c: UnifiedReceiptContext): ProReceiptOptions {
     change: c.change,
     currency: s['default_currency'] || 'DA',
     qrDataUrl: c.qrDataUrl,
+    // Every "Fields to Show" toggle from Settings → Printing is honored:
+    showShopName: bool(s, 'receipt_show_shop_name'),
+    showAddress: bool(s, 'receipt_show_address'),
+    showPhone: bool(s, 'receipt_show_phone'),
+    showRcNif: bool(s, 'receipt_show_rc_nif'),
+    showCashier: bool(s, 'receipt_show_cashier'),
+    showDate: bool(s, 'receipt_show_date'),
+    showFooter: bool(s, 'receipt_show_footer'),
     showQr: bool(s, 'receipt_show_qr'),
     showBarcode: bool(s, 'receipt_show_barcode'),
     thankYou: s['receipt_thank_you'] || 'MERCI POUR VOTRE CONFIANCE !',
@@ -93,44 +103,6 @@ function proOptionsFromContext(c: UnifiedReceiptContext): ProReceiptOptions {
   };
 }
 
-/** Shared options for the legacy monospace template. */
-function standardOptionsFromContext(c: UnifiedReceiptContext) {
-  const s = c.settings;
-  return {
-    shopName: s['shop_name_fr'] || s['shop_name_ar'] || 'TitaouPOS',
-    shopAddress: s['shop_address'] || 'Alger, Algérie',
-    shopPhone: s['shop_phone'] || '0553444057',
-    shopRc: s['shop_rc'] || undefined,
-    shopNif: s['shop_nif'] || undefined,
-    saleNumber: c.saleNumber,
-    saleDate: c.saleDate || new Date().toLocaleString(),
-    cashierName: c.cashierName,
-    customerName: c.customerName,
-    items: c.items,
-    subtotal: c.subtotal,
-    discount: c.discount,
-    grandTotal: c.grandTotal,
-    paymentMethod: c.paymentMethod,
-    isCredit: c.isCredit,
-    copyLabel: c.copyLabel,
-    versementPaid: c.versementPaid,
-    versementRemaining: c.versementRemaining,
-    headerFontSize: parseInt(s['receipt_header_font_size'] || '14', 10),
-    headerBold: bool(s, 'receipt_header_bold'),
-    bodyFontSize: parseInt(s['receipt_body_font_size'] || '11', 10),
-    bodyBold: s['receipt_body_bold'] === 'true',
-    totalFontSize: parseInt(s['receipt_total_font_size'] || '14', 10),
-    totalBold: bool(s, 'receipt_total_bold'),
-    footerFontSize: parseInt(s['receipt_footer_font_size'] || '9', 10),
-    footerBold: s['receipt_footer_bold'] === 'true',
-    headerAlign: (s['receipt_header_align'] as 'left' | 'center' | 'right') || 'center',
-    footerAlign: (s['receipt_footer_align'] as 'left' | 'center' | 'right') || 'center',
-    receiptHeaderGreeting: s['receipt_header'] || '',
-    qrDataUrl: c.qrDataUrl,
-    receiptFooterNote: s['receipt_footer'] || undefined,
-  };
-}
-
 export interface BuiltReceipt {
   html: string;
   title: string;
@@ -138,24 +110,15 @@ export interface BuiltReceipt {
 }
 
 /**
- * Build ONE receipt (any kind) from the unified context, honoring the
- * global `receipt_preset` setting. The returned paper width drives the
- * silent print job's DEVMODE.
+ * Build ONE receipt (any kind) from the unified context. The returned
+ * paper width drives the silent print job's DEVMODE.
  */
 export function buildUnifiedReceipt(c: UnifiedReceiptContext): BuiltReceipt {
   const paperWidthMm = c.settings['receipt_paper_width'] === '58mm' ? 58 : 80;
-  const preset = c.settings['receipt_preset'] || 'professional';
   const title = `Receipt #${c.saleNumber}${c.copyLabel ? ' — ' + c.copyLabel : ''}`;
 
-  if (preset === 'professional') {
-    return {
-      html: buildProfessionalReceiptHtml(proOptionsFromContext(c)),
-      title,
-      paperWidthMm,
-    };
-  }
   return {
-    html: buildReceiptHtml(standardOptionsFromContext(c)),
+    html: buildProfessionalReceiptHtml(proOptionsFromContext(c)),
     title,
     paperWidthMm,
   };

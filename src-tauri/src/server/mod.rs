@@ -1,4 +1,4 @@
-use axum::{extract::State as AxState, routing::get, routing::post, Json, Router};
+use axum::{extract::State as AxState, response::Html, routing::get, routing::post, Json, Router};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -177,6 +177,44 @@ async fn api_status() -> Json<serde_json::Value> {
     }))
 }
 
+/// Landing page at `/`: visiting http://<LAN-IP>:<port> from a phone or PC
+/// shows a real page (name, status, endpoints) instead of a 404.
+async fn index() -> Html<String> {
+    let (port, running, devices) = match STATE.get() {
+        Some(s) => (
+            s.port,
+            true,
+            s.devices.lock().unwrap().values().filter(|d| d.last_seen.elapsed() < Duration::from_secs(300)).count(),
+        ),
+        None => (configured_port(DIAG_DB.get()), false, 0),
+    };
+    Html(format!(
+        r#"<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TitaouPOS Host</title>
+<style>body{{font-family:'Segoe UI',Arial,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+.card{{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:32px;max-width:420px;width:92%}}
+h1{{margin:0 0 4px;font-size:22px}} .ok{{color:#34d399;font-weight:800}} .bad{{color:#f87171;font-weight:800}}
+code{{background:#0f172a;padding:2px 6px;border-radius:6px;font-size:13px}} li{{margin:6px 0}}</style></head>
+<body><div class="card">
+<h1>TitaouPOS Host</h1>
+<p>Embedded server is <span class="{run_cls}">{run_txt}</span> on port <code>{port}</code></p>
+<p>Connected devices: <b>{devices}</b></p>
+<hr style="border-color:#334155">
+<p style="font-weight:700;margin-bottom:6px">API endpoints</p>
+<ul>
+<li><code>GET /api/status</code> — server status</li>
+<li><code>POST /api/handshake</code> — pair a mobile terminal (device_name, device_uid, device_role)</li>
+<li><code>GET /api/diag/login</code> — diagnostics</li>
+</ul>
+<p style="color:#94a3b8;font-size:12px">TitaouPOS • Titaou Bedreddine 0553444057</p>
+</div></body></html>"#,
+        run_cls = if running { "ok" } else { "bad" },
+        run_txt = if running { "ONLINE" } else { "OFFLINE" },
+        port = port,
+        devices = devices,
+    ))
+}
+
 /// Same diagnostic surface the original server exposed: runs the login /
 /// users / settings paths in-process and reports latency, so a stuck DB
 /// mutex is visible from outside the app.
@@ -221,6 +259,7 @@ pub fn start_local_api_server() {
         if let Ok(rt) = rt {
             rt.block_on(async move {
                 let app = Router::new()
+                    .route("/", get(index))
                     .route("/api/handshake", post(api_handshake))
                     .route("/api/status", get(api_status))
                     .route("/api/diag/login", get(api_diag_login))

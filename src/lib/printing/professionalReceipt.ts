@@ -28,6 +28,8 @@ export interface ProReceiptOptions {
   shopPhone?: string;
   shopWebsite?: string;
   shopLogoDataUrl?: string;
+  shopRc?: string;
+  shopNif?: string;
   invoiceNumber: string;
   invoiceBarcode?: string;
   dateStr: string;
@@ -52,7 +54,16 @@ export interface ProReceiptOptions {
   versementPaid?: number;
   versementRemaining?: number;
   isCredit?: boolean;
-  // Element toggles (default on) — mirror the receipt_show_* settings.
+  // Element toggles (default on) — mirror the receipt_show_* settings so
+  // the single unified template honors every "Fields to Show" switch.
+  showShopName?: boolean;
+  showAddress?: boolean;
+  showPhone?: boolean;
+  showWebsite?: boolean;
+  showRcNif?: boolean;
+  showCashier?: boolean;
+  showDate?: boolean;
+  showFooter?: boolean;
   showQr?: boolean;
   showBarcode?: boolean;
 }
@@ -155,28 +166,38 @@ export function buildProfessionalReceiptHtml(o: ProReceiptOptions): string {
   </style>`;
 
   // ---- Header -------------------------------------------------------------
+  const showShopName = o.showShopName !== false;
+  const showAddress = o.showAddress !== false;
+  const showPhone = o.showPhone !== false;
+  const showWebsite = o.showWebsite !== false;
   const logoOrIcon = o.shopLogoDataUrl
     ? `<img src="${o.shopLogoDataUrl}" alt="" style="height:10mm;max-width:34mm;object-fit:contain;display:block;margin:0 auto 0.8mm;" />`
     : `<span style="margin-right:1.5mm;">${ICONS.cart(8)}</span>`;
+  const rcNifLine = o.shopRc || o.shopNif
+    ? `<div style="font-size:2.2mm;color:#333;margin-top:0.5mm;">${o.shopRc ? `RC: ${esc(o.shopRc)}` : ''}${o.shopRc && o.shopNif ? ' • ' : ''}${o.shopNif ? `NIF: ${esc(o.shopNif)}` : ''}</div>`
+    : '';
   const header = `<div class="ctr">
-      <div style="display:flex;align-items:center;justify-content:center;">
+      ${showShopName ? `<div style="display:flex;align-items:center;justify-content:center;">
         ${logoOrIcon}
         <span style="font-size:5.6mm;font-weight:900;letter-spacing:0.1mm;">${esc(o.shopName || 'TITAOU POS')}</span>
-      </div>
-      ${o.shopTagline ? `<div style="font-size:2.6mm;font-weight:700;margin-top:0.3mm;">${esc(o.shopTagline)}</div>` : ''}
-      ${o.shopAddress ? `<div class="contact">${ICONS.pin}${esc(o.shopAddress)}</div>` : ''}
-      ${o.shopPhone ? `<div class="contact">${ICONS.phone}<span dir="ltr">${esc(o.shopPhone)}</span></div>` : ''}
-      ${o.shopWebsite ? `<div class="contact">${ICONS.globe}<span dir="ltr">${esc(o.shopWebsite)}</span></div>` : ''}
+      </div>` : ''}
+      ${showShopName && o.shopTagline ? `<div style="font-size:2.6mm;font-weight:700;margin-top:0.3mm;">${esc(o.shopTagline)}</div>` : ''}
+      ${showAddress && o.shopAddress ? `<div class="contact">${ICONS.pin}${esc(o.shopAddress)}</div>` : ''}
+      ${showPhone && o.shopPhone ? `<div class="contact">${ICONS.phone}<span dir="ltr">${esc(o.shopPhone)}</span></div>` : ''}
+      ${showWebsite && o.shopWebsite ? `<div class="contact">${ICONS.globe}<span dir="ltr">${esc(o.shopWebsite)}</span></div>` : ''}
+      ${o.showRcNif !== false ? rcNifLine : ''}
     </div>`;
 
   // ---- Invoice info (two columns) ------------------------------------------
+  const showCashier = o.showCashier !== false;
+  const showDate = o.showDate !== false;
   const infoRow = (label: string, value?: string) =>
     value ? `<p><b>${esc(label)}</b> : <span dir="ltr">${esc(value)}</span></p>` : '';
   const leftCol = [
     infoRow(t.invoiceNo, o.invoiceNumber),
-    infoRow(t.date, o.dateStr),
-    infoRow(t.time, o.timeStr),
-    infoRow(t.cashier, o.cashierName),
+    showDate ? infoRow(t.date, o.dateStr) : '',
+    showDate ? infoRow(t.time, o.timeStr) : '',
+    showCashier ? infoRow(t.cashier, o.cashierName) : '',
   ].join('');
   const rightCol = [
     infoRow(t.customer, o.customerName),
@@ -249,9 +270,10 @@ export function buildProfessionalReceiptHtml(o: ProReceiptOptions): string {
       : totals;
 
   // ---- Footer ----------------------------------------------------------------
+  const showFooter = o.showFooter !== false;
   const footer = `<div class="ctr">
-      ${o.thankYou ? `<div style="font-size:3.2mm;font-weight:900;letter-spacing:0.1mm;">${esc(o.thankYou)}</div>` : ''}
-      ${o.returnPolicy ? `<div style="font-size:2.5mm;margin-top:0.8mm;white-space:pre-line;">${esc(o.returnPolicy)}</div>` : ''}
+      ${showFooter && o.thankYou ? `<div style="font-size:3.2mm;font-weight:900;letter-spacing:0.1mm;">${esc(o.thankYou)}</div>` : ''}
+      ${showFooter && o.returnPolicy ? `<div style="font-size:2.5mm;margin-top:0.8mm;white-space:pre-line;">${esc(o.returnPolicy)}</div>` : ''}
     </div>`;
 
   // ---- Invoice barcode ---------------------------------------------------------

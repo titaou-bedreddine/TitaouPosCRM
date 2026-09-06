@@ -13,18 +13,21 @@ use crate::services::{
 use std::collections::HashMap;
 use tauri::State;
 
-/// Silent print: render the HTML to PDF with the OS's headless Edge/Chrome,
-/// then send the PDF to the DEFAULT printer with the "print" shell verb —
-/// no Windows print dialog ever appears.
+/// Silent print — 100% native Windows print API (GDI), no dialogs, no
+/// viewers, no PDF handlers:
+///   1. Rasterize the HTML with the OS-bundled headless Edge (isolated
+///      profile — a running Edge can never hijack the job).
+///   2. GDI-print the bitmap on a printer DC whose DEVMODE is locked to the
+///      exact page (receipts measure their own dynamic height).
+/// There is NO browser print and NO PDF/print-verb fallback: on failure the
+/// caller gets a real error message instead of a surprise dialog.
 #[tauri::command]
 pub fn print_html_direct(db: State<'_, DbState>, html: String, title: String, paper: Option<PrintPaperSpec>) -> Result<(), String> {
     let settings = settings_service::get_all_settings(&db).unwrap_or_default();
 
-    // NATIVE path first (v0.5.16): rasterize + GDI print with a custom
-    // DEVMODE sized to the ticket — genuinely silent, no PDF handler, no
-    // shell verb, no viewer window. Receipts measure their own height.
     let width_mm = paper.as_ref().map(|p| p.width_mm).unwrap_or(80.0);
     let fixed_height_mm = paper.as_ref().and_then(|p| p.height_mm);
+    // Receipt printer override (Settings → Printing); empty = Windows default.
     let printer = settings.get("receipt_printer_name").cloned().unwrap_or_default();
     let printer_opt = if printer.trim().is_empty() { None } else { Some(printer.as_str()) };
     let dpi: u32 = settings
@@ -34,7 +37,7 @@ pub fn print_html_direct(db: State<'_, DbState>, html: String, title: String, pa
 
     let outcome = match fixed_height_mm {
         Some(h) => {
-            // Fixed-size page (labels): reuse the exact-media label pipeline.
+            // Fixed-size page (documents/labels): exact-media pipeline.
             let req = crate::printing::label_gdi::LabelPrintRequest {
                 html: html.clone(),
                 printer: printer_opt.map(|s| s.to_string()),
@@ -57,60 +60,10 @@ pub fn print_html_direct(db: State<'_, DbState>, html: String, title: String, pa
         );
         return Ok(());
     }
-    eprintln!(
-        "[silent-print] native path failed ({}): {} — falling back to PDF handler",
+    Err(format!(
+        "Native print failed ({}): {}",
         outcome.diagnostics.mode, outcome.message
-    );
-
-    // Legacy fallback chain for machines where GDI is refused.
-    let tmp = std::env::temp_dir();
-    let stamp = chrono::Local::now().timestamp_subsec_nanos();
-    let html_path = tmp.join(format!("titaou_print_{}.html", stamp));
-    let pdf_path = tmp.join(format!("titaou_print_{}.pdf", stamp));
-    std::fs::write(&html_path, &html).map_err(|e| e.to_string())?;
-
-    // Locate a headless-capable Chromium browser shipped with Windows.
-    let candidates = [
-        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe".to_string(),
-        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe".to_string(),
-        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".to_string(),
-        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe".to_string(),
-    ];
-    let browser = candidates
-        .iter()
-        .find(|p| std::path::Path::new(p).exists())
-        .ok_or("No Edge/Chrome found for silent printing")?;
-
-    let url = format!("file:///{}", html_path.to_string_lossy().replace('\\', "/"));
-    let status = std::process::Command::new(browser)
-        .args([
-            "--headless",
-            "--disable-gpu",
-            "--no-first-run",
-            "--print-to-pdf-no-header",
-            &format!("--print-to-pdf={}", pdf_path.to_string_lossy()),
-            &url,
-        ])
-        .output()
-        .map_err(|e| e.to_string())?;
-    let _ = status;
-    let _ = std::fs::remove_file(&html_path);
-
-    if !pdf_path.exists() {
-        return Err("PDF generation failed".to_string());
-    }
-
-    // ShellExecute "print" verb on the PDF: default handler prints silently.
-    // Settings can override the target printer (invoice printer).
-    let printed = print_pdf_windows(&pdf_path, &printer);
-    let _ = std::fs::remove_file(&pdf_path);
-    if !printed {
-        return Err(format!(
-            "Silent print unavailable: {}",
-            outcome.message
-        ));
-    }
-    Ok(())
+    ))
 }
 
 /// Paper geometry for a silent print job (frontend `paper` parameter).
@@ -119,124 +72,6 @@ pub struct PrintPaperSpec {
     pub width_mm: f64,
     #[serde(default)]
     pub height_mm: Option<f64>,
-}
-
-#[cfg(windows)]
-fn print_pdf_windows(path: &std::path::Path, printer_name: &str) -> bool {
-    // Layered silent printing: each step falls back to the next so a stock
-    // Windows machine (Edge as default PDF app, no print verb registered)
-    // still prints without any dialog.
-    //
-    // 1. ShellExecute "print" verb — works when Adobe/SumatraPDF is the
-    //    default handler (they register the print verb).
-    // 2. SumatraPDF -print-to-default -silent — the standard POS silent
-    //    printer; checked at its common install paths.
-    // 3. Adobe Reader /p /h — prints to default printer, hidden window.
-    if shell_execute_print(path) {
-        return true;
-    }
-    if sumatra_print(path, printer_name) {
-        return true;
-    }
-    adobe_print(path)
-}
-
-#[cfg(windows)]
-fn shell_execute_print(path: &std::path::Path) -> bool {
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    // SW_HIDE = 0: don't flash a window for the print handler.
-    const SW_HIDE: i32 = 0;
-
-    let file: Vec<u16> = path
-        .as_os_str()
-        .to_string_lossy()
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let verb: Vec<u16> = "print\0".encode_utf16().collect();
-
-    // ShellExecuteW returns a value > 32 on success. Edge as the default
-    // PDF app does not register a "print" verb and yields SE_ERR_NOASSOC.
-    let result = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            verb.as_ptr(),
-            file.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            SW_HIDE,
-        )
-    };
-    result as usize > 32
-}
-
-#[cfg(windows)]
-#[cfg(windows)]
-#[cfg(windows)]
-fn sumatra_print(path: &std::path::Path, printer_name: &str) -> bool {
-    use std::os::windows::process::CommandExt;
-    let candidates = [
-        r"C:\Program Files\SumatraPDF\SumatraPDF.exe".to_string(),
-        r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe".to_string(),
-        format!(
-            r"{}\SumatraPDF\SumatraPDF.exe",
-            std::env::var("LOCALAPPDATA").unwrap_or_default()
-        ),
-    ];
-    for exe in candidates {
-        if !std::path::Path::new(&exe).exists() {
-            continue;
-        }
-        let mut cmd = std::process::Command::new(&exe);
-        if printer_name.is_empty() {
-            cmd.arg("-print-to-default");
-        } else {
-            cmd.arg("-print-to").arg(printer_name);
-        }
-        let ok = cmd
-            .arg("-silent")
-            .arg(path)
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
-            return true;
-        }
-    }
-    false
-}
-
-#[cfg(windows)]
-fn adobe_print(path: &std::path::Path) -> bool {
-    use std::os::windows::process::CommandExt;
-    let candidates = [
-        "C:\\Program Files\\Adobe\\Acrobat DC\\Acrobat\\Acrobat.exe".to_string(),
-        "C:\\Program Files (x86)\\Adobe\\Acrobat Reader DC\\Reader\\AcroRd32.exe".to_string(),
-        "C:\\Program Files\\Adobe\\Acrobat Reader DC\\Reader\\AcroRd32.exe".to_string(),
-    ];
-    for exe in candidates {
-        if !std::path::Path::new(&exe).exists() {
-            continue;
-        }
-        let ok = std::process::Command::new(&exe)
-            .arg("/p")
-            .arg("/h")
-            .arg(path)
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
-            return true;
-        }
-    }
-    false
-}
-
-#[cfg(not(windows))]
-fn print_pdf_windows(_path: &std::path::Path, _printer_name: &str) -> bool {
-    false
 }
 
 /// Silent exact-media label printing: rasterizes one label at the printer's

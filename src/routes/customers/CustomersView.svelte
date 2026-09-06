@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import type { Customer } from '../../lib/types';
-  import { printHtmlDirectly, entityQrPayload, entityQrUrl } from '../../lib/utils/printer';
+  import { printHtmlSilently, entityQrPayload, entityQrDataUrl } from '../../lib/utils/printer';
   import { refreshCustomers } from '../../lib/stores/customers';
   import { currentUser } from '../../lib/stores/auth';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
@@ -81,13 +81,15 @@
     parts.push('<p style="font-weight:900;font-size:12px;margin:3px 0;">' + c.name + '</p>');
     if (c.phone) parts.push('<p style="margin:2px 0;">Tel: ' + c.phone + '</p>');
     if (c.rc) parts.push('<p style="margin:2px 0;font-size:10px;">RC: ' + c.rc + (c.nif ? ' | NIF: ' + c.nif : '') + '</p>');
-    parts.push('<img src="' + entityQrUrl(entityQrPayload('CUST', code), 150) + '" alt="QR" style="width:38mm;height:38mm;margin:5px auto;" />');
+    const qrDataUrl = await entityQrDataUrl(entityQrPayload('CUST', code), 300);
+    parts.push('<img src="' + qrDataUrl + '" alt="QR" style="width:38mm;height:38mm;margin:5px auto;" />');
     parts.push('<p style="font-size:10px;font-family:monospace;">' + code + '</p>');
     parts.push('<hr style="border-top:1px dashed #000;margin:5px 0;" />');
     parts.push('<p style="font-size:13px;font-weight:900;margin:2px 0;">DETTES: ' + balance + ' DZD</p>');
     parts.push('<p style="font-size:9px;margin-top:6px;">TitaouPOS &bull; ' + shopName + '</p>');
     parts.push('</div>');
-    printHtmlDirectly(parts.join('\n'), 'Client Card ' + c.name);
+    const r = await printHtmlSilently(parts.join('\n'), 'Client Card ' + c.name, { widthMm: 80 });
+    if (!r.ok) console.error('Client card print failed:', r.message);
   }
 
   let customerHistory: any[] = [];
@@ -224,9 +226,9 @@
     }
   }
 
-  function printCustomerDebtRecap(c: Customer) {
-    const qrData = encodeURIComponent(`CUST:${c.id}:BALANCE:${c.balance}`);
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${qrData}`;
+  async function printCustomerDebtRecap(c: Customer) {
+    // Offline-first: the QR is generated locally (no api.qrserver.com).
+    const qrUrl = await entityQrDataUrl(entityQrPayload('CUST', c.qr_code || 'CUST-' + c.id), 200);
 
     const html = `
       <div class="text-center pb-2 border-b-dashed">
@@ -255,7 +257,8 @@
       </div>
     `;
 
-    printHtmlDirectly(html, `Recap Dette - ${c.name}`);
+    const r = await printHtmlSilently(html, `Recap Dette - ${c.name}`, { widthMm: 80 });
+    if (!r.ok) console.error('Recap print failed:', r.message);
   }
 </script>
 
@@ -483,8 +486,6 @@
 
 <!-- Modal: Customer Profile & Real QR Code -->
 {#if previewCustomer}
-  {@const qrData = encodeURIComponent(`CUST:${previewCustomer.id}:BALANCE:${previewCustomer.balance}`)}
-  {@const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${qrData}`}
   <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
     <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col">
       <div class="flex items-center justify-between px-6 py-4 border-b border-pos-border bg-slate-50 dark:bg-slate-800/60">

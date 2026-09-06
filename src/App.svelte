@@ -23,8 +23,7 @@
   import CashDrawerModal from './lib/components/CashDrawerModal.svelte';
   import FirstSetupWizard from './lib/components/FirstSetupWizard.svelte';
 
-  import { printHtmlDirectly } from './lib/utils/printer';
-  import { stockWarningModal } from './lib/stores/cart';
+    import { stockWarningModal } from './lib/stores/cart';
 
   // Icons
   import {
@@ -518,8 +517,16 @@
         <!-- Quick Open Cash Drawer Button -->
         <button
           type="button"
-          on:click={() => {
-            printHtmlDirectly('<div style="display:none"></div>', 'Kick Drawer');
+          on:click={async () => {
+            try {
+              const s = await invoke<Record<string, string>>('get_all_settings');
+              await invoke('open_serial_cash_drawer', {
+                comPort: parseInt(s['drawer_com_port'] || '1', 10) || 1,
+                baudRate: parseInt(s['drawer_baud_rate'] || '9600', 10) || 9600,
+              });
+            } catch (e) {
+              console.warn('Drawer kick failed:', e);
+            }
           }}
           class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-pointer transition"
           title="Open Cash Drawer (F10)"

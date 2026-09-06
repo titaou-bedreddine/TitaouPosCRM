@@ -5,7 +5,8 @@
   import type { DashboardStats } from '../../lib/types';
   import { TrendingUp, ShoppingBag, AlertTriangle, ArrowDownRight, DollarSign, Wallet, Trophy, RefreshCw, Layers, Eye, Pencil, Printer, X } from 'lucide-svelte';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
-  import { printHtmlSilently, buildReceiptHtml, entityQrDataUrl } from '../../lib/utils/printer';
+  import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
+  import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
 
   let stats: DashboardStats | null = null;
   let fromDate = new Date().toISOString().split('T')[0];
@@ -112,13 +113,9 @@
       const qrDataUrl = await entityQrDataUrl(`SALE:${sale.sale_number}`, 100).catch(
         () => undefined
       );
-      const html = buildReceiptHtml({
+      const built = buildUnifiedReceipt({
         qrDataUrl,
-        shopName: appSettings['shop_name_fr'] || appSettings['shop_name_ar'] || 'TitaouPOS Superette',
-        shopAddress: appSettings['shop_address'] || 'Rue Principale, Alger',
-        shopPhone: appSettings['shop_phone'] || '0553444057',
-        shopRc: appSettings['shop_rc'] || undefined,
-        shopNif: appSettings['shop_nif'] || undefined,
+        settings: appSettings,
         saleNumber: sale.sale_number,
         saleDate: sale.created_at,
         cashierName: sale.cashier_name || 'Caisse',
@@ -134,12 +131,14 @@
         subtotal: sale.total_amount,
         discount: 0,
         grandTotal: sale.total_amount,
+        amountPaid: sale.paid_amount,
+        change: 0,
         paymentMethod: 'versement',
         isCredit: true,
         versementPaid: sale.paid_amount,
         versementRemaining: Math.max(0, sale.total_amount - sale.paid_amount),
       });
-      await printHtmlSilently(html, `Versement ${sale.sale_number}`);
+      await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
     } catch (e) {
       console.error('Versement print failed:', e);
     } finally {

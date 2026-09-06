@@ -74,8 +74,10 @@
         qrDataUrl: qr,
         copyLabel: 'REPRINT / نسخة',
       });
-      await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
-      printMsg = '✅ Reprint sent to printer / تمت إعادة الطباعة';
+      const result = await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
+      printMsg = result.ok
+        ? '✅ Reprint sent to printer / تمت إعادة الطباعة'
+        : '❌ ' + result.message;
     } catch (e: any) {
       printMsg = '❌ ' + (typeof e === 'string' ? e : e?.message || 'Reprint failed');
     } finally {

@@ -3,12 +3,12 @@
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
+  import { entityQrPayload } from '../../lib/utils/printer';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import type { Sale, User } from '../../lib/types';
   import { currentUser } from '../../lib/stores/auth';
-  import { printHtmlDirectly } from '../../lib/utils/printer';
+  import { printHtmlSilently } from '../../lib/utils/printer';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
-  import { entityQrPayload, entityQrUrl } from '../../lib/utils/printer';
   import { originSaleId,  cartItems, clearCart } from '../../lib/stores/cart';
   import { selectedCustomerId } from '../../lib/stores/customers';
   import {
@@ -164,7 +164,8 @@
         qrDataUrl: qr,
         copyLabel: 'REPRINT / نسخة',
       });
-      printHtmlDirectly(built.html, built.title, { widthMm: built.paperWidthMm });
+      const r = await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
+      if (!r.ok) alert('Print failed: ' + r.message);
     } catch (e: any) {
       alert('Error printing receipt: ' + (e.message || e));
     }

@@ -4,7 +4,7 @@
   import { currentUser } from '../stores/auth';
   import { activeSession } from '../stores/session';
   import { QrCode, Printer, FileText, X, Check, DollarSign, ShieldAlert, Eraser } from 'lucide-svelte';
-  import { printHtmlDirectly } from '../utils/printer';
+  import { printHtmlSilently } from '../utils/printer';
 
   export let isOpen = false;
   export let customer: Customer | null = null;
@@ -64,7 +64,8 @@
             <p style="font-size:8px; margin-top:6px;">TitaouPOS • Titaou Bedreddine</p>
           </div>
         `;
-        printHtmlDirectly(voucherHtml, 'Debt Payment Receipt');
+        const r = await printHtmlSilently(voucherHtml, 'Debt Payment Receipt', { widthMm: 72 });
+        if (!r.ok) console.error('Voucher print failed:', r.message);
       }
       onPaymentRecorded();
       onClose();

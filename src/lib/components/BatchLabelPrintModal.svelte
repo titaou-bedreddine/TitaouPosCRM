@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import type { Product } from '../types';
   import { buildLabelPresetHtml, toLabelCurrency, type LabelPresetId } from '../printing/labelPresets';
-  import { printLabelSilently, printHtmlDirectly } from '../utils/printer';
+  import { printLabelSilently } from '../utils/printer';
   import { Printer, X, ScanLine, Trash2, Loader2, CheckCircle2, AlertTriangle } from 'lucide-svelte';
 
   export let isOpen = false;
@@ -103,23 +103,8 @@
         : lastMsg;
       if (allOk) queue = [];
     } catch (e: any) {
-      // Backend missing (dev) → browser print fallback, all labels in one batch.
-      let combined = '';
-      for (const row of queue) {
-        const html = buildLabelPresetHtml(presetId, {
-          shopName,
-          productName: row.product.name_fr || row.product.name_ar || '',
-          barcode: row.product.barcodes?.[0] || row.product.sku || '',
-          price: row.product.sale_price ?? 0,
-          currency: toLabelCurrency(settings.default_currency),
-        });
-        for (let i = 0; i < row.copies; i++) {
-          const brk = i < row.copies - 1 ? 'page-break-after:always;break-after:page;' : '';
-          combined += `<div class="label-page" style="display:block;${brk}width:40mm;height:20mm;margin:0;padding:0;overflow:hidden;box-sizing:border-box;background:#fff;">${html}</div>`;
-        }
-      }
-      printHtmlDirectly(combined, 'Batch Labels', { widthMm: 40, heightMm: 20 });
-      outcomeMsg = 'Browser print fallback (exact-media backend not available)';
+      // The native pipeline is the only path — surface the real error.
+      outcomeMsg = 'Print failed: ' + (typeof e === 'string' ? e : e?.message || String(e));
       outcomeOk = false;
     } finally {
       isPrinting = false;

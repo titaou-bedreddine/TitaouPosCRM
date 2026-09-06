@@ -4,12 +4,12 @@
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
+  import { entityQrPayload } from '../../lib/utils/printer';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import type { Purchase, Supplier, Product } from '../../lib/types';
   import { currentUser } from '../../lib/stores/auth';
-  import { printHtmlDirectly } from '../../lib/utils/printer';
+  import { printHtmlSilently } from '../../lib/utils/printer';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
-  import { entityQrPayload, entityQrUrl } from '../../lib/utils/printer';
   import ProductEditModal from '../../lib/components/ProductEditModal.svelte';
   import type { Category, Unit } from '../../lib/types';
   import {
@@ -501,7 +501,7 @@
     }
   }
 
-  function printLabelsForPurchase() {
+  async function printLabelsForPurchase() {
     if (items.length === 0) return;
     const html = items.map(i => `
       <div style="width: 40mm; height: 20mm; padding: 2mm; border: 1px solid #000; text-align: center; page-break-after: always; display: flex; flex-direction: column; justify-content: space-between;">
@@ -510,7 +510,8 @@
         <p style="font-size: 7px; font-family: monospace; margin: 0;">${i.barcode}</p>
       </div>
     `).join('');
-    printHtmlDirectly(html, 'Price Tags');
+    const r = await printHtmlSilently(html, 'Price Tags', { widthMm: 40, heightMm: 20 });
+    if (!r.ok) alert('Print failed: ' + r.message);
   }
 </script>
 

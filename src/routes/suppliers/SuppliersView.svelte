@@ -4,7 +4,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import SupplierDebtModal from '../../lib/components/SupplierDebtModal.svelte';
-  import { entityQrPayload, entityQrUrl, printHtmlDirectly } from '../../lib/utils/printer';
+  import { entityQrPayload, entityQrDataUrl, printHtmlSilently } from '../../lib/utils/printer';
   import type { Supplier } from '../../lib/types';
   import {
     Truck, Plus, QrCode, Edit2, Trash2, Search, X, Check, DollarSign, Eye, ShieldAlert,
@@ -48,14 +48,15 @@
         ${x.contact_person ? `<p style="margin:2px 0;">Contact: ${x.contact_person}</p>` : ''}
         ${x.phone ? `<p style="margin:2px 0;">Tel: ${x.phone}</p>` : ''}
         ${x.rc ? `<p style="margin:2px 0;font-size:10px;">RC: ${x.rc} ${x.nif ? '| NIF: ' + x.nif : ''}</p>` : ''}
-        <img src="${entityQrUrl(entityQrPayload('SUP', code), 150)}" alt="QR" style="width:38mm;height:38mm;margin:5px auto;" />
+        <img src="${await entityQrDataUrl(entityQrPayload('SUP', code), 300)}" alt="QR" style="width:38mm;height:38mm;margin:5px auto;" />
         <p style="font-size:10px;font-family:monospace;">${code}</p>
         <hr style="border-top:1px dashed #000;margin:5px 0;" />
         <p style="font-size:13px;font-weight:900;margin:2px 0;">DUES: ${(x.balance || 0).toLocaleString()} DZD</p>
         <p style="font-size:9px;margin-top:6px;">TitaouPOS • ${shopName}</p>
       </div>
     `;
-    printHtmlDirectly(html, 'Fournisseur Card ' + x.name);
+    const r = await printHtmlSilently(html, 'Fournisseur Card ' + x.name, { widthMm: 80 });
+    if (!r.ok) console.error('Supplier card print failed:', r.message);
   }
 
   async function confirmDeleteSupplier() {

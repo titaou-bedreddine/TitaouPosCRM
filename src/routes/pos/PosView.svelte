@@ -7,7 +7,7 @@
   import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep } from '../../lib/stores/cart';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
-  import { printHtmlSilently, buildReceiptHtml, entityQrDataUrl } from '../../lib/utils/printer';
+  import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildProfessionalReceiptHtml } from '../../lib/printing/professionalReceipt';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
   import { normalizeBarcode } from '../../lib/utils/barcode';

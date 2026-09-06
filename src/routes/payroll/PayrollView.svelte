@@ -7,7 +7,7 @@
     Plus, Users, Award, DollarSign, Calendar, AlertTriangle,
     Check, X, Printer, UserCheck, CreditCard, Clock
   } from 'lucide-svelte';
-  import { printHtmlDirectly } from '../../lib/utils/printer';
+  import { printHtmlSilently } from '../../lib/utils/printer';
   import { Pencil, Trash2 } from 'lucide-svelte';
   import { activeSession } from '../../lib/stores/session';
   import { currentUser } from '../../lib/stores/auth';
@@ -368,7 +368,7 @@
     absenceDays = 1;
   }
 
-  function printPayrollSlip(emp: Employee) {
+  async function printPayrollSlip(emp: Employee) {
     const advances = advancesMap[emp.id] || 0;
     const daysAbsent = absencesMap[emp.id] || 0;
     const dailyRate = Math.round(emp.base_salary / 30);
@@ -405,7 +405,8 @@
         <p style="font-size: 7px; color: #666; margin-top: 15px;">TitaouPOS • Dev: Titaou Bedreddine (0553444057)</p>
       </div>
     `;
-    printHtmlDirectly(slipHtml, `Payroll-${emp.employee_code}`);
+    const r = await printHtmlSilently(slipHtml, `Payroll-${emp.employee_code}`, { widthMm: 72 });
+    if (!r.ok) showError('Print failed: ' + r.message);
   }
 </script>
 
