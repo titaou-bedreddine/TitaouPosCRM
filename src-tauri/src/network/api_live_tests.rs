@@ -114,7 +114,10 @@ fn live_api_join_login_invoke_and_permissions() {
     assert_eq!(probe["confirm_required"], true);
     assert_eq!(probe["shop_name"], "Test Market");
 
-    // Wrong shop must be rejected outright.
+    // A join naming a DIFFERENT shop than the one this server owns must be
+    // rejected: the client is expected to learn the real shop_id from the
+    // announce/health before joining (fresh installs adopt the server's
+    // shop id at this step — see tick_client in mod.rs).
     let wrong = client
         .post(format!("{}/api/v1/network/join", base))
         .json(&json!({ "node_id": "NODE-CLI2", "pc_name": "X", "shop_id": "SHOP-OTHER", "confirm": true }))

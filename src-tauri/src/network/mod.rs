@@ -559,14 +559,27 @@ fn tick_server(cfg: &NetConfig) {
     *net().server_base.lock().unwrap() = None;
 }
 
+/// Pure membership rule (spec §28): a node that has ALREADY joined a shop
+/// (device token bound to that shop) must never silently switch to a
+/// different one. Fresh installs (no prior join) are free to adopt any
+/// shop — their auto-minted shop id is just a placeholder.
+fn membership_blocks_switch(cfg: &NetConfig, server_shop: &str) -> bool {
+    let was_member = !cfg.shop_id.is_empty() && cfg.device_token_shop == cfg.shop_id;
+    was_member && server_shop != cfg.shop_id
+}
+
 // --- explicit CLIENT --------------------------------------------------------
 
 fn tick_client(cfg: &NetConfig) {
     // Preferred target: manual override → discovered coordinator.
+    // Discovery is NEVER filtered by shop (spec §9: discovery only says
+    // "a node exists here"; the shop association is confirmed at join). A
+    // freshly-installed client carries its own auto-minted shop id that will
+    // not match the server's — it ADOPTS the server's shop when joining.
     let target = if !cfg.manual_server.is_empty() {
         Some(normalize_base(&cfg.manual_server))
     } else {
-        best_coordinator_base(Some(&cfg.shop_id))
+        best_coordinator_base(None)
     };
 
     let Some(base) = target else {
@@ -589,9 +602,14 @@ fn tick_client(cfg: &NetConfig) {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            if !cfg.shop_id.is_empty() && shop != cfg.shop_id {
-                // Our shop's server is gone; this one serves a DIFFERENT
-                // shop — never silently switch membership.
+            // The manual-override path may point at a server of a DIFFERENT
+            // shop (admin deliberately moved us); adoption happens at join.
+            // Only an EXPLICITLY configured member (a prior join recorded
+            // this exact shop) refuses a different shop.
+            if membership_blocks_switch(cfg, &shop) {
+                // We previously joined THIS shop; the reachable server now
+                // serves a different one — stay offline instead of silently
+                // switching membership (spec §28).
                 if set_mode(Mode::Offline) {
                     log_net_event(
                         "server_changed",
@@ -622,10 +640,11 @@ fn connect_client(base: &str, health: &Value, cfg: &NetConfig, shop_id: &str) {
     let server_term = health.get("term").and_then(|v| v.as_u64()).unwrap_or(0);
     note_server_term(server_term);
 
-    // Ensure a device token bound to THIS shop.
+    // Ensure a device token bound to THIS shop. A fresh install carries its
+    // own auto-minted shop id — joining the server's shop ADOPTS it.
     let mut have_token = net().device_token.lock().unwrap().clone();
     let token_ok = match &have_token {
-        Some(_) => cfg.device_token_shop == shop_id && !cfg.shop_id.is_empty(),
+        Some(_) => cfg.device_token_shop == shop_id,
         None => false,
     };
     if !token_ok {
@@ -637,14 +656,14 @@ fn connect_client(base: &str, health: &Value, cfg: &NetConfig, shop_id: &str) {
                     let db = net().db.get().unwrap();
                     NetConfig::save_field(db, "net_device_token", t);
                     NetConfig::save_field(db, "net_device_token_shop", shop_id);
-                    if cfg.shop_id.is_empty() {
-                        // Fresh adoption: remember the shop we joined.
-                        NetConfig::save_field(db, "net_shop_id", shop_id);
-                        let name = v.get("shop_name").and_then(|x| x.as_str()).unwrap_or("");
-                        if !name.is_empty() {
-                            NetConfig::save_field(db, "net_shop_name", name);
-                        }
+                    // Adoption: remember the shop we joined (fresh install,
+                    // or deliberately moved by an admin action).
+                    NetConfig::save_field(db, "net_shop_id", shop_id);
+                    let name = v.get("shop_name").and_then(|x| x.as_str()).unwrap_or("");
+                    if !name.is_empty() {
+                        NetConfig::save_field(db, "net_shop_name", name);
                     }
+                    log_net_event("shop_adopted", json!({ "shop_id": shop_id }));
                 }
             }
             Err(e) => {
@@ -698,12 +717,15 @@ fn tick_automatic(cfg: &NetConfig) {
         }
     }
 
-    // Alive peers, restricted to our shop once affiliated.
+    // Alive peers. Discovery is never shop-filtered for unaffiliated nodes
+    // (two fresh installs must find each other); a node that JOINED a shop
+    // stays inside it (device_token_shop is the membership record).
+    let affiliated = !cfg.shop_id.is_empty() && cfg.device_token_shop == cfg.shop_id;
     let alive: Vec<Peer> = {
         let peers = rt.peers.lock().unwrap();
         peers
             .values()
-            .filter(|p| cfg.shop_id.is_empty() || p.shop_id == cfg.shop_id)
+            .filter(|p| !affiliated || p.shop_id == cfg.shop_id)
             .cloned()
             .collect()
     };
@@ -1343,6 +1365,50 @@ mod tests {
             normalize_base("192.168.1.5"),
             format!("http://192.168.1.5:{}", local_http_port())
         );
+    }
+
+    #[test]
+    fn fresh_installs_connect_despite_different_auto_shop_ids() {
+        // The user's exact scenario: two fresh installs each auto-minted a
+        // DIFFERENT shop id before seeing each other. The client must NOT
+        // refuse the server's (different) shop — it adopts it at join.
+        let fresh_client = NetConfig {
+            enabled: true,
+            role: "client".into(),
+            node_id: "NODE-C".into(),
+            pc_name: "PC-C".into(),
+            shop_id: "SHOP-AUTO-C".into(),       // auto-minted placeholder
+            shop_name: String::new(),
+            manual_server: String::new(),
+            autodiscovery: true,
+            autoreconnect: true,
+            device_token: String::new(),          // never joined anything
+            device_token_shop: String::new(),
+            blocked_nodes: vec![],
+        };
+        assert!(
+            !membership_blocks_switch(&fresh_client, "SHOP-SERVER"),
+            "fresh client must be allowed to join the server's shop"
+        );
+        // Even with a stale device token from another shop (manually moved),
+        // a non-member still adopts.
+        let moved = NetConfig {
+            device_token: "TPS-DEV-x".into(),
+            device_token_shop: "SHOP-OLD".into(),
+            shop_id: "SHOP-AUTO-C".into(),
+            ..fresh_client.clone()
+        };
+        assert!(!membership_blocks_switch(&moved, "SHOP-SERVER"));
+
+        // A TRUE member (token bound to THIS shop id) refuses a different shop.
+        let member = NetConfig {
+            device_token: "TPS-DEV-y".into(),
+            device_token_shop: "SHOP-YES".into(),
+            shop_id: "SHOP-YES".into(),
+            ..fresh_client.clone()
+        };
+        assert!(membership_blocks_switch(&member, "SHOP-OTHER"));
+        assert!(!membership_blocks_switch(&member, "SHOP-YES"));
     }
 
     #[test]
