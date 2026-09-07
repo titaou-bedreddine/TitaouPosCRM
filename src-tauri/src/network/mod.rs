@@ -50,6 +50,10 @@ pub struct NetConfig {
     pub autoreconnect: bool,
     pub device_token: String,
     pub device_token_shop: String,
+    /// host[:port] of the last server this node successfully connected to
+    /// or joined — tried FIRST on every startup, immune to discovery
+    /// problems (broadcast filtering etc.).
+    pub last_server: String,
     pub blocked_nodes: Vec<String>,
 }
 
@@ -76,6 +80,7 @@ impl NetConfig {
             autoreconnect: get("net_autoreconnect").map(|v| v == "true").unwrap_or(true),
             device_token: get("net_device_token").unwrap_or_default(),
             device_token_shop: get("net_device_token_shop").unwrap_or_default(),
+            last_server: get("net_last_server").unwrap_or_default(),
             blocked_nodes: get("net_blocked_nodes")
                 .map(|v| v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
                 .unwrap_or_default(),
@@ -110,6 +115,7 @@ pub const LOCAL_ONLY_SETTINGS: &[&str] = &[
     "net_autoreconnect",
     "net_device_token",
     "net_device_token_shop",
+    "net_last_server",
     "net_blocked_nodes",
     "net_term",
     "net_cached_users",
@@ -317,7 +323,9 @@ pub fn init(app: tauri::AppHandle, db: DbState) {
             std::thread::sleep(Duration::from_millis(1500));
             {
                 let sink: discovery::PacketSink = Arc::new(|pkt, ip| on_packet(pkt, ip));
-                discovery::send_probe_burst(&build_announce_packet(), &sink);
+                let cfg = current_config();
+            let targets = probe_unicast_targets(&cfg);
+            discovery::send_probe_burst(&build_announce_packet(), &targets, &sink);
             }
         })
         .ok();
@@ -413,6 +421,7 @@ fn current_config() -> NetConfig {
             autoreconnect: false,
             device_token: String::new(),
             device_token_shop: String::new(),
+            last_server: String::new(),
             blocked_nodes: vec![],
         },
     }
@@ -577,13 +586,15 @@ fn membership_blocks_switch(cfg: &NetConfig, server_shop: &str) -> bool {
 // --- explicit CLIENT --------------------------------------------------------
 
 fn tick_client(cfg: &NetConfig) {
-    // Preferred target: manual override → discovered coordinator.
-    // Discovery is NEVER filtered by shop (spec §9: discovery only says
-    // "a node exists here"; the shop association is confirmed at join). A
-    // freshly-installed client carries its own auto-minted shop id that will
-    // not match the server's — it ADOPTS the server's shop when joining.
+    // Target priority: manual override → LAST-KNOWN SERVER → discovery.
+    // The last-server memory makes reconnection immune to discovery
+    // problems (broadcast filtering, mDNS blocks...). Discovery is never
+    // shop-filtered (spec §9); a fresh client ADOPTS the server's shop at
+    // join — its own auto-minted id is just a placeholder.
     let target = if !cfg.manual_server.is_empty() {
         Some(normalize_base(&cfg.manual_server))
+    } else if !cfg.last_server.is_empty() {
+        Some(cfg.last_server.clone())
     } else {
         best_coordinator_base(None)
     };
@@ -597,7 +608,9 @@ fn tick_client(cfg: &NetConfig) {
             if cfg.autodiscovery {
                 {
                 let sink: discovery::PacketSink = Arc::new(|pkt, ip| on_packet(pkt, ip));
-                discovery::send_probe_burst(&build_announce_packet(), &sink);
+                let cfg = current_config();
+            let targets = probe_unicast_targets(&cfg);
+            discovery::send_probe_burst(&build_announce_packet(), &targets, &sink);
             }
             }
         }
@@ -640,7 +653,9 @@ fn tick_client(cfg: &NetConfig) {
             if cfg.autodiscovery && cfg.manual_server.is_empty() {
                 {
                 let sink: discovery::PacketSink = Arc::new(|pkt, ip| on_packet(pkt, ip));
-                discovery::send_probe_burst(&build_announce_packet(), &sink);
+                let cfg = current_config();
+            let targets = probe_unicast_targets(&cfg);
+            discovery::send_probe_burst(&build_announce_packet(), &targets, &sink);
             }
             }
         }
@@ -689,6 +704,12 @@ fn connect_client(base: &str, health: &Value, cfg: &NetConfig, shop_id: &str) {
 
     let Some(token) = have_token else { return };
     *net().server_base.lock().unwrap() = Some(base.to_string());
+    // Remember the server for instant reconnection on next startups.
+    if let Some(db) = net_opt().and_then(|r| r.db.get()) {
+        if cfg.last_server != base {
+            NetConfig::save_field(db, "net_last_server", base);
+        }
+    }
     ensure_ws_listener(base.to_string(), token);
     if set_mode(Mode::Connected) {
         log_net_event("connected_to_server", json!({ "server": base, "term": server_term }));
@@ -935,6 +956,36 @@ fn best_coordinator_base(shop_filter: Option<&str>) -> Option<String> {
     best.and_then(coord_base)
 }
 
+
+/// Direct-probe targets: the last-known server's IP + every peer address we
+/// ever saw (persisted last_server wins). These are addresses unicast is
+/// PROVEN to reach when broadcast is filtered.
+fn probe_unicast_targets(cfg: &NetConfig) -> Vec<String> {
+    let mut targets: Vec<String> = Vec::new();
+    let push_host = |t: &mut Vec<String>, addr: &str| {
+        let host = addr
+            .trim()
+            .trim_start_matches("http://")
+            .trim_start_matches("https://")
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !host.is_empty() && host.parse::<std::net::Ipv4Addr>().is_ok() && !t.contains(&host) {
+            t.push(host);
+        }
+    };
+    push_host(&mut targets, &cfg.last_server);
+    push_host(&mut targets, &cfg.manual_server);
+    if let Some(rt) = net_opt() {
+        for p in rt.peers.lock().unwrap().values() {
+            push_host(&mut targets, &p.ip);
+        }
+    }
+    targets
+}
+
 fn wake_manager() {
     if let Some(tx) = net_opt().and_then(|r| r.wake.lock().unwrap().clone()) {
         let _ = tx.send(());
@@ -1045,6 +1096,8 @@ pub fn status_snapshot() -> Value {
         "autodiscovery": cfg.autodiscovery,
         "autoreconnect": cfg.autoreconnect,
         "manual_server": cfg.manual_server,
+        "last_server": cfg.last_server,
+        "discovery_diag": discovery::diagnostics_snapshot(),
         "logged_in": rt.user_token.lock().unwrap().is_some(),
         "last_event": rt.last_event.lock().unwrap().clone(),
         "events": events,
@@ -1396,6 +1449,7 @@ mod tests {
             autoreconnect: true,
             device_token: String::new(),          // never joined anything
             device_token_shop: String::new(),
+            last_server: String::new(),
             blocked_nodes: vec![],
         };
         assert!(

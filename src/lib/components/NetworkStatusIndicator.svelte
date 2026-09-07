@@ -156,6 +156,27 @@
         {/if}
       </div>
 
+      <!-- Discovery diagnostics: what the wire REALLY did -->
+      <div class="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-pos-border/60">
+        <p class="text-[9px] font-black text-pos-muted uppercase mb-2">
+          Discovery (UDP 50110)
+        </p>
+        <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] font-mono">
+          <span class="text-pos-muted">probes sent:</span>
+          <span class="font-black text-pos-text">{status?.discovery_diag?.probes_sent ?? 0}</span>
+          <span class="text-pos-muted">answers received:</span>
+          <span class="font-black {status?.discovery_diag?.answers_received ? 'text-emerald-600' : 'text-rose-600'}">{status?.discovery_diag?.answers_received ?? 0}</span>
+          <span class="text-pos-muted">announces received:</span>
+          <span class="font-black {status?.discovery_diag?.announces_received ? 'text-emerald-600' : 'text-rose-600'}">{status?.discovery_diag?.announces_received ?? 0}</span>
+          <span class="text-pos-muted">announces sent:</span>
+          <span class="font-black text-pos-text">{status?.discovery_diag?.announces_sent ?? 0}</span>
+          <span class="text-pos-muted">last answer from:</span>
+          <span class="font-black text-pos-text truncate">{status?.discovery_diag?.last_answer_from || '—'}</span>
+          <span class="text-pos-muted">last server:</span>
+          <span class="font-black text-pos-text truncate">{status?.last_server || '—'}</span>
+        </div>
+      </div>
+
       <div class="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-pos-border/60">
         <p class="text-[9px] font-black text-pos-muted uppercase mb-2 flex items-center gap-1">
           <Activity class="w-3.5 h-3.5" />

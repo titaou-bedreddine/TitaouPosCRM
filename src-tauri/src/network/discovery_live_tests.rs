@@ -59,7 +59,7 @@ fn live_udp_discovery_client_finds_server() {
                 }
             })
         };
-        discovery::send_probe_burst(&client_pkt, &sink);
+        discovery::send_probe_burst(&client_pkt, &[], &sink);
         if let Some(p) = client_seen.lock().unwrap().clone() {
             got_peer = Some(p);
             break;

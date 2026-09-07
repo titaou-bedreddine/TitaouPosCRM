@@ -124,6 +124,10 @@ pub fn spawn_udp_listener(
                             answer_probe(&get_packet(), &src.to_string());
                             continue;
                         }
+                        bump_diag(|d| {
+                            d.announces_received += 1;
+                            d.last_answer_from = src.ip().to_string();
+                        });
                         sink(pkt, src.ip().to_string());
                     }
                     Err(_) => continue, // timeout → keep listening
@@ -155,6 +159,7 @@ pub fn spawn_announcer(
                 if let Some(s) = &sock {
                     if let Ok(payload) = serde_json::to_vec(&get_packet()) {
                         let pkt = get_packet();
+                        bump_diag(|d| d.announces_sent += 1);
                         // Limited broadcast + directed per-subnet broadcasts +
                         // loopback: resilient to adapters/drivers that silently
                         // drop 255.255.255.255.
@@ -181,7 +186,7 @@ pub fn spawn_announcer(
 /// exactly the "no discovery" failure mode on real multi-adapter LANs where
 /// 255.255.255.255 broadcasts get filtered). Answers are also sent to the
 /// sink so the manager learns the peer immediately.
-pub fn send_probe_burst(own: &DiscoveryPacket, sink: &PacketSink) {
+pub fn send_probe_burst(own: &DiscoveryPacket, unicast_targets: &[String], sink: &PacketSink) {
     let mut probe = own.clone();
     probe.probe = true;
     let payload = match serde_json::to_vec(&probe) {
@@ -191,9 +196,12 @@ pub fn send_probe_burst(own: &DiscoveryPacket, sink: &PacketSink) {
     let sock = UdpSocket::bind("0.0.0.0:0").expect("probe socket");
     let _ = sock.set_broadcast(true);
     let _ = sock.set_read_timeout(Some(Duration::from_millis(450)));
+    bump_diag(|d| d.probes_sent += 1);
     for _ in 0..3 {
-        // Limited broadcast + directed subnet broadcast + loopback: three
-        // routes to every listener, resilient to adapters that drop one.
+        // Limited broadcast + directed subnet broadcast + loopback + DIRECT
+        // UNICAST to known/likely servers. On LANs where adapters or
+        // firewalls eat broadcast frames (common with virtual adapters),
+        // the unicast path is the one that actually gets through.
         let _ = sock.send_to(&payload, ("255.255.255.255", DISCOVERY_PORT));
         for ip in &own.lan_ips {
             if let Ok(a) = ip.parse::<std::net::Ipv4Addr>() {
@@ -202,16 +210,51 @@ pub fn send_probe_burst(own: &DiscoveryPacket, sink: &PacketSink) {
             }
         }
         let _ = sock.send_to(&payload, ("127.0.0.1", DISCOVERY_PORT));
+        for target in unicast_targets {
+            if let Ok(a) = target.parse::<std::net::Ipv4Addr>() {
+                let _ = sock.send_to(&payload, (a, DISCOVERY_PORT));
+            }
+        }
         // Collect answers arriving within this round.
         let mut buf = [0u8; 4096];
         while let Ok((n, src)) = sock.recv_from(&mut buf) {
             if let Ok(pkt) = serde_json::from_slice::<DiscoveryPacket>(&buf[..n]) {
                 if pkt.is_valid() && pkt.node_id != own.node_id && !pkt.probe {
+                    bump_diag(|d| d.answers_received += 1);
                     sink(pkt, src.ip().to_string());
                 }
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Discovery diagnostics (Settings → Network: what the wire REALLY did)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct DiscoveryDiag {
+    pub probes_sent: u64,
+    pub answers_received: u64,
+    pub announces_received: u64,
+    pub announces_sent: u64,
+    pub last_answer_from: String,
+}
+
+static DIAG: std::sync::OnceLock<std::sync::Mutex<DiscoveryDiag>> = std::sync::OnceLock::new();
+
+fn diag() -> &'static std::sync::Mutex<DiscoveryDiag> {
+    DIAG.get_or_init(|| std::sync::Mutex::new(DiscoveryDiag::default()))
+}
+
+pub fn bump_diag(f: impl FnOnce(&mut DiscoveryDiag)) {
+    if let Ok(mut d) = diag().lock() {
+        f(&mut d);
+    }
+}
+
+pub fn diagnostics_snapshot() -> DiscoveryDiag {
+    diag().lock().map(|d| d.clone()).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
