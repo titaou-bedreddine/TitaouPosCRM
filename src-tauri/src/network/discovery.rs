@@ -154,7 +154,17 @@ pub fn spawn_announcer(
                 }
                 if let Some(s) = &sock {
                     if let Ok(payload) = serde_json::to_vec(&get_packet()) {
+                        let pkt = get_packet();
+                        // Limited broadcast + directed per-subnet broadcasts +
+                        // loopback: resilient to adapters/drivers that silently
+                        // drop 255.255.255.255.
                         let _ = s.send_to(&payload, ("255.255.255.255", DISCOVERY_PORT));
+                        for ip in &pkt.lan_ips {
+                            if let Ok(a) = ip.parse::<std::net::Ipv4Addr>() {
+                                let subnet_broadcast = std::net::Ipv4Addr::from(u32::from(a) | 0xFF);
+                                let _ = s.send_to(&payload, (subnet_broadcast, DISCOVERY_PORT));
+                            }
+                        }
                         let _ = s.send_to(&payload, ("127.0.0.1", DISCOVERY_PORT));
                     }
                 }
@@ -165,13 +175,42 @@ pub fn spawn_announcer(
     stop
 }
 
-/// Send 3 fast probes (startup discovery burst).
-pub fn send_probe_burst(own: &DiscoveryPacket) {
+/// Send a probe burst and COLLECT the answers. A probe's answer is unicast
+/// back to this socket's source port, so the socket must stay alive and
+/// receive — a send-only burst drops every answer on the floor (this was
+/// exactly the "no discovery" failure mode on real multi-adapter LANs where
+/// 255.255.255.255 broadcasts get filtered). Answers are also sent to the
+/// sink so the manager learns the peer immediately.
+pub fn send_probe_burst(own: &DiscoveryPacket, sink: &PacketSink) {
     let mut probe = own.clone();
     probe.probe = true;
+    let payload = match serde_json::to_vec(&probe) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let sock = UdpSocket::bind("0.0.0.0:0").expect("probe socket");
+    let _ = sock.set_broadcast(true);
+    let _ = sock.set_read_timeout(Some(Duration::from_millis(450)));
     for _ in 0..3 {
-        broadcast_packet(&probe);
-        std::thread::sleep(Duration::from_millis(400));
+        // Limited broadcast + directed subnet broadcast + loopback: three
+        // routes to every listener, resilient to adapters that drop one.
+        let _ = sock.send_to(&payload, ("255.255.255.255", DISCOVERY_PORT));
+        for ip in &own.lan_ips {
+            if let Ok(a) = ip.parse::<std::net::Ipv4Addr>() {
+                let subnet_broadcast = std::net::Ipv4Addr::from(u32::from(a) | 0xFF);
+                let _ = sock.send_to(&payload, (subnet_broadcast, DISCOVERY_PORT));
+            }
+        }
+        let _ = sock.send_to(&payload, ("127.0.0.1", DISCOVERY_PORT));
+        // Collect answers arriving within this round.
+        let mut buf = [0u8; 4096];
+        while let Ok((n, src)) = sock.recv_from(&mut buf) {
+            if let Ok(pkt) = serde_json::from_slice::<DiscoveryPacket>(&buf[..n]) {
+                if pkt.is_valid() && pkt.node_id != own.node_id && !pkt.probe {
+                    sink(pkt, src.ip().to_string());
+                }
+            }
+        }
     }
 }
 

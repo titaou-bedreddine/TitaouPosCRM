@@ -315,7 +315,10 @@ pub fn init(app: tauri::AppHandle, db: DbState) {
         .name("net-probe".into())
         .spawn(|| {
             std::thread::sleep(Duration::from_millis(1500));
-            discovery::send_probe_burst(&build_announce_packet());
+            {
+                let sink: discovery::PacketSink = Arc::new(|pkt, ip| on_packet(pkt, ip));
+                discovery::send_probe_burst(&build_announce_packet(), &sink);
+            }
         })
         .ok();
 
@@ -592,7 +595,10 @@ fn tick_client(cfg: &NetConfig) {
         } else {
             set_mode(Mode::Searching);
             if cfg.autodiscovery {
-                discovery::send_probe_burst(&build_announce_packet());
+                {
+                let sink: discovery::PacketSink = Arc::new(|pkt, ip| on_packet(pkt, ip));
+                discovery::send_probe_burst(&build_announce_packet(), &sink);
+            }
             }
         }
         return;
@@ -632,7 +638,10 @@ fn tick_client(cfg: &NetConfig) {
             // The old IP may be dead: discovery finds the new one without
             // user action (spec: IP change must not need reconfiguration).
             if cfg.autodiscovery && cfg.manual_server.is_empty() {
-                discovery::send_probe_burst(&build_announce_packet());
+                {
+                let sink: discovery::PacketSink = Arc::new(|pkt, ip| on_packet(pkt, ip));
+                discovery::send_probe_burst(&build_announce_packet(), &sink);
+            }
             }
         }
     }

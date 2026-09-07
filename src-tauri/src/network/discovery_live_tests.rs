@@ -37,50 +37,40 @@ fn live_udp_discovery_client_finds_server() {
         return;
     }
 
-    // --- Client node: binds the same port on loopback? No — a second bind
-    // of 0.0.0.0:50110 in the SAME process fails; the client instead sends
-    // probes and receives the unicast ANSWER on its ephemeral socket. We
-    // assert on the server's answer arriving, which is exactly what a real
-    // client processes to discover the shop (client's own listener runs on
-    // its own PC). ----------------------------------------------------------
+    // --- Client node identity ---
     let client_pkt = DiscoveryPacket::new("NODE-CLIA".into(), "POS-CLIA".into());
 
-    // Ask the question a few times, spaced like the real probe burst.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut answered: Vec<DiscoveryPacket> = Vec::new();
-    'outer: loop {
-        // Probe + collect the unicast answer with a fresh socket per probe
-        // (mirrors send_probe_burst + answer_probe).
-        let probe = {
-            let mut p = client_pkt.clone();
-            p.probe = true;
-            p
-        };
-        let payload = serde_json::to_vec(&probe).unwrap();
-        let sock = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
-        sock.set_read_timeout(Some(Duration::from_millis(900))).unwrap();
-        sock.set_broadcast(true).unwrap();
-        let _ = sock.send_to(&payload, ("255.255.255.255", discovery::DISCOVERY_PORT));
-        let _ = sock.send_to(&payload, ("127.0.0.1", discovery::DISCOVERY_PORT));
-        let mut buf = [0u8; 4096];
-        if let Ok((n, _)) = sock.recv_from(&mut buf) {
-            if let Ok(pkt) = serde_json::from_slice::<DiscoveryPacket>(&buf[..n]) {
-                if pkt.is_valid() && !pkt.probe && pkt.node_id == "NODE-SRVA" {
-                    answered.push(pkt);
-                    break 'outer;
+    // --- Client node: run the REAL production probe path. Its answers feed
+    // a sink (the same type the manager registers); the peer must land
+    // there — this exercises send_probe_burst's receive loop, the exact
+    // code a client PC runs (bug #4 regression: a send-only burst used to
+    // drop every answer). ---------------------------------------------------
+    let mut got_peer: Option<DiscoveryPacket> = None;
+    let client_seen: std::sync::Mutex<Option<DiscoveryPacket>> = std::sync::Mutex::new(None);
+    let client_seen = std::sync::Arc::new(client_seen);
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        let sink: discovery::PacketSink = {
+            let cs = Arc::clone(&client_seen);
+            Arc::new(move |pkt, _ip| {
+                let mut g = cs.lock().unwrap();
+                if g.is_none() {
+                    *g = Some(pkt);
                 }
-            }
+            })
+        };
+        discovery::send_probe_burst(&client_pkt, &sink);
+        if let Some(p) = client_seen.lock().unwrap().clone() {
+            got_peer = Some(p);
+            break;
         }
         if Instant::now() > deadline {
             break;
         }
     }
 
-    assert!(
-        !answered.is_empty(),
-        "client never discovered the server via UDP probe/answer"
-    );
-    let found = &answered[0];
+    let answered = got_peer.expect("client never discovered the server via the real probe path");
+    let found = &answered;
     assert!(found.is_coordinator);
     assert_eq!(found.shop_id, "SHOP-LIVE-DISC");
     assert_eq!(found.pc_name, "POS-SRVA");
