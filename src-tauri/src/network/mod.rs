@@ -662,16 +662,35 @@ fn tick_client(cfg: &NetConfig) {
     }
 }
 
+/// Validate our device token against the LIVE server: a restart wipes its
+/// in-memory registry, so a cached token can be stale even though the join
+/// once succeeded. Returns true when the server recognizes the device.
+fn device_token_valid(base: &str, token: &str) -> bool {
+    let url = format!("{}/api/v1/network/status", base.trim_end_matches('/'));
+    let Ok(resp) = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .and_then(|c| c.get(&url).header("Authorization", format!("Bearer {}", token)).send())
+    else {
+        return false;
+    };
+    if !resp.status().is_success() {
+        return false;
+    }
+    let Ok(v) = resp.json::<Value>() else { return false };
+    v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false)
+}
+
 /// Join (if needed) and stay connected to a verified server.
 fn connect_client(base: &str, health: &Value, cfg: &NetConfig, shop_id: &str) {
     let server_term = health.get("term").and_then(|v| v.as_u64()).unwrap_or(0);
     note_server_term(server_term);
 
-    // Ensure a device token bound to THIS shop. A fresh install carries its
-    // own auto-minted shop id — joining the server's shop ADOPTS it.
+    // Ensure a device token bound to THIS shop — and VALID on the live
+    // server (restarts wipe its registry; stale tokens are re-joined).
     let mut have_token = net().device_token.lock().unwrap().clone();
     let token_ok = match &have_token {
-        Some(_) => cfg.device_token_shop == shop_id,
+        Some(t) => cfg.device_token_shop == shop_id && device_token_valid(base, t),
         None => false,
     };
     if !token_ok {

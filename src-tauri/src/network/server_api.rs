@@ -157,12 +157,34 @@ pub fn join_device(
     ip: String,
     app_version: String,
 ) -> String {
+    let pc_name_saved = pc_name.clone();
+    let app_version_saved = app_version.clone();
     devices().lock().unwrap().insert(
         node_id.clone(),
         LanDevice { node_id: node_id.clone(), pc_name, role_pref, ip, app_version, last_seen: Instant::now() },
     );
+    // Persist membership: a server restart wipes the in-memory maps, but a
+    // reconnecting client with a cached token must be recognized, not
+    // become a ghost (its token validated against this registry).
+    if let Some(db) = API_DB.get() {
+        let _ = crate::services::settings_service::set_setting(
+            db,
+            &format!("net_member_{}", node_id),
+            &format!("{}|{}", pc_name_saved, app_version_saved),
+        );
+    }
     super::log_net_event("client_connected", json!({ "node": node_id }));
     issue_token(TokenKind::Device, &node_id, None)
+}
+
+/// Is this node_id a known shop member (persisted across restarts)?
+pub fn is_registered_member(node_id: &str) -> bool {
+    match API_DB.get() {
+        Some(db) => crate::services::settings_service::get_all_settings(db)
+            .map(|s| s.contains_key(&format!("net_member_{}", node_id)))
+            .unwrap_or(false),
+        None => false,
+    }
 }
 
 pub fn touch_device(node_id: &str) {
@@ -346,6 +368,31 @@ async fn api_network_status(
     let Some(tok) = tok else {
         return err_json(StatusCode::UNAUTHORIZED, "Invalid token");
     };
+    // Server restart wiped the token map but membership persists in the DB:
+    // re-validate the token holder against the persisted member registry.
+    if devices().lock().unwrap().get(&tok.node_id).is_none() && is_registered_member(&tok.node_id) {
+        // Re-seed the live registry from the persisted member row.
+        if let Some(db) = API_DB.get() {
+            if let Ok(all) = crate::services::settings_service::get_all_settings(db) {
+                if let Some(row) = all.get(&format!("net_member_{}", tok.node_id)) {
+                    let mut parts = row.splitn(2, '|');
+                    let pc_name = parts.next().unwrap_or("Terminal").to_string();
+                    let ver = parts.next().unwrap_or("?").to_string();
+                    devices().lock().unwrap().insert(
+                        tok.node_id.clone(),
+                        LanDevice {
+                            node_id: tok.node_id.clone(),
+                            pc_name,
+                            role_pref: "client".to_string(),
+                            ip: String::new(),
+                            app_version: ver,
+                            last_seen: Instant::now(),
+                        },
+                    );
+                }
+            }
+        }
+    }
     touch_device(&tok.node_id);
     let (node_id, pc_name, shop_id, shop_name, is_coordinator) = shop_info();
     if !is_coordinator {
