@@ -723,6 +723,28 @@ fn connect_client(base: &str, health: &Value, cfg: &NetConfig, shop_id: &str) {
 
     let Some(token) = have_token else { return };
     *net().server_base.lock().unwrap() = Some(base.to_string());
+    // Remember the coordinator identity for the UI (its announce may never
+    // arrive on broadcast-filtered LANs — health already told us who).
+    {
+        let server_peer = Peer {
+            node_id: health.get("server_id").and_then(|v| v.as_str()).unwrap_or("server").to_string(),
+            pc_name: health.get("server_pc").and_then(|v| v.as_str()).unwrap_or("Shop Server").to_string(),
+            role_pref: "server".into(),
+            is_coordinator: true,
+            shop_id: shop_id.to_string(),
+            shop_name: health.get("shop_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            term: server_term,
+            http_port: base.rsplit(':').next().and_then(|p| p.parse().ok()).unwrap_or(8080),
+            ip: base.trim_start_matches("http://").split(':').next().unwrap_or("").to_string(),
+            app_version: health.get("app_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            data_rows: 0,
+            last_seen_ms: now_secs() * 1000,
+        };
+        let mut c = net().coordinator.lock().unwrap();
+        if c.as_ref().map(|cur| cur.node_id != server_peer.node_id).unwrap_or(true) {
+            *c = Some(server_peer);
+        }
+    }
     // Remember the server for instant reconnection on next startups.
     if let Some(db) = net_opt().and_then(|r| r.db.get()) {
         if cfg.last_server != base {
@@ -1183,6 +1205,15 @@ pub fn cached_users() -> Option<Value> {
 /// plugin commands) runs locally by design.
 pub fn should_forward_ipc(command: &str) -> bool {
     let Some(rt) = net_opt() else { return false };
+    // `login` is the one command that must forward even though it is not a
+    // registry business op: on a client terminal the REAL user accounts
+    // live in the server's database. Forwarding it mints a server-side user
+    // token; validating against the local (stale) database would leave the
+    // terminal "logged in" locally with no shop permissions — the exact
+    // ghost-login bug seen in the field.
+    if command == "login" {
+        return matches!(*rt.mode.lock().unwrap(), Mode::Connected);
+    }
     if !invoke_registry::KNOWN_COMMANDS.contains(&command) {
         return false;
     }
@@ -1217,6 +1248,9 @@ pub async fn forward_ipc(command: String, payload_json: String) -> Result<Value,
     }
     let base = base.unwrap();
     let args: Value = serde_json::from_str(&payload_json).unwrap_or(Value::Null);
+    // `login` is forwarded before the registry whitelist (see
+    // should_forward_ipc) — forward_command_core's "login" arm performs the
+    // server-side authentication and stores the returned user token.
     forward_command_core(&base, &command, args).await
 }
 
