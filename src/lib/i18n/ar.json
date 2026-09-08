@@ -582,6 +582,7 @@
   "net_mode_searching": "● بحث عن الخادم…",
   "net_mode_reconnecting": "● إعادة الاتصال…",
   "net_mode_offline": "● غير متصل",
+  "net_mode_working_offline": "● يعمل محلياً",
   "net_status_label": "الحالة",
   "net_role_label": "الدور",
   "net_this_pc": "هذا الجهاز",

@@ -44,6 +44,7 @@
   let purchasesFocusInvoice: string | null = null;
   // Sidebar drawer-kick feedback (success/failure shown under the button).
   let drawerMsg = '';
+  let netToast = '';
 
   // Route-level access control. Administrators see everything; a Cashier is
   // limited to POS, sales history, expenses and customers (so they can
@@ -255,6 +256,15 @@
     if (t0.startsWith('session_') || t0 === 'settings_updated') {
       loadActiveSession();
     }
+    // OFFLINE CLIENT (user decision 2026-09-08): the terminal worked offline
+    // against its local DB; on reconnect tell the cashier what happened.
+    if (t0 === 'offline_session_upgraded') {
+      netToast = '✅ Shop server is back — your session is now fully connected. Records created while offline stayed on THIS terminal. / عاد الاتصال بالخادم — السجلات أثناء الانقطاع بقيت على هذا الجهاز';
+      setTimeout(() => (netToast = ''), 12000);
+    } else if (t0 === 'offline_session_rejected') {
+      netToast = '⚠️ Server is back but rejected your saved credentials — please log in again on this terminal. / عاد الخادم لكنه رفض بيانات الحساب — أعد تسجيل الدخول';
+      setTimeout(() => (netToast = ''), 12000);
+    }
   }
 
   let sidebarVersion = '';
@@ -399,6 +409,13 @@
     logout();
   }
 </script>
+
+{#if netToast}
+  <div class="fixed top-4 left-1/2 -translate-x-1/2 z-[95] max-w-xl w-[92%] px-4 py-3 rounded-2xl border shadow-2xl text-xs font-bold
+    {netToast.startsWith('✅') ? 'bg-emerald-50 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200' : 'bg-amber-50 dark:bg-amber-950/80 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200'}">
+    {netToast}
+  </div>
+{/if}
 
 {#if showFirstSetup}
   <!-- First-run wizard shows BEFORE login so a fresh install configures the

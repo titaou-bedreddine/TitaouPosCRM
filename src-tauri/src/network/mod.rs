@@ -182,6 +182,10 @@ pub struct NetRuntime {
     pub data_rows_cache: Mutex<Option<(Instant, u64)>>,
     pub lan_ips_cache: Mutex<Option<(Instant, Vec<String>)>>,
     pub users_cache: Mutex<Option<Value>>,
+    /// OFFLINE CLIENT SESSION (memory only, never persisted): credentials of
+    /// a login performed while disconnected, replayed against the server on
+    /// reconnect so the session upgrades to a real server token.
+    pub offline_login: Mutex<Option<(String, String)>>,
 }
 
 static NET: OnceLock<NetRuntime> = OnceLock::new();
@@ -255,6 +259,7 @@ pub fn init(app: tauri::AppHandle, db: DbState) {
         data_rows_cache: Mutex::new(None),
         lan_ips_cache: Mutex::new(None),
         users_cache: Mutex::new(None),
+        offline_login: Mutex::new(None),
     };
     let _ = NET.set(runtime);
     let rt = net();
@@ -733,6 +738,12 @@ fn connect_client(base: &str, health: &Value, cfg: &NetConfig, shop_id: &str) {
             clear_user_token();
             log_net_event("user_token_invalid", json!({ "action": "logout_required" }));
         }
+    } else {
+        // The server is back and this session began OFFLINE (local login
+        // fallback): replay the credentials to upgrade to a real server
+        // token — the user is notified via the offline_session_upgraded
+        // event and keeps working without re-typing anything.
+        offline_reauth(base);
     }
     // Remember the coordinator identity for the UI (its announce may never
     // arrive on broadcast-filtered LANs — health already told us who).
@@ -981,6 +992,104 @@ fn user_token_valid(base: &str, token: &str) -> bool {
     client::invoke_blocking(base, token, "get_units", &json!({}))
         .map(|_| true)
         .unwrap_or(false)
+}
+
+/// Called by the auth command on a CLIENT terminal whenever a login runs
+/// LOCALLY (server unreachable): remember the credentials so connect_client
+/// can upgrade the session to a real server token when the server returns.
+/// True when a local `login`/`login_with_rfid` execution is an OFFLINE
+/// FALLBACK on a client terminal: networking enabled, server not connected.
+/// (On a server/standalone PC this is the normal path — not a fallback.)
+pub fn is_offline_fallback_login() -> bool {
+    let Some(rt) = net_opt() else { return false };
+    if !current_config().enabled || current_config().role != "client" {
+        return false;
+    }
+    !matches!(*rt.mode.lock().unwrap(), Mode::Connected)
+}
+
+pub fn note_offline_login(username: &str, password: &str) {
+    if let Some(rt) = net_opt() {
+        *rt.offline_login.lock().unwrap() = Some((username.to_string(), password.to_string()));
+        log_net_event(
+            "offline_login",
+            json!({ "user": username, "detail": "local session until the shop server returns" }),
+        );
+    }
+}
+
+/// Badge-scan offline fallback: same memory slot, tagged so reconnect
+/// replays the CARD (badges carry no password).
+pub fn note_offline_badge_login(rfid: &str) {
+    if let Some(rt) = net_opt() {
+        *rt.offline_login.lock().unwrap() = Some(("rfid:".to_string(), rfid.to_string()));
+        log_net_event(
+            "offline_login",
+            json!({ "user": "badge", "detail": "local session until the shop server returns" }),
+        );
+    }
+}
+
+/// True when the current session was opened OFFLINE on a client terminal
+/// (drives the UI's amber "offline mode" banner).
+pub fn is_offline_login() -> bool {
+    net_opt()
+        .map(|rt| rt.offline_login.lock().unwrap().is_some())
+        .unwrap_or(false)
+}
+
+/// After a successful server re-auth, the offline credentials are consumed.
+fn clear_offline_login() {
+    if let Some(rt) = net_opt() {
+        *rt.offline_login.lock().unwrap() = None;
+    }
+}
+
+/// Reconnect upgrade: replay the offline session's credentials against the
+/// live server. On success the terminal holds a REAL user token (full shop
+/// permissions); on failure the UI is told the session needs attention.
+fn offline_reauth(base: &str) {
+    let Some(rt) = net_opt() else { return };
+    let creds = rt.offline_login.lock().unwrap().clone();
+    let Some((username, password)) = creds else { return };
+    let device_tok = rt.device_token.lock().unwrap().clone();
+    let Some(device_tok) = device_tok else { return };
+    // Badge sessions replay the card via the server's RFID login endpoint.
+    if username == "rfid:" {
+        match client::invoke_blocking(base, &device_tok, "login_with_rfid", &json!({ "rfid": password })) {
+            Ok(user) => {
+                if let Some(tok) = user.get("auth_token").and_then(|t| t.as_str()) {
+                    store_user_token(tok);
+                    clear_offline_login();
+                    log_net_event("offline_session_upgraded", json!({ "user": "badge", "server": base }));
+                } else {
+                    log_net_event("offline_session_rejected", json!({ "user": "badge", "error": "no token in RFID response" }));
+                }
+            }
+            Err(e) => {
+                log_net_event("offline_session_rejected", json!({ "user": "badge", "error": e }));
+            }
+        }
+        return;
+    }
+    match client::login_on_server(base, &device_tok, &username, &password) {
+        Ok((_, token)) => {
+            store_user_token(&token);
+            clear_offline_login();
+            log_net_event(
+                "offline_session_upgraded",
+                json!({ "user": username, "server": base }),
+            );
+        }
+        Err(e) => {
+            // Server is up but rejected the credentials (changed password,
+            // disabled account…). Keep the local session working, tell the UI.
+            log_net_event(
+                "offline_session_rejected",
+                json!({ "user": username, "error": e, "action": "relogin recommended" }),
+            );
+        }
+    }
 }
 
 pub fn store_user_token(token: &str) {
@@ -1234,6 +1343,7 @@ pub fn status_snapshot() -> Value {
         "last_server": cfg.last_server,
         "discovery_diag": discovery::diagnostics_snapshot(),
         "logged_in": rt.user_token.lock().unwrap().is_some(),
+        "offline_session": is_offline_login(),
         "last_event": rt.last_event.lock().unwrap().clone(),
         "events": events,
         "known_peers": rt.peers.lock().unwrap().values().map(|p| json!({
@@ -1309,12 +1419,14 @@ pub fn should_forward_ipc(command: &str) -> bool {
         if matches!(*rt.mode.lock().unwrap(), Mode::Connected) {
             return true;
         }
-        // A CLIENT-role terminal never falls back to a local login — the
-        // authoritative accounts live on the server. When disconnected the
-        // interception returns the clear "shop server unreachable" error
-        // (spec §14: an explicit client stays offline, never authoritative).
+        // OFFLINE CLIENT FALLBACK (user decision 2026-09-08): a disconnected
+        // client logs in against its LOCAL user database so the shop can
+        // keep operating while the server is down. connect_client()
+        // re-authenticates against the server on reconnect (see
+        // offline_reauth), so the session upgrades to a real server token
+        // instead of staying a ghost.
         let cfg = current_config();
-        return cfg.enabled && cfg.role == "client";
+        return false;
     }
     if !invoke_registry::KNOWN_COMMANDS.contains(&command) {
         return false;
@@ -1546,6 +1658,7 @@ pub fn init_for_tests(db: DbState) {
         data_rows_cache: Mutex::new(None),
         lan_ips_cache: Mutex::new(None),
         users_cache: Mutex::new(None),
+        offline_login: Mutex::new(None),
     };
     let _ = NET.set(runtime);
     let rt = net();

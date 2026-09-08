@@ -582,6 +582,7 @@
   "net_mode_searching": "● Recherche du serveur…",
   "net_mode_reconnecting": "● Reconnexion…",
   "net_mode_offline": "● Hors ligne",
+  "net_mode_working_offline": "● Hors ligne (local)",
   "net_status_label": "Statut",
   "net_role_label": "Rôle",
   "net_this_pc": "Ce PC",

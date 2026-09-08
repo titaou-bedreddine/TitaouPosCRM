@@ -108,7 +108,16 @@ pub fn print_label_job(
 
 #[tauri::command]
 pub fn login(db: State<'_, DbState>, username: String, password: String) -> Result<Option<User>, String> {
-    authenticate_user(&db, &username, &password)
+    let user = authenticate_user(&db, &username, &password)?;
+    // OFFLINE CLIENT (user decision 2026-09-08): this command only runs
+    // locally when the terminal is NOT connected (the wrapper forwards
+    // 'login' to the server otherwise). A client-role success here is a
+    // local fallback — remember the credentials so the network layer can
+    // upgrade the session to a real server token when the server returns.
+    if user.is_some() && crate::network::is_offline_fallback_login() {
+        crate::network::note_offline_login(&username, &password);
+    }
+    Ok(user)
 }
 
 #[tauri::command]
@@ -549,7 +558,12 @@ pub fn find_employee_by_rfid(db: State<'_, DbState>, rfid: String) -> Result<Opt
 /// RFID login: resolve a scanned card to the employee's active user account.
 #[tauri::command]
 pub fn login_with_rfid(db: State<'_, DbState>, rfid: String) -> Result<Option<User>, String> {
-    employee_service::login_with_rfid(&db, &rfid)
+    let user = employee_service::login_with_rfid(&db, &rfid)?;
+    // Offline client fallback: badge logins upgrade on reconnect too.
+    if user.is_some() && crate::network::is_offline_fallback_login() {
+        crate::network::note_offline_badge_login(&rfid);
+    }
+    Ok(user)
 }
 
 /// Resolve a scanned scale barcode (ACLAS price/weight-embedded EAN) to the

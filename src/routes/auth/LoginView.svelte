@@ -259,10 +259,10 @@
           <span>Connected to shop server {$networkStatus?.coordinator?.pc_name ? `(${$networkStatus.coordinator.pc_name})` : ''} — sign in with your shop account.</span>
         {:else if $networkStatus?.mode === 'searching' || $networkStatus?.mode === 'reconnecting'}
           <Loader2 class="w-4 h-4 shrink-0 animate-spin" />
-          <span>Searching for the shop server… login unlocks automatically once connected / جارٍ البحث عن الخادم…</span>
+          <span>Searching for the shop server… you can still sign in and work offline / جارٍ البحث عن الخادم… يمكنك تسجيل الدخول والعمل محلياً</span>
         {:else}
           <WifiOff class="w-4 h-4 shrink-0" />
-          <span>Shop server unreachable — login is blocked on this terminal until the connection returns / لا يمكن تسجيل الدخول قبل الاتصال بالخادم</span>
+          <span>Shop server unreachable — sign in to work OFFLINE; your session reconnects automatically when the server returns / الخادم غير متاح — سجّل الدخول للعمل دون اتصال، ويعود الاتصال تلقائياً</span>
         {/if}
       </div>
     {/if}

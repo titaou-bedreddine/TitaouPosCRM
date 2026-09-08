@@ -25,6 +25,11 @@
       case 'reconnecting':
         return { cls: 'text-amber-600 dark:text-amber-400', dot: 'bg-amber-500 animate-pulse', key: 'net_mode_reconnecting' };
       case 'offline':
+        // A logged-in offline client is WORKING (local fallback session) —
+        // amber "working offline" instead of a red failure label.
+        if (status?.offline_session) {
+          return { cls: 'text-amber-600 dark:text-amber-400', dot: 'bg-amber-500', key: 'net_mode_working_offline' };
+        }
         return { cls: 'text-rose-600 dark:text-rose-400', dot: 'bg-rose-500', key: 'net_mode_offline' };
       default:
         return { cls: 'text-pos-muted', dot: 'bg-slate-400', key: 'net_mode_disabled' };
@@ -60,6 +65,8 @@
     <Wifi class="w-3.5 h-3.5 text-emerald-500 shrink-0" />
   {:else if status?.enabled && (status?.mode === 'searching' || status?.mode === 'reconnecting')}
     <RefreshCw class="w-3.5 h-3.5 text-amber-500 shrink-0 animate-spin" />
+  {:else if status?.enabled && status?.mode === 'offline' && status?.offline_session}
+    <ShieldAlert class="w-3.5 h-3.5 text-amber-500 shrink-0" />
   {:else if status?.enabled && status?.mode === 'offline'}
     <ShieldAlert class="w-3.5 h-3.5 text-rose-500 shrink-0" />
   {:else}

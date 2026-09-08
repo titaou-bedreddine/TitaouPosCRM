@@ -58,6 +58,8 @@ export interface NetworkStatus {
   autoreconnect: boolean;
   manual_server: string;
   logged_in: boolean;
+  /** True when the session was opened OFFLINE on a client (local fallback login). */
+  offline_session: boolean;
   last_event: NetEvent | null;
   events: NetEvent[];
   known_peers: NetPeerInfo[];
