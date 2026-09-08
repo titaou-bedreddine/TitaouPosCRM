@@ -73,11 +73,13 @@
   </span>
 </button>
 
+<svelte:window on:keydown={(e) => { if (e.key === 'Escape' && popupOpen) popupOpen = false; }} />
+
 <!-- Details popup -->
 {#if popupOpen}
   <div class="fixed inset-0 z-[90] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="presentation" on:click|self={() => (popupOpen = false)}>
-    <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4 animate-in zoom-in-95 duration-150">
-      <div class="flex items-start justify-between">
+    <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-150">
+      <div class="flex items-start justify-between p-6 pb-3 border-b border-pos-border shrink-0">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-sky-100 dark:bg-sky-950 text-sky-600 flex items-center justify-center shrink-0">
             <Globe class="w-5 h-5" />
@@ -91,6 +93,7 @@
           <X class="w-4 h-4 text-pos-muted" />
         </button>
       </div>
+      <div class="overflow-y-auto p-6 pt-4 space-y-4">
 
       <div class="grid grid-cols-2 gap-2 text-xs">
         <div class="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-pos-border/60">
@@ -209,6 +212,7 @@
           <RefreshCw class="w-3 h-3 {busy ? 'animate-spin' : ''}" />
           {t('net_refresh', $currentLocale)}
         </button>
+      </div>
       </div>
     </div>
   </div>

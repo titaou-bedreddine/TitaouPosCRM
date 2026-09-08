@@ -206,6 +206,7 @@
   "sales_sale_num": "Vente N°",
   "sales_date_time": "Date & Heure",
   "sales_cashier": "Caissier",
+  "terminal": "Terminal (PC)",
   "sales_total_amount": "Montant Total",
   "sales_paid_amount": "Montant Payé",
   "sales_payment": "Paiement",

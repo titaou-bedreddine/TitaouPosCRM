@@ -3,7 +3,7 @@
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
   import type { DashboardStats } from '../../lib/types';
-  import { TrendingUp, ShoppingBag, AlertTriangle, ArrowDownRight, DollarSign, Wallet, Trophy, RefreshCw, Layers, Eye, Pencil, Printer, X, Trash2, CheckCircle2 } from 'lucide-svelte';
+  import { TrendingUp, ShoppingBag, AlertTriangle, ArrowDownRight, DollarSign, Wallet, Trophy, RefreshCw, Layers, Eye, Pencil, Printer, X, Trash2, CheckCircle2, Monitor } from 'lucide-svelte';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
@@ -372,6 +372,27 @@
         <div class="text-lg font-black font-mono text-indigo-600 mt-1">{stats.average_basket.toLocaleString()} DZD</div>
       </div>
     </div>
+
+    <!-- LAN: today's sales split per terminal (which PC sold what) -->
+    {#if stats.sales_by_terminal && stats.sales_by_terminal.length > 0}
+      <div class="mt-3 bg-pos-card border border-pos-border rounded-2xl shadow-xs overflow-hidden">
+        <div class="p-3 border-b border-pos-border bg-slate-50 dark:bg-slate-800/40 flex items-center gap-2">
+          <Monitor class="w-4 h-4 text-sky-500" />
+          <h3 class="font-extrabold text-xs text-pos-text">{t('terminal')} — {t('dash_metric_sales')}</h3>
+          <span class="text-[10px] font-bold text-pos-muted">Today / اليوم</span>
+        </div>
+        <div class="p-3 flex flex-wrap gap-2">
+          {#each stats.sales_by_terminal as tsr}
+            <div class="flex items-center gap-2 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-900 rounded-xl">
+              <Monitor class="w-3.5 h-3.5 text-sky-600 shrink-0" />
+              <span class="text-[11px] font-black text-sky-800 dark:text-sky-300">{tsr.terminal}</span>
+              <span class="text-xs font-mono font-black text-pos-text">{tsr.total.toLocaleString()} DZD</span>
+              <span class="text-[10px] font-bold text-pos-muted">({tsr.count})</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
     {/if}
 
     <!-- Category Tabs matching screenshot -->

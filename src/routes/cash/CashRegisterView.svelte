@@ -424,7 +424,7 @@
           </div>
           <div>
             <h3 class="font-extrabold text-sm text-emerald-900 dark:text-emerald-200">
-              Active Session #{$activeSession.id} — {$activeSession.user_name || 'Cashier'}
+              Active Session #{$activeSession.id} — {$activeSession.user_name || 'Cashier'}{$activeSession.terminal_name ? ` @ ${$activeSession.terminal_name}` : ''}
             </h3>
             <p class="text-xs text-emerald-800 dark:text-emerald-300 mt-0.5 font-medium">
               Opened Since {$activeSession.opened_at}
@@ -570,13 +570,14 @@
               <th class="p-3 text-start">{t('reg_col_time')}</th>
               <th class="p-3 text-start">{t('reg_col_type')}</th>
               <th class="p-3 text-start">{t('reg_col_description')}</th>
+              <th class="p-3 text-start">{t('terminal')}</th>
               <th class="p-3 text-end">{t('reg_col_amount')}</th>
             </tr>
           </thead>
           <tbody>
             {#if movements.length === 0}
               <tr>
-                <td colspan="4" class="p-8 text-center text-pos-muted">{t('reg_no_movements')}</td>
+                <td colspan="5" class="p-8 text-center text-pos-muted">{t('reg_no_movements')}</td>
               </tr>
             {:else}
               {#each movements as m}
@@ -584,6 +585,13 @@
                   <td class="p-3 text-pos-muted font-mono">{m.created_at}</td>
                   <td class="p-3 font-bold uppercase text-xs">{m.type_name}</td>
                   <td class="p-3 text-pos-text font-semibold">{m.reason || '-'}</td>
+                  <td class="p-3">
+                    {#if m.terminal_name}
+                      <span class="px-2 py-0.5 rounded-md text-[10px] font-black bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300">{m.terminal_name}</span>
+                    {:else}
+                      <span class="text-pos-muted">—</span>
+                    {/if}
+                  </td>
                   <td class="p-3 text-end font-mono font-bold text-sm {m.amount < 0 ? 'text-rose-600' : 'text-emerald-600'}">
                     {m.amount.toLocaleString()} DZD
                   </td>
@@ -649,6 +657,7 @@
           <tr class="border-b border-pos-border text-pos-muted font-bold bg-slate-50 dark:bg-slate-800/40">
             <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySessionSort('id')}># {sessSortIndicator('id')}</th>
             <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySessionSort('user_name')}>Employee {sessSortIndicator('user_name')}</th>
+            <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySessionSort('terminal_name')} title="PC / terminal that opened this session">{t('terminal')} {sessSortIndicator('terminal_name')}</th>
             <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySessionSort('opened_at')}>Opened At {sessSortIndicator('opened_at')}</th>
             <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySessionSort('closed_at')}>Closed At {sessSortIndicator('closed_at')}</th>
             <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySessionSort('opening_amount')}>Opening {sessSortIndicator('opening_amount')}</th>
@@ -662,7 +671,7 @@
         <tbody>
           {#if historySessions.length === 0}
             <tr>
-              <td colspan="10" class="p-8 text-center text-pos-muted font-bold">
+              <td colspan="11" class="p-8 text-center text-pos-muted font-bold">
                 No cash sessions found for this period.
               </td>
             </tr>
@@ -671,6 +680,13 @@
               <tr class="border-b border-pos-border/60 hover:bg-slate-50 dark:hover:bg-slate-800/40 {s.is_archived ? 'opacity-60 bg-slate-50/50 dark:bg-slate-900/20' : ''}">
                 <td class="p-3 font-mono font-bold text-pos-muted">{s.id}</td>
                 <td class="p-3 font-bold text-pos-text">{s.user_name || 'Admin'}</td>
+                <td class="p-3">
+                  {#if s.terminal_name}
+                    <span class="px-2 py-0.5 rounded-md text-[10px] font-black bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300">{s.terminal_name}</span>
+                  {:else}
+                    <span class="text-pos-muted">—</span>
+                  {/if}
+                </td>
                 <td class="p-3 font-mono text-pos-muted">{s.opened_at}</td>
                 <td class="p-3 font-mono text-pos-muted">{s.closed_at || '-'}</td>
                 <td class="p-3 text-end font-mono font-bold">{s.opening_amount.toLocaleString()}</td>

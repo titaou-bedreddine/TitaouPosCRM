@@ -7,12 +7,13 @@ pub fn create_purchase(db: &DbState, input: CreatePurchaseInput) -> Result<Strin
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     tx.execute(
-        "INSERT INTO purchases (invoice_number, supplier_id, user_id, date, subtotal, discount, tax, total, paid_amount, payment_method, status, notes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'received', ?11)",
+        "INSERT INTO purchases (invoice_number, supplier_id, user_id, date, subtotal, discount, tax, total, paid_amount, payment_method, status, notes, terminal_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'received', ?11, ?12)",
         rusqlite::params![
             input.invoice_number, input.supplier_id, input.user_id, input.date,
             input.subtotal, input.discount, input.tax, input.total, input.paid_amount,
-            input.payment_method, input.notes
+            input.payment_method, input.notes,
+            crate::network::current_stamp_terminal()
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -65,7 +66,8 @@ pub fn list_purchases(db: &DbState) -> Result<Vec<Purchase>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT p.id, p.invoice_number, p.supplier_id, s.name, p.user_id, u.display_name,
-                    p.date, p.subtotal, p.discount, p.tax, p.total, p.paid_amount, p.payment_method, p.status, p.notes, p.created_at
+                    p.date, p.subtotal, p.discount, p.tax, p.total, p.paid_amount, p.payment_method, p.status, p.notes, p.created_at,
+                    COALESCE(p.terminal_name, '')
              FROM purchases p
              LEFT JOIN suppliers s ON p.supplier_id = s.id
              LEFT JOIN users u ON p.user_id = u.id
@@ -92,6 +94,10 @@ pub fn list_purchases(db: &DbState) -> Result<Vec<Purchase>, String> {
                 status: row.get(13)?,
                 notes: row.get(14)?,
                 created_at: row.get(15)?,
+                terminal_name: {
+                    let t: String = row.get(16)?;
+                    if t.is_empty() { None } else { Some(t) }
+                },
             })
         })
         .map_err(|e| e.to_string())?;

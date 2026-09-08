@@ -483,12 +483,21 @@ async fn api_invoke(
         caller_node: tok.node_id.clone(),
         caller_user: tok.user.clone(),
     };
+    // Stamp the CALLING terminal's PC name on records created by this
+    // request (read by INSERTs via current_stamp_terminal).
+    super::set_caller_terminal(&super::stamping_terminal(&tok.node_id));
     // Business operations run on the blocking thread pool: SQLite work must
     // never stall the WS/event loop.
     let command2 = command.clone();
-    let res = tokio::task::spawn_blocking(move || invoke_registry::dispatch(&ctx, &command2, &args))
-        .await
-        .unwrap_or_else(|e| Err(format!("dispatch join error: {}", e)));
+    let caller_pc = super::stamping_terminal(&tok.node_id);
+    let res = tokio::task::spawn_blocking(move || {
+        super::set_caller_terminal(&caller_pc);
+        let r = invoke_registry::dispatch(&ctx, &command2, &args);
+        super::clear_caller_terminal();
+        r
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("dispatch join error: {}", e)));
     match res {
         Ok(result) => {
             let mut envelope = json!({ "ok": true, "result": result });

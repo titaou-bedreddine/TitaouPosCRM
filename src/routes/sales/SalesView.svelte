@@ -14,7 +14,7 @@
   import {
     ShoppingBag, Search, Printer, Calendar, User as UserIcon,
     DollarSign, Eye, Trash2, X, Check, AlertTriangle, Layers,
-    CreditCard, Banknote, ShieldAlert, TrendingUp, Pencil, Package
+    CreditCard, Banknote, ShieldAlert, TrendingUp, Pencil, Package, Monitor
   } from 'lucide-svelte';
 
   let sales: Sale[] = [];
@@ -145,6 +145,7 @@
         saleNumber: s.sale_number,
         saleDate: s.created_at,
         cashierName: s.user_name || 'Admin',
+        terminalName: s.terminal_name || undefined,
         customerName: s.customer_name || undefined,
         items: items.map((it: any) => ({
           name: it.name_fr || it.name_ar || it.name,
@@ -393,6 +394,7 @@
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('sale_number')}>{t('sales_sale_num')} {sortIndicator('sale_number')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('created_at')}>{t('sales_date_time')} {sortIndicator('created_at')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('user_name')}>{t('sales_cashier')} {sortIndicator('user_name')}</th>
+          <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('terminal_name')} title="PC / terminal that recorded the sale">{t('terminal')} {sortIndicator('terminal_name')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('customer_name')}>{t('customer')} {sortIndicator('customer_name')}</th>
           <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('total_amount')}>{t('sales_total_amount')} {sortIndicator('total_amount')}</th>
           <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('paid_amount')}>{t('sales_paid_amount')} {sortIndicator('paid_amount')}</th>
@@ -406,7 +408,7 @@
       <tbody class="divide-y divide-pos-border/40">
         {#if filteredSales.length === 0}
           <tr>
-            <td colspan="11" class="p-8 text-center text-pos-muted">{t('no_data')}</td>
+            <td colspan="12" class="p-8 text-center text-pos-muted">{t('no_data')}</td>
           </tr>
         {:else}
           {#each sortedSales as s}
@@ -422,6 +424,13 @@
               </td>
               <td class="p-3 font-mono text-pos-muted">{s.created_at}</td>
               <td class="p-3 font-bold text-pos-text">{s.user_name || 'Admin'}</td>
+              <td class="p-3">
+                {#if s.terminal_name}
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-black bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" title={t('terminal')}><Monitor class="w-3 h-3 inline -mt-0.5 me-0.5" />{s.terminal_name}</span>
+                {:else}
+                  <span class="text-pos-muted">—</span>
+                {/if}
+              </td>
               <td class="p-3 text-pos-muted">{s.customer_name || 'Client Comptoir'}</td>
               <td class="p-3 text-end font-mono font-black text-pos-text">{s.total_amount.toLocaleString()} DZD</td>
               <td class="p-3 text-end font-mono font-black text-emerald-600">{s.paid_amount.toLocaleString()} DZD</td>
@@ -488,7 +497,7 @@
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t('sale_edited_tag')}</span>
               {/if}
             </h3>
-            <p class="text-xs text-pos-muted">{selectedSale.created_at} • Cashier: {selectedSale.user_name || 'Admin'}</p>
+            <p class="text-xs text-pos-muted">{selectedSale.created_at} • Cashier: {selectedSale.user_name || 'Admin'}{selectedSale.terminal_name ? ` • ${t('terminal')}: ${selectedSale.terminal_name}` : ''}</p>
             <p class="text-[10px] text-pos-muted">{t('invoice_click_to_copy')}</p>
           </div>
         </div>

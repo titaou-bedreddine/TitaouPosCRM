@@ -206,6 +206,7 @@
   "sales_sale_num": "Sale #",
   "sales_date_time": "Date & Time",
   "sales_cashier": "Cashier",
+  "terminal": "Terminal",
   "sales_total_amount": "Total Amount",
   "sales_paid_amount": "Paid Amount",
   "sales_payment": "Payment",

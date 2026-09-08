@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount } from '../stores/cart';
   import { currentUser } from '../stores/auth';
+  import { networkStatus } from '../stores/network';
   import { entityQrDataUrl, printHtmlSilently, type SilentPrintResult } from '../utils/printer';
   import { buildUnifiedReceipt } from '../printing/unifiedReceipt';
   import { Printer, X, Loader2, CheckCircle2, AlertTriangle } from 'lucide-svelte';
@@ -36,6 +37,7 @@
     saleNumber: effectiveInvoiceNumber,
     saleDate: new Date().toLocaleString('fr-FR'),
     cashierName: $currentUser?.display_name || 'Admin',
+    terminalName: $networkStatus?.pc_name || undefined,
     customerName: customerName || settings.default_customer_name || '',
     paymentMethod,
     items: $cartItems.map((i) => ({

@@ -313,6 +313,7 @@
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('category_name')}>{t('exp_category')} {sortIndicator('category_name')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('recipient')}>{t('exp_beneficiary')} {sortIndicator('recipient')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('user_name')}>{t('exp_user_col')} {sortIndicator('user_name')}</th>
+          <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('terminal_name')} title="PC / terminal that recorded this expense">{t('terminal')} {sortIndicator('terminal_name')}</th>
           <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('amount')}>{t('exp_amount_col')} {sortIndicator('amount')}</th>
           <th class="p-3 text-center">Payment</th>
           <th class="p-3 text-end">Actions</th>
@@ -321,7 +322,7 @@
       <tbody class="divide-y divide-pos-border/40">
         {#if filteredExpenses.length === 0}
           <tr>
-            <td colspan="8" class="p-8 text-center text-pos-muted">No expense records recorded yet.</td>
+            <td colspan="9" class="p-8 text-center text-pos-muted">No expense records recorded yet.</td>
           </tr>
         {:else}
           {#each sortedExpenses as exp}
@@ -331,6 +332,13 @@
               <td class="p-3 font-bold text-pos-text">{exp.category_name || 'Général'}</td>
               <td class="p-3 text-pos-muted">{exp.recipient || 'Divers'}</td>
               <td class="p-3 text-pos-muted font-semibold">{exp.user_name || `User #${exp.user_id}`}</td>
+              <td class="p-3">
+                {#if exp.terminal_name}
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-black bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300">{exp.terminal_name}</span>
+                {:else}
+                  <span class="text-pos-muted">—</span>
+                {/if}
+              </td>
               <td class="p-3 text-end font-mono font-black text-rose-600">{exp.amount.toLocaleString()} DZD</td>
               <td class="p-3 text-center">
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase {exp.payment_method === 'cash' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-sky-100 text-sky-800'}">
@@ -503,7 +511,7 @@
       <div class="flex items-start justify-between">
         <div>
           <h3 class="font-black text-sm text-pos-text">Voucher #{previewExpense.expense_number}</h3>
-          <p class="text-xs text-pos-muted">{previewExpense.date} • by {previewExpense.user_name || 'User #' + previewExpense.user_id}</p>
+          <p class="text-xs text-pos-muted">{previewExpense.date} • by {previewExpense.user_name || 'User #' + previewExpense.user_id}{previewExpense.terminal_name ? ` • ${t('terminal')}: ${previewExpense.terminal_name}` : ''}</p>
         </div>
         <button on:click={() => (previewExpense = null)} class="p-1.5 text-pos-muted hover:text-pos-text rounded-lg cursor-pointer">
           <X class="w-5 h-5" />

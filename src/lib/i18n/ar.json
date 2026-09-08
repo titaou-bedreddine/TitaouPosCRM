@@ -206,6 +206,7 @@
   "sales_sale_num": "رقم البيع",
   "sales_date_time": "التاريخ والوقت",
   "sales_cashier": "الكاشير",
+  "terminal": "الجهاز",
   "sales_total_amount": "المبلغ الكلي",
   "sales_paid_amount": "المبلغ المدفوع",
   "sales_payment": "الدفع",

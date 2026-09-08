@@ -144,6 +144,36 @@ impl DbState {
         let _ = conn.execute("ALTER TABLE products ADD COLUMN pin_order INTEGER DEFAULT 0;", []);
         let _ = conn.execute("ALTER TABLE cash_sessions ADD COLUMN is_archived INTEGER DEFAULT 0;", []);
 
+        // LAN multi-terminal: every financial record is stamped with the
+        // PC (terminal name) that created it. Existing rows are backfilled
+        // with THIS machine's name (they were all created here pre-LAN).
+        let _ = conn.execute_batch("
+            ALTER TABLE sales ADD COLUMN terminal_name TEXT DEFAULT '';
+            ALTER TABLE purchases ADD COLUMN terminal_name TEXT DEFAULT '';
+            ALTER TABLE expenses ADD COLUMN terminal_name TEXT DEFAULT '';
+            ALTER TABLE cash_sessions ADD COLUMN terminal_name TEXT DEFAULT '';
+            ALTER TABLE cash_movements ADD COLUMN terminal_name TEXT DEFAULT '';
+            ALTER TABLE customer_debt_payments ADD COLUMN terminal_name TEXT DEFAULT '';
+            ALTER TABLE supplier_debt_payments ADD COLUMN terminal_name TEXT DEFAULT '';
+        ");
+        let this_pc = crate::network::terminal_name_for_this_pc();
+        let _ = conn.execute(
+            "UPDATE sales SET terminal_name = ?1 WHERE terminal_name = '' OR terminal_name IS NULL",
+            [&this_pc],
+        );
+        let _ = conn.execute(
+            "UPDATE purchases SET terminal_name = ?1 WHERE terminal_name = '' OR terminal_name IS NULL",
+            [&this_pc],
+        );
+        let _ = conn.execute(
+            "UPDATE expenses SET terminal_name = ?1 WHERE terminal_name = '' OR terminal_name IS NULL",
+            [&this_pc],
+        );
+        let _ = conn.execute(
+            "UPDATE cash_sessions SET terminal_name = ?1 WHERE terminal_name = '' OR terminal_name IS NULL",
+            [&this_pc],
+        );
+
         let _ = conn.execute(
             "CREATE TABLE IF NOT EXISTS scale_sync_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

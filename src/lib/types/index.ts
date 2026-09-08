@@ -127,6 +127,8 @@ export interface CashSession {
   status: 'open' | 'closed';
   notes?: string;
   is_archived?: boolean;
+  /** LAN: PC name of the terminal that opened this session. */
+  terminal_name?: string;
 }
 
 export interface CashMovement {
@@ -139,6 +141,8 @@ export interface CashMovement {
   reason?: string;
   created_at: string;
   notes?: string;
+  /** LAN: PC name of the terminal that recorded this movement. */
+  terminal_name?: string;
 }
 
 export interface Sale {
@@ -165,6 +169,8 @@ export interface Sale {
   units_sold?: number;
   /** True when the sale was edited in place (localized EDITED badge). */
   is_edited?: boolean;
+  /** LAN: PC name of the terminal that recorded this sale. */
+  terminal_name?: string;
 }
 
 export interface Customer {
@@ -225,6 +231,8 @@ export interface Purchase {
   status: string;
   notes?: string;
   created_at: string;
+  /** LAN: PC name of the terminal that recorded this purchase. */
+  terminal_name?: string;
 }
 
 export interface Expense {
@@ -242,6 +250,8 @@ export interface Expense {
   date: string;
   notes?: string;
   created_at: string;
+  /** LAN: PC name of the terminal that recorded this expense. */
+  terminal_name?: string;
 }
 
 export interface Employee {
@@ -291,5 +301,11 @@ export interface DashboardStats {
     revenue: number;
     cost: number;
     profit: number;
+  }>;
+  /** LAN: today's sales split per terminal (PC) — which counter sold what. */
+  sales_by_terminal?: Array<{
+    terminal: string;
+    total: number;
+    count: number;
   }>;
 }

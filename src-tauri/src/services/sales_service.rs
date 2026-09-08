@@ -20,13 +20,14 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
     };
 
     tx.execute(
-        "INSERT INTO sales (sale_number, session_id, user_id, customer_id, subtotal, discount_amount, discount_percentage, discount_reason, tax_amount, total_amount, paid_amount, change_amount, payment_status, status, notes, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'completed', ?14, datetime('now','localtime'))",
+        "INSERT INTO sales (sale_number, session_id, user_id, customer_id, subtotal, discount_amount, discount_percentage, discount_reason, tax_amount, total_amount, paid_amount, change_amount, payment_status, status, notes, created_at, terminal_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'completed', ?14, datetime('now','localtime'), ?15)",
         rusqlite::params![
             sale_number, input.session_id, input.user_id, input.customer_id,
             input.subtotal, input.discount_amount, input.discount_percentage,
             input.discount_reason, input.tax_amount, input.total_amount,
-            input.paid_amount, input.change_amount, payment_status, input.notes
+            input.paid_amount, input.change_amount, payment_status, input.notes,
+            crate::network::current_stamp_terminal()
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -201,20 +202,21 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
         let lang = crate::services::notifier_service::ui_language(db);
         let actor = crate::services::notifier_service::actor_label(db, Some(input.user_id));
         let date_str = now.format("%Y-%m-%d %H:%M").to_string();
+        let terminal = crate::network::current_stamp_terminal();
         let text = crate::services::notifier_service::tr(
             &lang,
             (
                 format!(
-                    "🧾 *Receipt #{}* ({})\n💰 Total: *{} DZD*\n📈 Gross Profit: *{} DZD*\n👤 Cashier: {}\n📅 Date: {}",
-                    sale_id, sale_number, input.total_amount, gross_profit, actor, date_str
+                    "🧾 *Receipt #{}* ({})\n💰 Total: *{} DZD*\n📈 Gross Profit: *{} DZD*\n👤 Cashier: {}\n🖥 Terminal: {}\n📅 Date: {}",
+                    sale_id, sale_number, input.total_amount, gross_profit, actor, terminal, date_str
                 ),
                 format!(
-                    "🧾 *وصل رقم #{}* ({})\n💰 المجموع: *{} دج*\n📈 إجمالي الربح: *{} دج*\n👤 الكاشير: {}\n📅 التاريخ: {}",
-                    sale_id, sale_number, input.total_amount, gross_profit, actor, date_str
+                    "🧾 *وصل رقم #{}* ({})\n💰 المجموع: *{} دج*\n📈 إجمالي الربح: *{} دج*\n👤 الكاشير: {}\n🖥 الجهاز: {}\n📅 التاريخ: {}",
+                    sale_id, sale_number, input.total_amount, gross_profit, actor, terminal, date_str
                 ),
                 format!(
-                    "🧾 *Reçu N°{}* ({})\n💰 Total : *{} DZD*\n📈 Marge brute : *{} DZD*\n👤 Caissier : {}\n📅 Date : {}",
-                    sale_id, sale_number, input.total_amount, gross_profit, actor, date_str
+                    "🧾 *Reçu N°{}* ({})\n💰 Total : *{} DZD*\n📈 Marge brute : *{} DZD*\n👤 Caissier : {}\n🖥 Caisse : {}\n📅 Date : {}",
+                    sale_id, sale_number, input.total_amount, gross_profit, actor, terminal, date_str
                 ),
             ),
         );
@@ -239,7 +241,8 @@ pub fn list_sales(
                 (SELECT sp.payment_method FROM sale_payments sp WHERE sp.sale_id = s.id ORDER BY sp.amount DESC LIMIT 1) as payment_method,
                 (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as lines_sold,
                 (SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si WHERE si.sale_id = s.id) as units_sold,
-                CASE WHEN s.notes LIKE '%MODIFIED%' THEN 1 ELSE 0 END as is_edited
+                CASE WHEN s.notes LIKE '%MODIFIED%' THEN 1 ELSE 0 END as is_edited,
+                COALESCE(s.terminal_name, '') as terminal_name
          FROM sales s
          LEFT JOIN users u ON s.user_id = u.id
          LEFT JOIN customers c ON s.customer_id = c.id
@@ -290,6 +293,10 @@ pub fn list_sales(
                 lines_sold: row.get(17)?,
                 units_sold: row.get(18)?,
                 is_edited: row.get::<_, i64>(19)? == 1,
+                terminal_name: {
+                    let t: String = row.get(20)?;
+                    if t.is_empty() { None } else { Some(t) }
+                },
             })
         })
         .map_err(|e| e.to_string())?;
@@ -325,7 +332,8 @@ fn get_sale_by_query(
                         s.customer_id, c.name, s.subtotal, s.discount_amount, s.tax_amount,
                         s.total_amount, s.paid_amount, s.change_amount, s.payment_status, s.status, s.created_at,
                         (SELECT sp.payment_method FROM sale_payments sp WHERE sp.sale_id = s.id ORDER BY sp.amount DESC LIMIT 1),
-                        0, 0, CASE WHEN s.notes LIKE '%MODIFIED%' THEN 1 ELSE 0 END
+                        0, 0, CASE WHEN s.notes LIKE '%MODIFIED%' THEN 1 ELSE 0 END,
+                        COALESCE(s.terminal_name, '')
                  FROM sales s
                  LEFT JOIN users u ON s.user_id = u.id
                  LEFT JOIN customers c ON s.customer_id = c.id
@@ -358,6 +366,10 @@ fn get_sale_by_query(
                     lines_sold: 0,
                     units_sold: 0.0,
                     is_edited: false,
+                    terminal_name: {
+                        let t: String = row.get(20)?;
+                        if t.is_empty() { None } else { Some(t) }
+                    },
                 })
             })
             .map_err(|e| e.to_string())?;

@@ -7,7 +7,8 @@ pub fn get_active_session(db: &DbState, _user_id: i64) -> Result<Option<CashSess
     let mut stmt = conn
         .prepare(
             "SELECT cs.id, cs.register_id, cs.user_id, u.display_name, cs.opened_at, cs.closed_at,
-                    cs.opening_amount, cs.expected_cash, cs.actual_cash, cs.difference, cs.status, cs.notes
+                    cs.opening_amount, cs.expected_cash, cs.actual_cash, cs.difference, cs.status, cs.notes,
+                    COALESCE(cs.terminal_name, '')
              FROM cash_sessions cs
              LEFT JOIN users u ON cs.user_id = u.id
              WHERE cs.status = 'open'
@@ -34,6 +35,10 @@ pub fn get_active_session(db: &DbState, _user_id: i64) -> Result<Option<CashSess
             notes: row.get(11)?,
             is_stale: None,
             is_archived: false,
+            terminal_name: {
+                let t: String = row.get(12)?;
+                if t.is_empty() { None } else { Some(t) }
+            },
         })
     }) {
         Ok(s) => Some(s),
@@ -54,7 +59,8 @@ pub fn get_active_session_for_register(db: &DbState, register_id: i64) -> Result
     let mut stmt = conn
         .prepare(
             "SELECT cs.id, cs.register_id, cs.user_id, u.display_name, cs.opened_at, cs.closed_at,
-                    cs.opening_amount, cs.expected_cash, cs.actual_cash, cs.difference, cs.status, cs.notes
+                    cs.opening_amount, cs.expected_cash, cs.actual_cash, cs.difference, cs.status, cs.notes,
+                    COALESCE(cs.terminal_name, '')
              FROM cash_sessions cs
              LEFT JOIN users u ON cs.user_id = u.id
              WHERE cs.status = 'open' AND cs.register_id = ?1
@@ -81,6 +87,10 @@ pub fn get_active_session_for_register(db: &DbState, register_id: i64) -> Result
             notes: row.get(11)?,
             is_stale: None,
             is_archived: false,
+            terminal_name: {
+                let t: String = row.get(12)?;
+                if t.is_empty() { None } else { Some(t) }
+            },
         })
     }) {
         Ok(s) => Some(s),
@@ -181,18 +191,18 @@ pub fn open_session_for_register(db: &DbState, user_id: i64, register_id: i64, o
     .map_err(|e| e.to_string())?;
 
     tx.execute(
-        "INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status, notes, opened_at)
-         VALUES (?1, ?2, ?3, ?3, 'open', ?4, datetime('now','localtime'))",
-        rusqlite::params![register_id, user_id, opening_amount, notes],
+        "INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status, notes, opened_at, terminal_name)
+         VALUES (?1, ?2, ?3, ?3, 'open', ?4, datetime('now','localtime'), ?5)",
+        rusqlite::params![register_id, user_id, opening_amount, notes, crate::network::current_stamp_terminal()],
     )
     .map_err(|e| e.to_string())?;
 
     let session_id = tx.last_insert_rowid();
 
     tx.execute(
-        "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, notes)
-         VALUES (?1, ?2, 'opening_balance', ?3, 'Startup Cash / رصيد افتتاحي', ?4)",
-        rusqlite::params![session_id, user_id, opening_amount, notes],
+        "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, notes, terminal_name)
+         VALUES (?1, ?2, 'opening_balance', ?3, 'Startup Cash / رصيد افتتاحي', ?4, ?5)",
+        rusqlite::params![session_id, user_id, opening_amount, notes, crate::network::current_stamp_terminal()],
     )
     .map_err(|e| e.to_string())?;
 
@@ -216,6 +226,7 @@ pub fn open_session_for_register(db: &DbState, user_id: i64, register_id: i64, o
         notes,
         is_stale: Some(false),
         is_archived: false,
+        terminal_name: Some(crate::network::current_stamp_terminal()),
     })
 }
 
@@ -230,18 +241,18 @@ pub fn open_session(db: &DbState, user_id: i64, register_id: i64, opening_amount
     // (CURRENT_TIMESTAMP) stores UTC, which showed every timestamp one hour
     // behind on UTC+ machines and fed the midnight stale-check bug.
     tx.execute(
-        "INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status, notes, opened_at)
-         VALUES (?1, ?2, ?3, ?3, 'open', ?4, datetime('now','localtime'))",
-        rusqlite::params![register_id, user_id, opening_amount, notes],
+        "INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status, notes, opened_at, terminal_name)
+         VALUES (?1, ?2, ?3, ?3, 'open', ?4, datetime('now','localtime'), ?5)",
+        rusqlite::params![register_id, user_id, opening_amount, notes, crate::network::current_stamp_terminal()],
     )
     .map_err(|e| e.to_string())?;
 
     let session_id = tx.last_insert_rowid();
 
     tx.execute(
-        "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, notes)
-         VALUES (?1, ?2, 'opening_balance', ?3, 'Startup Cash / رصيد افتتاحي', ?4)",
-        rusqlite::params![session_id, user_id, opening_amount, notes],
+        "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, notes, terminal_name)
+         VALUES (?1, ?2, 'opening_balance', ?3, 'Startup Cash / رصيد افتتاحي', ?4, ?5)",
+        rusqlite::params![session_id, user_id, opening_amount, notes, crate::network::current_stamp_terminal()],
     )
     .map_err(|e| e.to_string())?;
 
@@ -265,6 +276,7 @@ pub fn open_session(db: &DbState, user_id: i64, register_id: i64, opening_amount
         notes,
         is_stale: Some(false),
         is_archived: false,
+        terminal_name: Some(crate::network::current_stamp_terminal()),
     })
 }
 
@@ -280,9 +292,9 @@ pub fn add_cash_movement(db: &DbState, session_id: i64, user_id: i64, movement_t
 
     let reason_for_log = reason.clone();
     tx.execute(
-        "INSERT INTO cash_movements (session_id, user_id, type, amount, reason)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![session_id, user_id, movement_type, signed_amount, reason],
+        "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, terminal_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![session_id, user_id, movement_type, signed_amount, reason, crate::network::current_stamp_terminal()],
     )
     .map_err(|e| e.to_string())?;
 
@@ -300,8 +312,8 @@ pub fn add_cash_movement(db: &DbState, session_id: i64, user_id: i64, movement_t
         let now = chrono::Local::now();
         let expense_number = format!("EXP-{}", now.format("%Y%m%d%H%M%S"));
         tx.execute(
-            "INSERT INTO expenses (expense_number, category_id, amount, payment_method, session_id, user_id, recipient, receipt_reference, date, notes)
-             VALUES (?1, 6, ?2, 'cash', ?3, ?4, 'Cash Register', NULL, ?5, ?6)",
+            "INSERT INTO expenses (expense_number, category_id, amount, payment_method, session_id, user_id, recipient, receipt_reference, date, notes, terminal_name)
+             VALUES (?1, 6, ?2, 'cash', ?3, ?4, 'Cash Register', NULL, ?5, ?6, ?7)",
             rusqlite::params![
                 expense_number,
                 amount,
@@ -309,6 +321,7 @@ pub fn add_cash_movement(db: &DbState, session_id: i64, user_id: i64, movement_t
                 user_id,
                 now.format("%Y-%m-%d").to_string(),
                 reason.unwrap_or_else(|| "Cash withdrawal from drawer / سحب نقدي من الصندوق".to_string()),
+                crate::network::current_stamp_terminal(),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -392,7 +405,8 @@ pub fn list_movements(db: &DbState, session_id: i64) -> Result<Vec<CashMovement>
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn
         .prepare(
-            "SELECT cm.id, cm.session_id, cm.user_id, u.display_name, cm.type, cm.amount, cm.reason, cm.created_at, cm.notes
+            "SELECT cm.id, cm.session_id, cm.user_id, u.display_name, cm.type, cm.amount, cm.reason, cm.created_at, cm.notes,
+                    COALESCE(cm.terminal_name, '')
              FROM cash_movements cm
              LEFT JOIN users u ON cm.user_id = u.id
              WHERE cm.session_id = ?1
@@ -412,6 +426,10 @@ pub fn list_movements(db: &DbState, session_id: i64) -> Result<Vec<CashMovement>
                 reason: row.get(6)?,
                 created_at: row.get(7)?,
                 notes: row.get(8)?,
+                terminal_name: {
+                    let t: String = row.get(9)?;
+                    if t.is_empty() { None } else { Some(t) }
+                },
             })
         })
         .map_err(|e| e.to_string())?;
@@ -430,7 +448,7 @@ pub fn list_session_history(
     let mut sql = String::from(
         "SELECT cs.id, cs.register_id, cs.user_id, u.display_name, cs.opened_at, cs.closed_at,
                 cs.opening_amount, cs.expected_cash, cs.actual_cash, cs.difference, cs.status, cs.notes,
-                COALESCE(cs.is_archived, 0)
+                COALESCE(cs.is_archived, 0), COALESCE(cs.terminal_name, '')
          FROM cash_sessions cs
          LEFT JOIN users u ON cs.user_id = u.id
          WHERE 1=1",
@@ -479,6 +497,10 @@ pub fn list_session_history(
                 notes: row.get(11)?,
                 is_stale: None,
                 is_archived: archived_int == 1,
+                terminal_name: {
+                    let t: String = row.get(13)?;
+                    if t.is_empty() { None } else { Some(t) }
+                },
             })
         })
         .map_err(|e| e.to_string())?;

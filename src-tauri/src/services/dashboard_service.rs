@@ -74,6 +74,29 @@ pub fn get_stats(db: &DbState, start_date: Option<String>, end_date: Option<Stri
     let today_profit = gross_profit - today_expenses;
     let average_basket = if today_count > 0 { today_sales / today_count } else { 0 };
 
+    // LAN: today's sales split per terminal (PC name).
+    let sales_by_terminal: Vec<crate::models::TerminalSalesStat> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT COALESCE(NULLIF(terminal_name, ''), 'Unknown PC') as term,
+                        COALESCE(SUM(total_amount), 0), COUNT(*)
+                 FROM sales
+                 WHERE date(created_at) = date('now','localtime') AND status = 'completed'
+                 GROUP BY term ORDER BY 2 DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(crate::models::TerminalSalesStat {
+                    terminal: row.get(0)?,
+                    total: row.get(1)?,
+                    count: row.get(2)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
     // Fetch top products
     let mut top_stmt = conn.prepare(
         "SELECT p.name_ar, COALESCE(c.name_ar, 'General'), SUM(si.quantity), SUM(si.total_price)
@@ -117,5 +140,6 @@ pub fn get_stats(db: &DbState, start_date: Option<String>, end_date: Option<Stri
         gross_profit,
         average_basket,
         top_products,
+        sales_by_terminal,
     })
 }

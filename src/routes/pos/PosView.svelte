@@ -11,6 +11,7 @@
   import { buildProfessionalReceiptHtml } from '../../lib/printing/professionalReceipt';
   import { buildUnifiedReceipt, printReceiptSmart } from '../../lib/printing/unifiedReceipt';
   import { normalizeBarcode } from '../../lib/utils/barcode';
+  import { networkStatus } from '../../lib/stores/network';
   import { getLanguage } from '../../lib/i18n';
 
   // Route navigation for F7 (products) / F8 (register) / F9 (sales).
@@ -999,6 +1000,8 @@
           console.warn('Could not load settings for receipt:', e);
         }
 
+        const terminalName = $networkStatus?.pc_name || undefined;
+
         const receiptItems = $cartItems.map((i) => ({
           name: i.name_fr || i.name_ar,
           quantity: i.quantity,
@@ -1016,7 +1019,7 @@
           // Store copy + client copy, one page each — break on the FIRST
           // receipt's own node (an empty separator div printed a blank page).
           const storeCopy = buildUnifiedReceipt({
-            saleNumber, saleDate, cashierName: cashier,
+            saleNumber, saleDate, cashierName: cashier, terminalName,
             customerName: customerName || 'Client Crédit',
             items: receiptItems,
             subtotal: $cartSubtotal,
@@ -1031,7 +1034,7 @@
             copyLabel: 'COPIE MAGASIN / STORE COPY',
           });
           const clientCopy = buildUnifiedReceipt({
-            saleNumber, saleDate, cashierName: cashier,
+            saleNumber, saleDate, cashierName: cashier, terminalName,
             customerName: customerName || 'Client Crédit',
             items: receiptItems,
             subtotal: $cartSubtotal,
@@ -1053,7 +1056,7 @@
           ).then((r) => { if (!r.ok) console.warn('credit receipts print:', r.message); });
         } else {
           const receipt = buildUnifiedReceipt({
-            saleNumber, saleDate, cashierName: cashier,
+            saleNumber, saleDate, cashierName: cashier, terminalName,
             customerName: customerName || undefined,
             items: receiptItems,
             subtotal: $cartSubtotal,
@@ -1071,7 +1074,7 @@
           // Smart print: native raster first; when the machine has NO
           // browser at all, fall back to ESC/POS RAW text automatically.
           printReceiptSmart({
-            saleNumber, saleDate, cashierName: cashier,
+            saleNumber, saleDate, cashierName: cashier, terminalName,
             customerName: customerName || undefined,
             items: receiptItems,
             subtotal: $cartSubtotal,

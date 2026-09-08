@@ -591,6 +591,7 @@
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('invoice_number')}>{t('pur_invoice_num')} {sortIndicator('invoice_number')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('date')}>{t('pur_col_date')} {sortIndicator('date')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('supplier_name')}>{t('pur_supplier_col')} {sortIndicator('supplier_name')}</th>
+          <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('terminal_name')} title="PC / terminal that recorded this purchase">{t('terminal')} {sortIndicator('terminal_name')}</th>
           <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('total')}>{t('pur_col_total')} {sortIndicator('total')}</th>
           <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('paid_amount')}>{t('pur_paid_col')} {sortIndicator('paid_amount')}</th>
           <th class="p-3 text-center">{t('pur_status')}</th>
@@ -600,7 +601,7 @@
       <tbody class="divide-y divide-pos-border/40">
         {#if purchases.length === 0}
           <tr>
-            <td colspan="7" class="p-8 text-center text-pos-muted">No purchase invoices recorded yet.</td>
+            <td colspan="8" class="p-8 text-center text-pos-muted">No purchase invoices recorded yet.</td>
           </tr>
         {:else}
           {#each sortedPurchases as pur}
@@ -608,6 +609,13 @@
               <td class="p-3 font-mono font-bold text-sky-600">#{pur.invoice_number}</td>
               <td class="p-3 font-mono text-pos-muted">{pur.date}</td>
               <td class="p-3 font-bold text-pos-text">{pur.supplier_name || 'Fournisseur Inconnu'}</td>
+              <td class="p-3">
+                {#if pur.terminal_name}
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-black bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300">{pur.terminal_name}</span>
+                {:else}
+                  <span class="text-pos-muted">—</span>
+                {/if}
+              </td>
               <td class="p-3 text-end font-mono font-black text-pos-text">{pur.total.toLocaleString()} DZD</td>
               <td class="p-3 text-end font-mono font-black text-emerald-600">{pur.paid_amount.toLocaleString()} DZD</td>
               <td class="p-3 text-center">

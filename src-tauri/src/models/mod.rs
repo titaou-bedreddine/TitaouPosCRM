@@ -147,6 +147,9 @@ pub struct CashSession {
     pub is_stale: Option<bool>,
     #[serde(default)]
     pub is_archived: bool,
+    /// LAN: PC name of the terminal that opened this session.
+    #[serde(default)]
+    pub terminal_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -160,6 +163,9 @@ pub struct CashMovement {
     pub reason: Option<String>,
     pub created_at: String,
     pub notes: Option<String>,
+    /// LAN: PC name of the terminal that recorded this movement.
+    #[serde(default)]
+    pub terminal_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -271,6 +277,9 @@ pub struct Sale {
     /// stamps "MODIFIED" into notes) — drives the localized EDITED badge.
     #[serde(default)]
     pub is_edited: bool,
+    /// LAN: PC name of the terminal that recorded this sale.
+    #[serde(default)]
+    pub terminal_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -445,6 +454,9 @@ pub struct Purchase {
     pub status: String,
     pub notes: Option<String>,
     pub created_at: String,
+    /// LAN: PC name of the terminal that recorded this purchase.
+    #[serde(default)]
+    pub terminal_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -464,6 +476,9 @@ pub struct Expense {
     pub date: String,
     pub notes: Option<String>,
     pub created_at: String,
+    /// LAN: PC name of the terminal that recorded this expense.
+    #[serde(default)]
+    pub terminal_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -534,6 +549,17 @@ pub struct DashboardStats {
     pub gross_profit: i64,
     pub average_basket: i64,
     pub top_products: Vec<TopProductStat>,
+    /// LAN: today's sales split per terminal (PC) — which counter sold what.
+    #[serde(default)]
+    pub sales_by_terminal: Vec<TerminalSalesStat>,
+}
+
+/// One terminal's share of today's sales (LAN multi-PC).
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TerminalSalesStat {
+    pub terminal: String,
+    pub total: i64,
+    pub count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -55,6 +55,7 @@
         saleNumber: s.sale_number,
         saleDate: s.created_at,
         cashierName: s.user_name || 'Admin',
+        terminalName: s.terminal_name || undefined,
         customerName: s.customer_name || undefined,
         items: (payload.items || []).map((it: any) => ({
           name: it.name_fr || it.name_ar || 'Article',

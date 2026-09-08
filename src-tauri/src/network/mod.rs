@@ -1120,6 +1120,71 @@ pub fn server_shop_info() -> (String, String, String, String, bool) {
     )
 }
 
+/// This PC's terminal name for stamping records (fall back to hostname).
+/// Opens a RAW connection on purpose — this runs from inside database
+/// migrations (row backfill), so going through DbState::new() would recurse
+/// into the very migration that calls it (stack overflow).
+pub fn terminal_name_for_this_pc() -> String {
+    let path = crate::database::get_database_path();
+    if let Ok(conn) = rusqlite::Connection::open(&path) {
+        if let Ok(name) = conn.query_row(
+            "SELECT value FROM app_settings WHERE key = 'net_pc_name'",
+            [],
+            |r| r.get::<_, String>(0),
+        ) {
+            let name = name.trim();
+            if !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+    std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PC".to_string())
+}
+
+thread_local! {
+    /// Per-call terminal identity: the API layer sets this for the duration
+    /// of a networked request so every INSERT stamps the CALLING terminal's
+    /// PC name; locally it stays unset (records stamp this PC).
+    static CALLER_TERMINAL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Record the calling terminal for the current network request (server API).
+pub fn set_caller_terminal(name: &str) {
+    CALLER_TERMINAL.with(|c| *c.borrow_mut() = Some(name.to_string()));
+}
+
+/// Clear after the request (never leaks into the next local operation).
+pub fn clear_caller_terminal() {
+    CALLER_TERMINAL.with(|c| *c.borrow_mut() = None);
+}
+
+/// The terminal name to STAMP on a record being created right now.
+pub fn current_stamp_terminal() -> String {
+    if let Some(name) = CALLER_TERMINAL.with(|c| c.borrow().clone()) {
+        return name;
+    }
+    terminal_name_for_this_pc()
+}
+
+/// The terminal name to STAMP on a record being created: on the server,
+/// the calling terminal's PC name (from its device token); locally, this PC.
+pub fn stamping_terminal(caller_node: &str) -> String {
+    if caller_node.is_empty() {
+        return terminal_name_for_this_pc();
+    }
+    // The registry keeps the caller's PC name from its join.
+    for d in server_api::devices_snapshot() {
+        if d.get("node_id").and_then(|v| v.as_str()) == Some(caller_node) {
+            if let Some(name) = d.get("pc_name").and_then(|v| v.as_str()) {
+                if !name.trim().is_empty() {
+                    return name.to_string();
+                }
+            }
+        }
+    }
+    terminal_name_for_this_pc()
+}
+
 pub fn is_node_blocked(node_id: &str) -> bool {
     let cfg = current_config();
     cfg.blocked_nodes.iter().any(|n| n == node_id)

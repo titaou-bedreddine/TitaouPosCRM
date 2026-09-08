@@ -35,6 +35,8 @@ export interface ProReceiptOptions {
   dateStr: string;
   timeStr: string;
   cashierName?: string;
+  /** LAN: PC name of the terminal that recorded the sale. */
+  terminalName?: string;
   customerName?: string;
   customerPhone?: string;
   paymentMethod: string;
@@ -69,7 +71,7 @@ export interface ProReceiptOptions {
 }
 
 type ReceiptLabels = Record<
-  | 'invoiceNo' | 'date' | 'time' | 'cashier' | 'customer' | 'phone'
+  | 'invoiceNo' | 'date' | 'time' | 'cashier' | 'terminal' | 'customer' | 'phone'
   | 'payment' | 'designation' | 'qty' | 'unitPrice' | 'total'
   | 'subtotal' | 'discount' | 'amountPaid' | 'change'
   | 'creditStrip' | 'verseNote',
@@ -78,7 +80,7 @@ type ReceiptLabels = Record<
 
 const LABELS: Record<'ar' | 'fr' | 'en', ReceiptLabels> = {
   fr: {
-    invoiceNo: 'FACTURE N°', date: 'DATE', time: 'HEURE', cashier: 'CAISSIER',
+    invoiceNo: 'FACTURE N°', date: 'DATE', time: 'HEURE', cashier: 'CAISSIER', terminal: 'CAISSE',
     customer: 'CLIENT', phone: 'TÉL', payment: 'MODE PAIEMENT',
     designation: 'DÉSIGNATION', qty: 'QTE', unitPrice: 'PU', total: 'TOTAL',
     subtotal: 'SOUS-TOTAL', discount: 'REMISE', amountPaid: 'MONTANT PAYÉ',
@@ -87,7 +89,7 @@ const LABELS: Record<'ar' | 'fr' | 'en', ReceiptLabels> = {
     verseNote: 'BIENS CONSERVÉS AU MAGASIN / البضاعة تبقى في المحل',
   },
   en: {
-    invoiceNo: 'INVOICE N°', date: 'DATE', time: 'TIME', cashier: 'CASHIER',
+    invoiceNo: 'INVOICE N°', date: 'DATE', time: 'TIME', cashier: 'CASHIER', terminal: 'TERMINAL',
     customer: 'CUSTOMER', phone: 'PHONE', payment: 'PAYMENT METHOD',
     designation: 'DESCRIPTION', qty: 'QTY', unitPrice: 'UNIT PRICE', total: 'TOTAL',
     subtotal: 'SUBTOTAL', discount: 'DISCOUNT', amountPaid: 'AMOUNT PAID',
@@ -96,7 +98,7 @@ const LABELS: Record<'ar' | 'fr' | 'en', ReceiptLabels> = {
     verseNote: 'GOODS KEPT AT THE SHOP / البضاعة تبقى في المحل',
   },
   ar: {
-    invoiceNo: 'رقم الفاتورة', date: 'التاريخ', time: 'الوقت', cashier: 'أمين الصندوق',
+    invoiceNo: 'رقم الفاتورة', date: 'التاريخ', time: 'الوقت', cashier: 'أمين الصندوق', terminal: 'الجهاز',
     customer: 'الزبون', phone: 'الهاتف', payment: 'طريقة الدفع',
     designation: 'البيان', qty: 'الكمية', unitPrice: 'سعر الوحدة', total: 'المجموع',
     subtotal: 'المجموع الفرعي', discount: 'الخصم', amountPaid: 'المبلغ المدفوع',
@@ -198,6 +200,7 @@ export function buildProfessionalReceiptHtml(o: ProReceiptOptions): string {
     showDate ? infoRow(t.date, o.dateStr) : '',
     showDate ? infoRow(t.time, o.timeStr) : '',
     showCashier ? infoRow(t.cashier, o.cashierName) : '',
+    infoRow(t.terminal, o.terminalName),
   ].join('');
   const rightCol = [
     infoRow(t.customer, o.customerName),

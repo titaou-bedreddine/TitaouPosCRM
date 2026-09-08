@@ -25,11 +25,12 @@ pub fn add_expense(
         .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
 
     tx.execute(
-        "INSERT INTO expenses (expense_number, category_id, amount, payment_method, session_id, user_id, recipient, receipt_reference, date, notes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO expenses (expense_number, category_id, amount, payment_method, session_id, user_id, recipient, receipt_reference, date, notes, terminal_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             expense_number, category_id, amount, payment_method,
-            session_id, user_id, recipient, receipt_reference, today_date, notes
+            session_id, user_id, recipient, receipt_reference, today_date, notes,
+            crate::network::current_stamp_terminal()
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -83,7 +84,7 @@ pub fn list_expenses(db: &DbState) -> Result<Vec<Expense>, String> {
         .prepare(
             "SELECT e.id, e.expense_number, e.category_id, ec.name_ar, e.amount,
                     e.payment_method, e.session_id, e.user_id, e.recipient, e.receipt_reference,
-                    e.date, e.notes, e.created_at, u.display_name
+                    e.date, e.notes, e.created_at, u.display_name, COALESCE(e.terminal_name, '')
              FROM expenses e
              LEFT JOIN expense_categories ec ON e.category_id = ec.id
              LEFT JOIN users u ON e.user_id = u.id
@@ -108,6 +109,10 @@ pub fn list_expenses(db: &DbState) -> Result<Vec<Expense>, String> {
                 date: row.get(10)?,
                 notes: row.get(11)?,
                 created_at: row.get(12)?,
+            terminal_name: {
+                let t: String = row.get(14)?;
+                if t.is_empty() { None } else { Some(t) }
+            },
             })
         })
         .map_err(|e| e.to_string())?;

@@ -27,6 +27,8 @@ export interface UnifiedReceiptContext {
   saleNumber: string;
   saleDate: string;
   cashierName: string;
+  /** LAN: PC name of the terminal that recorded the sale. */
+  terminalName?: string;
   customerName?: string;
   items: UnifiedReceiptItem[];
   subtotal: number;
@@ -78,6 +80,7 @@ function proOptionsFromContext(c: UnifiedReceiptContext): ProReceiptOptions {
     dateStr: valid.toLocaleDateString('fr-FR'),
     timeStr: valid.toLocaleTimeString('fr-FR'),
     cashierName: c.cashierName,
+    terminalName: c.terminalName,
     customerName: c.customerName,
     paymentMethod: c.paymentMethod,
     items: c.items,
@@ -181,6 +184,7 @@ export function buildEscposReceipt(c: UnifiedReceiptContext, width: 32 | 42 | 48
   const info = `#${c.saleNumber}  ${c.saleDate || ''}`;
   out += escposCenter(info.slice(0, width), width);
   if (b('receipt_show_cashier') && c.cashierName) out += escposRow('Cashier', c.cashierName, width);
+  if (c.terminalName) out += escposRow('Terminal', c.terminalName.slice(0, width - 10), width);
   if (c.customerName) out += escposRow('Client', c.customerName.slice(0, width - 8), width);
   out += escposRow('Payment', c.paymentMethod, width);
   out += '-'.repeat(width) + '\n';
