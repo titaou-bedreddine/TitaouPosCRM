@@ -189,6 +189,67 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
     }
     let gross_profit: i64 = input.total_amount - total_cost;
 
+    // Cloud sync outbox (inside the SAME transaction — a rolled-back sale
+    // never syncs). Refund carts (all items is_refund) push as Refund events
+    // (return movements only); normal carts push as Sale events. Payload
+    // references LOCAL ids; push.rs resolves them through sync_map at send
+    // time.
+    {
+        let is_refund_cart = !input.items.is_empty() && input.items.iter().all(|i| i.is_refund);
+        let items_json: Vec<serde_json::Value> = input
+            .items
+            .iter()
+            .map(|it| {
+                serde_json::json!({
+                    "product_local_id": it.product_id,
+                    "quantity": it.quantity,
+                    "unit_price": it.unit_price,
+                    "line_total": it.total_price,
+                })
+            })
+            .collect();
+        let payload = if is_refund_cart {
+            // Refund: only the stock truth crosses to the CRM.
+            serde_json::json!({
+                "sale_number": sale_number,
+                "items": items_json,
+            })
+        } else {
+            let payments_json: Vec<serde_json::Value> = payments_list
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "method": p.payment_method,
+                        "amount": p.amount,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "sale_number": sale_number,
+                "items": items_json,
+                "subtotal": input.subtotal,
+                "tax_amount": input.tax_amount,
+                "total": input.total_amount,
+                "paid": input.paid_amount,
+                "skip_stock": skip_stock,
+                "payments": payments_json,
+                "customer_local_id": input.customer_id,
+                "created_at": now.to_rfc3339(),
+            })
+        };
+        let entity = if is_refund_cart {
+            crate::cloudsync::outbox::OutboxEntity::Refund
+        } else {
+            crate::cloudsync::outbox::OutboxEntity::Sale
+        };
+        let _ = crate::cloudsync::outbox::enqueue_tx(
+            &tx,
+            entity,
+            sale_id,
+            &payload.to_string(),
+        );
+    }
+
     tx.commit().map_err(|e| e.to_string())?;
 
     // Release the connection lock BEFORE the notifier: notify_if_enabled

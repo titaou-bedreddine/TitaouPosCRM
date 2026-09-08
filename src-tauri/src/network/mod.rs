@@ -159,7 +159,7 @@ impl Mode {
             Mode::Offline => "offline",
         }
     }
-    fn serving(&self) -> bool {
+    pub fn serving(&self) -> bool {
         matches!(self, Mode::Server | Mode::Standalone)
     }
 }
@@ -1188,6 +1188,16 @@ pub fn stamping_terminal(caller_node: &str) -> String {
 pub fn is_node_blocked(node_id: &str) -> bool {
     let cfg = current_config();
     cfg.blocked_nodes.iter().any(|n| n == node_id)
+}
+
+/// Is this PC the shop authority (explicit Server or Standalone automatic
+/// node)? Cloud sync may only run on such a node — LAN client terminals
+/// forward their business ops here, so exactly one cloud writer exists.
+pub fn is_server_or_standalone() -> bool {
+    match net_opt() {
+        Some(rt) => rt.mode.lock().unwrap().serving(),
+        None => false,
+    }
 }
 
 /// Full status snapshot for the UI.

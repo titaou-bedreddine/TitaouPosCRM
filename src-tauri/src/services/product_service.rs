@@ -357,6 +357,46 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
         }
     }
 
+    // Cloud sync outbox (same transaction): product create/update →
+    // upsert_pos_product; a manual stock edit additionally becomes a
+    // stock_adjustment event (append-only ledger on the CRM side).
+    {
+        let primary_barcode = clean_barcodes.first().cloned();
+        let payload = serde_json::json!({
+            "sku": input.sku,
+            "barcode": primary_barcode,
+            "name_fr": input.name_fr,
+            "name_ar": input.name_ar,
+            "name_en": input.name_en,
+            "sale_price": input.sale_price,
+            "purchase_price": input.purchase_price,
+            "min_stock": input.min_stock,
+            "is_active": true,
+        });
+        let _ = crate::cloudsync::outbox::enqueue_tx(
+            &tx,
+            crate::cloudsync::outbox::OutboxEntity::Product,
+            id,
+            &payload.to_string(),
+        );
+        if let (Some(pid), Some((_, _, old_stock))) = (product_id, old_state) {
+            let delta = input.current_stock as f64 - old_stock;
+            if delta.abs() >= f64::EPSILON {
+                let adj_payload = serde_json::json!({
+                    "product_local_id": pid,
+                    "quantity": delta,
+                    "reason": format!("Manual stock edit: {} → {}", old_stock, input.current_stock),
+                });
+                let _ = crate::cloudsync::outbox::enqueue_tx(
+                    &tx,
+                    crate::cloudsync::outbox::OutboxEntity::StockAdjustment,
+                    pid,
+                    &adj_payload.to_string(),
+                );
+            }
+        }
+    }
+
     tx.commit().map_err(|e| e.to_string())?;
     drop(conn);
 

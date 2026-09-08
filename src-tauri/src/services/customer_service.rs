@@ -63,7 +63,7 @@ pub fn save_customer(
 ) -> Result<i64, String> {
     let conn = db.conn.lock().unwrap();
 
-    if let Some(cid) = customer_id {
+    let saved_id = if let Some(cid) = customer_id {
         conn.execute(
             "UPDATE customers
              SET name = ?1, phone = ?2, email = ?3, address = ?4, rc = ?5, nif = ?6, nis = ?7, ai = ?8, notes = ?9
@@ -71,7 +71,7 @@ pub fn save_customer(
             rusqlite::params![name, phone, email, address, rc, nif, nis, ai, notes, cid],
         )
         .map_err(|e| e.to_string())?;
-        Ok(cid)
+        cid
     } else {
         let qr_code = format!("CUST-{:04}", chrono::Local::now().timestamp_subsec_millis());
         conn.execute(
@@ -80,8 +80,24 @@ pub fn save_customer(
             rusqlite::params![name, phone, email, address, rc, nif, nis, ai, qr_code, initial_debt, notes],
         )
         .map_err(|e| e.to_string())?;
-        Ok(conn.last_insert_rowid())
+        conn.last_insert_rowid()
+    };
+
+    // Cloud sync outbox: walk-in (id 1) is never pushed — it's mapped by
+    // ensure_pos_client on the CRM side instead.
+    if saved_id != 1 {
+        let payload = serde_json::json!({
+            "name": name,
+            "phone": phone,
+            "address": address,
+        });
+        let _ = conn.execute(
+            "INSERT INTO sync_outbox (entity, local_id, payload, status)
+             VALUES ('customer', ?1, ?2, 'pending')",
+            rusqlite::params![saved_id, payload.to_string()],
+        );
     }
+    Ok(saved_id)
 }
 
 pub fn delete_customer(db: &DbState, customer_id: i64) -> Result<(), String> {
@@ -134,9 +150,28 @@ pub fn record_customer_debt_payment(db: &DbState, input: CustomerPaymentInput) -
         }
     }
 
+    // Cloud sync outbox (same transaction): debt payment → record_client_payment.
+    {
+        let pos_ref = format!("POS-DEBT-{payment_id}");
+        let payload = serde_json::json!({
+            "customer_local_id": input.customer_id,
+            "amount": input.amount,
+            "method": input.payment_method,
+            "notes": input.notes,
+            "pos_ref": pos_ref,
+        });
+        let _ = crate::cloudsync::outbox::enqueue_tx(
+            &tx,
+            crate::cloudsync::outbox::OutboxEntity::CustomerPayment,
+            payment_id,
+            &payload.to_string(),
+        );
+    }
+
     tx.commit().map_err(|e| e.to_string())?;
     Ok(payment_id)
 }
+
 /// Pin/unpin a customer: pinned customers float to the top of the list.
 pub fn toggle_customer_pin(db: &DbState, customer_id: i64, pinned: bool) -> Result<(), String> {
     let conn = db.conn.lock().unwrap();

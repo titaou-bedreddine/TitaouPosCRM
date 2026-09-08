@@ -57,6 +57,32 @@ pub fn create_purchase(db: &DbState, input: CreatePurchaseInput) -> Result<Strin
         .map_err(|e| e.to_string())?;
     }
 
+    // Cloud sync outbox (same transaction): purchase → CRM bon_achat.
+    {
+        let items_json: Vec<serde_json::Value> = input
+            .items
+            .iter()
+            .map(|it| {
+                serde_json::json!({
+                    "product_local_id": it.product_id,
+                    "quantity": it.quantity,
+                    "unit_cost": it.unit_cost,
+                })
+            })
+            .collect();
+        let payload = serde_json::json!({
+            "invoice_number": input.invoice_number,
+            "supplier_local_id": input.supplier_id,
+            "items": items_json,
+        });
+        let _ = crate::cloudsync::outbox::enqueue_tx(
+            &tx,
+            crate::cloudsync::outbox::OutboxEntity::Purchase,
+            purchase_id,
+            &payload.to_string(),
+        );
+    }
+
     tx.commit().map_err(|e| e.to_string())?;
     Ok(input.invoice_number)
 }

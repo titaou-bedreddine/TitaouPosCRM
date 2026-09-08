@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod cloudsync;
 pub mod commands;
 pub mod database;
 pub mod models;
@@ -67,6 +68,9 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
         .setup(|app| {
             // LAN shop networking: discovery, election, client/server roles.
             network::init(app.handle().clone(), DbState::new().expect("network db"));
+            // Cloud sync loop (TitaouCRM): only ever acts on the coordinator
+            // (server/standalone); client terminals see coordinator=false.
+            cloudsync::spawn_loop(std::sync::Arc::new(DbState::new().expect("cloud db")));
             Ok(())
         })
         .invoke_handler(lan_wrap_invoke_handler(tauri::generate_handler![
@@ -207,6 +211,14 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             commands::network_cmds::network_logout,
             commands::network_cmds::network_open_firewall,
             commands::network_cmds::network_forward,
+            // Cloud sync (TitaouCRM) — local-only, never LAN-forwarded
+            cloudsync::cloud_cmds::cloud_configure,
+            cloudsync::cloud_cmds::cloud_get_status,
+            cloudsync::cloud_cmds::cloud_sync_now,
+            cloudsync::cloud_cmds::cloud_disconnect,
+            cloudsync::cloud_cmds::cloud_test_connection,
+            cloudsync::cloud_cmds::cloud_field_orders,
+            cloudsync::cloud_cmds::cloud_field_order_lines,
         ]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

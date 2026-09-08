@@ -58,7 +58,7 @@ pub fn save_supplier(
 ) -> Result<i64, String> {
     let conn = db.conn.lock().unwrap();
 
-    if let Some(sid) = supplier_id {
+    let saved_id = if let Some(sid) = supplier_id {
         conn.execute(
             "UPDATE suppliers
              SET name = ?1, contact_person = ?2, phone = ?3, email = ?4, address = ?5, rc = ?6, nif = ?7, nis = ?8, ai = ?9, notes = ?10
@@ -66,7 +66,7 @@ pub fn save_supplier(
             rusqlite::params![name, contact_person, phone, email, address, rc, nif, nis, ai, notes, sid],
         )
         .map_err(|e| e.to_string())?;
-        Ok(sid)
+        sid
     } else {
         let qr_code = format!("SUPP-{:04}", chrono::Local::now().timestamp_subsec_millis());
         conn.execute(
@@ -75,8 +75,25 @@ pub fn save_supplier(
             rusqlite::params![name, contact_person, phone, email, address, rc, nif, nis, ai, qr_code, notes],
         )
         .map_err(|e| e.to_string())?;
-        Ok(conn.last_insert_rowid())
+        conn.last_insert_rowid()
+    };
+
+    // Cloud sync outbox: the walk-in supplier (id 1) is POS-only.
+    if saved_id != 1 {
+        let payload = serde_json::json!({
+            "name": name,
+            "contact_person": contact_person,
+            "phone": phone,
+            "email": email,
+            "address": address,
+        });
+        let _ = conn.execute(
+            "INSERT INTO sync_outbox (entity, local_id, payload, status)
+             VALUES ('supplier', ?1, ?2, 'pending')",
+            rusqlite::params![saved_id, payload.to_string()],
+        );
     }
+    Ok(saved_id)
 }
 
 pub fn delete_supplier(db: &DbState, supplier_id: i64) -> Result<(), String> {

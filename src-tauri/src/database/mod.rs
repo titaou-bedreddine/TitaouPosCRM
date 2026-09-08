@@ -346,6 +346,77 @@ impl DbState {
             );
         ");
 
+        // ---- Cloud sync (TitaouCRM integration) ---------------------------
+        // Transactional outbox: business services enqueue events INSIDE their
+        // write transaction (a rolled-back sale never syncs). The cloudsync
+        // pusher drains it on the coordinator only; idempotent CRM RPCs keyed
+        // on pos_ref make replays exactly-once.
+        let _ = conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS sync_outbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity TEXT NOT NULL CHECK(entity IN ('sale','refund','purchase','product','stock_adjustment','customer','customer_payment','supplier')),
+                local_id INTEGER,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','done','failed')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                pushed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_sync_outbox_pending ON sync_outbox(status, id);
+        ");
+
+        // Local id ↔ CRM uuid mapping (exactly-once: never push an entity the
+        // CRM already owns; never pull the same CRM row twice as new).
+        let _ = conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS sync_map (
+                entity TEXT NOT NULL,
+                local_id INTEGER NOT NULL,
+                remote_id TEXT NOT NULL,
+                PRIMARY KEY (entity, local_id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_map_remote ON sync_map(entity, remote_id);
+        ");
+
+        // Mirror of field-app orders (pulled read-only for the Field Orders
+        // view + stock application). source='field' rows created by the
+        // preseller/seller apps; source='pos' rows are ours (skipped).
+        let _ = conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS crm_orders (
+                crm_id TEXT PRIMARY KEY,
+                client_name TEXT,
+                member_name TEXT,
+                source TEXT NOT NULL DEFAULT 'field',
+                status TEXT,
+                payment_status TEXT,
+                total_amount INTEGER NOT NULL DEFAULT 0,
+                amount_paid INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                stock_applied INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS crm_order_items (
+                crm_order_id TEXT NOT NULL,
+                product_id INTEGER,          -- local product id after linking
+                product_name TEXT,
+                quantity REAL NOT NULL DEFAULT 0,
+                unit_price INTEGER NOT NULL DEFAULT 0,
+                line_total INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (crm_order_id, product_id)
+            );
+        ");
+
+        // Pull cursors: high-water mark per pulled stream, so restarts resume
+        // instead of re-pulling everything (rows carry updated_at from the
+        // server; the cursor stores the max seen).
+        let _ = conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS sync_cursors (
+                stream TEXT PRIMARY KEY,
+                cursor_value TEXT NOT NULL
+            );
+        ");
+
         // Backup settings persistence keys live in app_settings; nothing
         // schema-level needed for them.
 
