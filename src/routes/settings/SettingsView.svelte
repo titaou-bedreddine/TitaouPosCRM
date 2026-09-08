@@ -7,6 +7,7 @@
   import { currentUser } from '../../lib/stores/auth';
   import { printLabelSilently, printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
+  import CloudSyncTab from '../../lib/components/CloudSyncTab.svelte';
   import {
     LABEL_PRESETS,
     LABEL_PRESET_IDS,
@@ -19,7 +20,7 @@
     QrCode, Image as ImageIcon, Upload, Tag, ArrowRight,
     Wifi, HardDrive, FileText, CheckCircle2, History, Laptop,
     Scale, Bell, Send, CreditCard, Keyboard, Eye,
-    Users, UserPlus, Edit2, Trash2, Shield, Lock, Info, Pin, Plus
+    Users, UserPlus, Edit2, Trash2, Shield, Lock, Info, Pin, Plus, Cloud
   } from 'lucide-svelte';
 
   type SettingsTab =
@@ -31,6 +32,7 @@
     | 'pos'
     | 'shortcuts'
     | 'network'
+    | 'cloud'
     | 'import_export'
     | 'activation'
     | 'updates'
@@ -1398,6 +1400,15 @@
 
       <button
         type="button"
+        on:click={() => (currentTab = 'cloud')}
+        class="flex flex-col items-center justify-center p-2 rounded-xl text-[11px] font-bold transition cursor-pointer {currentTab === 'cloud' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800'}"
+      >
+        <Cloud class="w-4 h-4 mb-1" />
+        <span class="truncate">{t('set_cloud')}</span>
+      </button>
+
+      <button
+        type="button"
         on:click={() => (currentTab = 'import_export')}
         class="flex flex-col items-center justify-center p-2 rounded-xl text-[11px] font-bold transition cursor-pointer {currentTab === 'import_export' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800'}"
       >
@@ -2751,6 +2762,11 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- 4b. CLOUD SYNC TAB (TitaouCRM) -->
+    <div class:hidden={currentTab !== 'cloud'}>
+      <CloudSyncTab />
     </div>
 
     <!-- 5. IMPORT / EXPORT TAB -->

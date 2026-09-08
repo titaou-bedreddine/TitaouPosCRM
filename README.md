@@ -1,4 +1,4 @@
-# TitaouPOS — Desktop Point of Sale & Retail Management System
+# TitaouPOS CRM — Desktop POS + TitaouCRM Admin Station
 
 TitaouPOS is a modern, high-performance Point of Sale (POS) and inventory management desktop application built with **Tauri 2.0**, **Svelte**, **Rust**, and **SQLite**. It is designed for superettes, grocery stores, butcheries, bakeries, and retail stores in Algeria and Francophone/MENA markets.
 
@@ -17,6 +17,28 @@ Developed by **Titaou Bedreddine** (Contact: `0553444057`).
   - **Thermal & Label Printing**: Direct ESC/POS and HTML-to-printer thermal pipeline (80mm receipts, 50x30mm stickers, 40x20mm shelf tags)
 
 ---
+
+## 1b. TitaouCRM Integration (v0.6.0)
+
+TitaouPOS CRM connects a shop to a **TitaouCRM** organization (Supabase):
+
+- **Cloud Sync** (Settings → Cloud Sync): bidirectional sync between this
+  terminal (must be the LAN server/standalone PC) and Supabase.
+  - *Push*: counter sales, refunds (return movements), purchases, products,
+    customers, customer debt payments — through idempotent RPCs (`pos_ref`),
+    money converted whole-DZD ↔ centimes.
+  - *Pull*: CRM products/clients, field orders (preseller/seller apps) into
+    the Field Orders mirror + local stock, product linking by SKU/barcode.
+- **Field Team**: invite / edit / delete presellers & sellers (Edge Functions
+  `invite-user` / `manage-user`, last-admin guard server-side).
+- **Truck Loads**: create a seller's load manifest for a route (auto-filled
+  from the route's orders), print the sheet, record undelivered returns
+  (+`return` stock movements on the CRM ledger).
+- **Deletion Requests**: presellers can only *request* client deletion;
+  the admin approves (FK-safe) or rejects here.
+- Design + exactly-once/conflict rules: `docs/SYNC_DESIGN.md`.
+- CRM side: `TitaouCRM` repo, branch `feat/pos-integration`
+  (migrations 0017 + 0018, `manage-user` function).
 
 ## 2. Prerequisites & Development Setup
 
@@ -94,7 +116,12 @@ Cash drawers connected via RS-232 COM ports or USB-to-Serial adapters are opened
    - Clicking "New Sale" or switching cart modes automatically holds the active cart without prompt popups or data loss.
 2. **Instant 1-Character / 1-Digit Live Search**:
    - In Purchases and POS search bars, typing a single letter or digit immediately displays live matching product cards with real-time stock and prices.
-   - Auto-tabbing flow: `Quantity` $ightarrow$ `Enter` $ightarrow$ `Cost` $ightarrow$ `Enter` $ightarrow$ `Sale Price` $ightarrow$ `Enter`.
+   - Auto-tabbing flow: `Quantity` $
+ightarrow$ `Enter` $
+ightarrow$ `Cost` $
+ightarrow$ `Enter` $
+ightarrow$ `Sale Price` $
+ightarrow$ `Enter`.
 3. **Margin & Profit Toggle**:
    - Switch between **Percentage (%)** and **Amount (DZD)** calculation in product editor with bidirectional synchronization.
 4. **Quick Family & Unit Creation**:

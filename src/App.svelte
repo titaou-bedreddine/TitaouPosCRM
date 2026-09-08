@@ -20,6 +20,10 @@
   import SettingsView from './routes/settings/SettingsView.svelte';
   import NotificationsView from './routes/notifications/NotificationsView.svelte';
   import LoginView from './routes/auth/LoginView.svelte';
+  import FieldOrdersView from './routes/fieldorders/FieldOrdersView.svelte';
+  import TeamView from './routes/team/TeamView.svelte';
+  import TruckLoadsView from './routes/truckloads/TruckLoadsView.svelte';
+  import DeletionRequestsView from './routes/deletionrequests/DeletionRequestsView.svelte';
   import CashDrawerModal from './lib/components/CashDrawerModal.svelte';
   import FirstSetupWizard from './lib/components/FirstSetupWizard.svelte';
   import NetworkStatusIndicator from './lib/components/NetworkStatusIndicator.svelte';
@@ -29,7 +33,7 @@
 
   // Icons
   import {
-    LayoutDashboard, ShoppingCart, Receipt, DollarSign,
+    LayoutDashboard, ShoppingCart, Receipt, DollarSign, UsersRound, FileWarning,
     Package, TrendingDown, Users, Settings, LogOut,
     Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle
   } from 'lucide-svelte';
@@ -464,6 +468,41 @@
         </button>
         {/if}
 
+        {#if isAdmin($currentUser)}
+        <button
+          type="button"
+          on:click={() => currentRoute = 'fieldorders'}
+          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'fieldorders' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
+        >
+          <Truck class="w-4 h-4" />
+          <span>{t('nav_fieldorders', $currentLocale)}</span>
+        </button>
+        <button
+          type="button"
+          on:click={() => currentRoute = 'truckloads'}
+          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'truckloads' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
+        >
+          <FileSpreadsheet class="w-4 h-4 text-amber-500" />
+          <span>{t('nav_truckloads', $currentLocale)}</span>
+        </button>
+        <button
+          type="button"
+          on:click={() => currentRoute = 'team'}
+          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'team' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
+        >
+          <UsersRound class="w-4 h-4" />
+          <span>{t('nav_team', $currentLocale)}</span>
+        </button>
+        <button
+          type="button"
+          on:click={() => currentRoute = 'deletionrequests'}
+          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'deletionrequests' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
+        >
+          <FileWarning class="w-4 h-4 text-amber-500" />
+          <span>{t('nav_deletionrequests', $currentLocale)}</span>
+        </button>
+        {/if}
+
         <button
           type="button"
           on:click={() => currentRoute = 'customers'}
@@ -726,6 +765,14 @@
           <CashRegisterView />
         {:else if currentRoute === 'purchases'}
           <PurchasesView focusInvoice={purchasesFocusInvoice} />
+        {:else if currentRoute === 'fieldorders'}
+          <FieldOrdersView />
+        {:else if currentRoute === 'team'}
+          <TeamView />
+        {:else if currentRoute === 'truckloads'}
+          <TruckLoadsView />
+        {:else if currentRoute === 'deletionrequests'}
+          <DeletionRequestsView />
         {:else if currentRoute === 'customers'}
         <CustomersView />
       {:else if currentRoute === 'suppliers'}

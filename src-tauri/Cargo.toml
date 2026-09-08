@@ -1,7 +1,7 @@
 [package]
 name = "titaou-post"
-version = "0.5.22"
-description = "Windows Offline-First Point of Sale Application"
+version = "0.6.0"
+description = "TitaouPOS CRM — POS & admin station for TitaouCRM (offline-first + Supabase cloud sync)"
 edition = "2021"
 
 [lib]
