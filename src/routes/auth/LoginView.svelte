@@ -156,10 +156,10 @@
   <div class="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl space-y-6">
     <div class="text-center space-y-2">
       <div class="w-16 h-16 rounded-2xl bg-white flex items-center justify-center mx-auto shadow-lg shadow-sky-600/20 overflow-hidden p-1 border border-slate-700">
-        <img src="/logo.png" alt="TitaouPOS" class="w-full h-full object-contain" />
+        <img src="/logo.png" alt="TitaouPosCRM" class="w-full h-full object-contain" />
       </div>
       <div class="flex items-center justify-center gap-2">
-        <h1 class="text-2xl font-black text-white tracking-tight">TitaouPOS</h1>
+        <h1 class="text-2xl font-black text-white tracking-tight">TitaouPosCRM</h1>
         {#if appVersion}
           <span class="px-2 py-0.5 bg-sky-950 border border-sky-800 text-sky-300 text-[10px] font-mono font-bold rounded-full">
             v{appVersion}

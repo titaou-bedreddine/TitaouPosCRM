@@ -156,7 +156,7 @@
     if (!expenseDetail) return;
     try {
       const settings = await invoke<Record<string, string>>('get_all_settings');
-      const shopName = settings['shop_name_fr'] || 'TitaouPOS';
+      const shopName = settings['shop_name_fr'] || 'TitaouPosCRM';
       const shopPhone = settings['shop_phone'] || '0553444057';
       const shopAddress = settings['shop_address'] || 'Alger Centre';
       const exp = expenseDetail;
@@ -175,7 +175,7 @@
         <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 900;">
           <span>MONTANT:</span><span>${exp.amount.toLocaleString()} DZD</span>
         </div>
-        <p style="font-size: 7px; color: #666; margin-top: 8px;">TitaouPOS • ${new Date().toLocaleString()}</p>
+        <p style="font-size: 7px; color: #666; margin-top: 8px;">TitaouPosCRM • ${new Date().toLocaleString()}</p>
       </div>`;
       const r = await printHtmlSilently(html, 'Voucher #' + exp.expense_number, { widthMm: 72 });
       if (!r.ok) console.error('Voucher print failed:', r.message);

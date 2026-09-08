@@ -1,6 +1,6 @@
-# TitaouPOS CRM — Desktop POS + TitaouCRM Admin Station
+# TitaouPosCRM — Desktop POS + TitaouCRM Admin Station
 
-TitaouPOS is a modern, high-performance Point of Sale (POS) and inventory management desktop application built with **Tauri 2.0**, **Svelte**, **Rust**, and **SQLite**. It is designed for superettes, grocery stores, butcheries, bakeries, and retail stores in Algeria and Francophone/MENA markets.
+TitaouPosCRM is a modern, high-performance Point of Sale (POS) and inventory management desktop application built with **Tauri 2.0**, **Svelte**, **Rust**, and **SQLite**. It is designed for superettes, grocery stores, butcheries, bakeries, and retail stores in Algeria and Francophone/MENA markets.
 
 Developed by **Titaou Bedreddine** (Contact: `0553444057`).
 
@@ -20,7 +20,7 @@ Developed by **Titaou Bedreddine** (Contact: `0553444057`).
 
 ## 1b. TitaouCRM Integration (v0.6.0)
 
-TitaouPOS CRM connects a shop to a **TitaouCRM** organization (Supabase):
+TitaouPosCRM connects a shop to a **TitaouCRM** organization (Supabase):
 
 - **Cloud Sync** (Settings → Cloud Sync): bidirectional sync between this
   terminal (must be the LAN server/standalone PC) and Supabase.
@@ -64,8 +64,8 @@ npm run tauri build
 ## 3. Database Architecture & Safety
 
 The database file is stored locally in the user's application data directory:
-- **Windows**: `%APPDATA%\TitaouPosT\titaou_post.db`
-- **Linux**: `~/.config/TitaouPosT/titaou_post.db`
+- **Windows**: `%APPDATA%\TitaouPosCRM\titaou_poscrm.db`
+- **Linux**: `~/.config/TitaouPosCRM/titaou_poscrm.db`
 
 ### Key Safety Guarantees:
 - **WAL Mode Enabled**: `PRAGMA journal_mode = WAL;` with `PRAGMA busy_timeout = 5000;` prevents write locks during rapid barcode scanning.
@@ -78,7 +78,7 @@ The database file is stored locally in the user's application data directory:
 ## 4. Hardware Integrations
 
 ### A. ACLAS Electronic Scale Real SDK Integration
-TitaouPOS features native integration with ACLAS electronic barcode scales (LH51, LS M3, TS Series, etc.) via dynamic library linking:
+TitaouPosCRM features native integration with ACLAS electronic barcode scales (LH51, LS M3, TS Series, etc.) via dynamic library linking:
 - **Reference SDK & Demo**:
   - C# Demo: `AclasSDK_Demo_C#`
   - Native DLLs: `SDK-Balance_Aclas/.../DLL66_Demo_EN200612/DLL&SO/Win64/AclasSDK.dll`
@@ -133,7 +133,7 @@ ightarrow$ `Enter`.
 
 ## 6. License & Author
 
-- **Application**: TitaouPOS Retail System
+- **Application**: TitaouPosCRM Retail System
 - **Author**: Titaou Bedreddine
 - **Phone**: +213 553 444 057
 - **License**: Proprietary / Perpetual Offline Commercial License

@@ -324,7 +324,7 @@
 
   // End-of-session Z-report, printed right after a successful close.
   async function printSessionReport(snap: CashSession, counted: number) {
-    let shopName = 'TitaouPOS';
+    let shopName = 'TitaouPosCRM';
     try {
       const settings = await invoke<Record<string, string>>('get_all_settings');
       shopName = settings['shop_name_fr'] || shopName;
@@ -348,7 +348,7 @@
       '</table>',
       closeNotes ? '<p style="font-size:10px;margin-top:4px;">Notes: ' + closeNotes + '</p>' : '',
       '<hr style="border-top:1px dashed #000;margin:5px 0;" />',
-      '<p style="text-align:center;font-size:9px;">TitaouPOS &bull; ' + new Date().toLocaleString() + '</p>',
+      '<p style="text-align:center;font-size:9px;">TitaouPosCRM &bull; ' + new Date().toLocaleString() + '</p>',
       '</div>',
     ].join('');
     const r = await printHtmlSilently(html, 'Session Report #' + snap.id, { widthMm: 80 });

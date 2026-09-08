@@ -30,11 +30,11 @@
   <div class="bg-gradient-to-r from-sky-600 to-blue-700 rounded-3xl p-6 text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-6 shrink-0">
     <div class="flex items-center gap-5 text-center md:text-start">
       <div class="w-20 h-20 rounded-2xl bg-white p-2 shadow-xl flex items-center justify-center shrink-0">
-        <img src="/logo.png" alt="TitaouPOS Logo" class="w-full h-full object-contain" />
+        <img src="/logo.png" alt="TitaouPosCRM Logo" class="w-full h-full object-contain" />
       </div>
       <div class="space-y-1">
         <div class="flex items-center gap-2 justify-center md:justify-start">
-          <h1 class="text-2xl font-black tracking-tight">TitaouPOS</h1>
+          <h1 class="text-2xl font-black tracking-tight">TitaouPosCRM</h1>
           <span class="px-2.5 py-0.5 bg-white/20 text-white rounded-full text-[10px] font-black uppercase tracking-wider backdrop-blur-xs">
             PRO EDITION
           </span>
@@ -213,7 +213,7 @@
           <button
             type="button"
             on:click={() => {
-              const diag = `[TitaouPOS Diag Snapshot]\nVersion: ${appVersion}\nDeveloper: ${developerName} (${developerPhone})\nTime: ${new Date().toISOString()}\nPlatform: Windows x64 Offline`;
+              const diag = `[TitaouPosCRM Diag Snapshot]\nVersion: ${appVersion}\nDeveloper: ${developerName} (${developerPhone})\nTime: ${new Date().toISOString()}\nPlatform: Windows x64 Offline`;
               navigator.clipboard.writeText(diag);
               alert('✅ Diagnostic snapshot copied to clipboard!');
             }}
@@ -225,7 +225,7 @@
           <button
             type="button"
             on:click={() => {
-              const msg = encodeURIComponent(`Bonjour Titaou, j'utilise TitaouPOS (${appVersion}) et j'ai besoin d'assistance.`);
+              const msg = encodeURIComponent(`Bonjour Titaou, j'utilise TitaouPosCRM (${appVersion}) et j'ai besoin d'assistance.`);
               openExternal(`https://wa.me/213${developerPhone.slice(1)}?text=${msg}`);
             }}
             class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl cursor-pointer transition shadow-xs flex items-center gap-1.5"

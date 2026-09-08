@@ -54,7 +54,7 @@
   type="button"
   on:click={() => (popupOpen = true)}
   class="w-full flex items-center gap-2 px-2 py-1.5 bg-pos-card rounded-lg border border-pos-border/60 hover:border-sky-400 transition cursor-pointer text-start"
-  title={$networkStatus?.shop_name || 'TitaouPOS Network'}
+  title={$networkStatus?.shop_name || 'TitaouPosCRM Network'}
 >
   {#if status?.enabled && (status?.mode === 'connected' || status?.serving)}
     <Wifi class="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -85,7 +85,7 @@
             <Globe class="w-5 h-5" />
           </div>
           <div>
-            <h3 class="font-black text-sm text-pos-text">TitaouPOS Network</h3>
+            <h3 class="font-black text-sm text-pos-text">TitaouPosCRM Network</h3>
             <p class="text-[10px] text-pos-muted font-bold">{status?.shop_name || '—'}</p>
           </div>
         </div>

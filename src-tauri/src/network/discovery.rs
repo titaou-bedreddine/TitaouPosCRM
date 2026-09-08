@@ -1,7 +1,7 @@
 //! LAN discovery for the TitaouPOS shop network.
 //!
 //! Two complementary mechanisms, both passive-safe and lightweight:
-//!   1. mDNS (`_titaoupos._tcp.local.`) — preferred, zero-traffic when idle.
+//!   1. mDNS (`_titaouposcrm._tcp.local.`) — preferred, zero-traffic when idle.
 //!   2. UDP broadcast on a fixed port — fallback for Wi-Fi APs that filter
 //!      multicast, and the accelerant at startup (probes answered unicast).
 //!
@@ -18,7 +18,7 @@ use std::time::Duration;
 /// Fixed UDP discovery port (LAN-local, one listener per PC).
 pub const DISCOVERY_PORT: u16 = 50110;
 /// mDNS service type.
-pub const MDNS_SERVICE: &str = "_titaoupos._tcp.local.";
+pub const MDNS_SERVICE: &str = "_titaouposcrm._tcp.local.";
 const MAGIC: &str = "TITAOPOS-NET";
 const PROTOCOL_VERSION: u32 = 1;
 

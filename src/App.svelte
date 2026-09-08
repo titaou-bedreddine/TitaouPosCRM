@@ -416,10 +416,10 @@
       <div class="p-3.5 border-b border-pos-border/60">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl overflow-hidden shadow-md shrink-0 bg-white flex items-center justify-center border border-pos-border/50">
-            <img src="/logo.png" alt="TitaouPOS" class="w-full h-full object-contain p-0.5" />
+            <img src="/logo.png" alt="TitaouPosCRM" class="w-full h-full object-contain p-0.5" />
           </div>
           <div class="min-w-0">
-            <h1 class="font-black text-sm tracking-tight text-pos-text">TitaouPOS</h1>
+            <h1 class="font-black text-sm tracking-tight text-pos-text">TitaouPosCRM</h1>
             <p class="text-[9px] text-sky-600 font-bold truncate">Titaou Bedreddine 0553444057</p>
             <p class="text-[8px] text-pos-muted font-mono">{sidebarVersion ? 'v' + sidebarVersion : ''}</p>
           </div>
@@ -840,7 +840,7 @@
         <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
           <h3 class="font-black text-sm text-pos-text">Contact the Developer (المطور)</h3>
           <p class="text-xs text-pos-muted">
-            Titaou Bedreddine — TitaouPOS developer. Reach out for support, features or licensing.
+            Titaou Bedreddine — TitaouPosCRM developer. Reach out for support, features or licensing.
           </p>
           <div class="grid grid-cols-2 gap-2">
             <button

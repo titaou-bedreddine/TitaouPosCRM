@@ -58,7 +58,7 @@
 
   // Full customer card: shop header, details, debts and QR.
   async function printCustomerCard(c: Customer) {
-    let shopName = 'TitaouPOS';
+    let shopName = 'TitaouPosCRM';
     let shopPhone = '';
     let shopAddress = '';
     try {
@@ -85,7 +85,7 @@
     parts.push('<p style="font-size:10px;font-family:monospace;">' + code + '</p>');
     parts.push('<hr style="border-top:1px dashed #000;margin:5px 0;" />');
     parts.push('<p style="font-size:13px;font-weight:900;margin:2px 0;">DETTES: ' + balance + ' DZD</p>');
-    parts.push('<p style="font-size:9px;margin-top:6px;">TitaouPOS &bull; ' + shopName + '</p>');
+    parts.push('<p style="font-size:9px;margin-top:6px;">TitaouPosCRM &bull; ' + shopName + '</p>');
     parts.push('</div>');
     const r = await printHtmlSilently(parts.join('\n'), 'Client Card ' + c.name, { widthMm: 80 });
     if (!r.ok) console.error('Client card print failed:', r.message);
@@ -231,7 +231,7 @@
 
     const html = `
       <div class="text-center pb-2 border-b-dashed">
-        <h2 class="font-black text-sm uppercase">TitaouPOS Superette</h2>
+        <h2 class="font-black text-sm uppercase">TitaouPosCRM Superette</h2>
         <p class="text-xxs">Rue Principale, Alger • Tél: 0553444057</p>
         <p class="font-black text-xs mt-1 bg-black text-white px-1">RECAPITULATIF DE DETTE / كشف حساب دين</p>
         <p class="text-xxs mt-0.5">${new Date().toLocaleString()}</p>
@@ -252,7 +252,7 @@
       <div class="text-center pt-2">
         <img src="${qrUrl}" alt="QR" class="qr-box" />
         <p class="text-xxs text-gray-500 mt-1">Code Client: #CUST-${c.id}</p>
-        <p class="text-[8px] text-gray-400 mt-1">TitaouPOS • Created by Titaou Bedreddine 0553444057</p>
+        <p class="text-[8px] text-gray-400 mt-1">TitaouPosCRM • Created by Titaou Bedreddine 0553444057</p>
       </div>
     `;
 

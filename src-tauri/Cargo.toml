@@ -1,11 +1,11 @@
 [package]
-name = "titaou-post"
+name = "titaou-poscrm"
 version = "0.6.0"
-description = "TitaouPOS CRM — POS & admin station for TitaouCRM (offline-first + Supabase cloud sync)"
+description = "TitaouPosCRM — POS & TitaouCRM admin station (offline-first + Supabase cloud sync)"
 edition = "2021"
 
 [lib]
-name = "titaou_post_lib"
+name = "titaou_poscrm_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

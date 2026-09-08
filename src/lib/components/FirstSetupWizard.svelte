@@ -137,7 +137,7 @@
       <div class="w-16 h-16 rounded-2xl bg-sky-600/10 text-sky-600 flex items-center justify-center mx-auto mb-3">
         <Store class="w-8 h-8" />
       </div>
-      <h1 class="text-2xl font-black text-pos-text">Welcome to TitaouPOS</h1>
+      <h1 class="text-2xl font-black text-pos-text">Welcome to TitaouPosCRM</h1>
       <p class="text-xs text-pos-muted mt-1">
         First-time setup — configure your shop identity (مرحباً — إعداد بيانات محلّك)
       </p>
@@ -189,7 +189,7 @@
               class="p-3 rounded-xl border-2 text-start transition cursor-pointer {netRole === 'client' ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/40' : 'border-pos-border hover:border-sky-300'}">
               <MonitorSmartphone class="w-5 h-5 {netRole === 'client' ? 'text-sky-600' : 'text-pos-muted'}" />
               <p class="text-xs font-black text-pos-text mt-1">Client</p>
-              <p class="text-[9px] text-pos-muted leading-snug mt-0.5">Connects to another TitaouPOS terminal</p>
+              <p class="text-[9px] text-pos-muted leading-snug mt-0.5">Connects to another TitaouPosCRM terminal</p>
             </button>
             <button type="button" on:click={() => (netRole = 'automatic')}
               class="p-3 rounded-xl border-2 text-start transition cursor-pointer {netRole === 'automatic' ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/40' : 'border-pos-border hover:border-sky-300'}">
@@ -201,10 +201,10 @@
         </div>
 
         {#if netRole === 'client'}
-          <!-- Client: show discovered TitaouPOS shops -->
+          <!-- Client: show discovered TitaouPosCRM shops -->
           <div class="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-pos-border space-y-2">
             <div class="flex items-center justify-between">
-              <p class="text-[11px] font-black text-pos-text">Searching for TitaouPOS servers…</p>
+              <p class="text-[11px] font-black text-pos-text">Searching for TitaouPosCRM servers…</p>
               <button type="button" on:click={searchServers} class="p-1 text-sky-600 hover:text-sky-700 cursor-pointer" disabled={discovering}>
                 <RefreshCw class="w-3.5 h-3.5 {discovering ? 'animate-spin' : ''}" />
               </button>
@@ -216,14 +216,14 @@
               {#each discovered as srv}
                 <div class="flex items-center justify-between p-2 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
                   <div>
-                    <p class="text-xs font-black text-pos-text">{srv.shop_name || 'TitaouPOS Shop'}</p>
+                    <p class="text-xs font-black text-pos-text">{srv.shop_name || 'TitaouPosCRM Shop'}</p>
                     <p class="text-[9px] text-pos-muted font-mono">{srv.pc_name} • {srv.ip}:{srv.port ?? 8080} • ● Online</p>
                   </div>
                   <button type="button" on:click={() => joinDiscovered(srv)} class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black rounded-lg cursor-pointer">Join</button>
                 </div>
               {/each}
             {:else if !discovering}
-              <p class="text-[10px] text-pos-muted font-bold">No TitaouPOS server was found on this network.</p>
+              <p class="text-[10px] text-pos-muted font-bold">No TitaouPosCRM server was found on this network.</p>
             {/if}
             <div class="pt-1 flex gap-1.5">
               <input type="text" bind:value={manualIp} placeholder="Enter server IP manually (192.168.x.x:8080)" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[10px] font-mono text-pos-text outline-none" />
@@ -238,12 +238,12 @@
           </div>
         {:else if netRole === 'server'}
           <p class="text-[10px] text-pos-muted bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-xl p-3">
-            This PC will store the main shop database and accept other TitaouPOS terminals on the LAN.
+            This PC will store the main shop database and accept other TitaouPosCRM terminals on the LAN.
             PC name: <b class="font-mono">{pcName || 'POS-01'}</b>
           </p>
         {:else}
           <p class="text-[10px] text-pos-muted bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-xl p-3">
-            TitaouPOS will discover the shop network automatically and elect the server.
+            TitaouPosCRM will discover the shop network automatically and elect the server.
             Nothing else to configure — IP, port and database are handled for you.
           </p>
         {/if}

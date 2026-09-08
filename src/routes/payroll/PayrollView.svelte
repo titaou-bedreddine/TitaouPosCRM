@@ -397,7 +397,7 @@
       <p style="font-size:13px;font-weight:900;margin:0;">${emp.full_name}</p>
       <p style="font-size:9px;margin:2px 0;">${emp.employee_code} • ${emp.job_title || ''}</p>
       <img src="${qr}" alt="QR" style="width:34mm;height:34mm;margin:4mm auto;" />
-      <p style="font-size:8px;">TitaouPOS • ${new Date().toLocaleDateString('fr-FR')}</p>
+      <p style="font-size:8px;">TitaouPosCRM • ${new Date().toLocaleDateString('fr-FR')}</p>
     </div>`;
     const r = await printHtmlSilently(html, 'Employee Card ' + emp.employee_code, { widthMm: 60 });
     if (!r.ok) showError('Print failed: ' + r.message);
@@ -413,7 +413,7 @@
     const slipHtml = `
       <div style="width: 72mm; font-family: monospace; font-size: 10px; margin: 0 auto; padding: 2mm; text-align: center;">
         <h3 style="font-size: 13px; font-weight: 900; margin: 0; text-transform: uppercase;">BULLETIN DE PAIE / كشف راتب</h3>
-        <p style="font-size: 8px; margin: 2px 0;">TitaouPOS Retail System</p>
+        <p style="font-size: 8px; margin: 2px 0;">TitaouPosCRM Retail System</p>
         <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
         <div style="text-align: left; font-size: 9px; line-height: 1.4;">
           <div style="display: flex; justify-content: space-between;"><span>Employé:</span><strong>${emp.full_name}</strong></div>
@@ -437,7 +437,7 @@
           <span>Signature Employeur</span>
           <span>Émargement Salarié</span>
         </div>
-        <p style="font-size: 7px; color: #666; margin-top: 15px;">TitaouPOS • Dev: Titaou Bedreddine (0553444057)</p>
+        <p style="font-size: 7px; color: #666; margin-top: 15px;">TitaouPosCRM • Dev: Titaou Bedreddine (0553444057)</p>
       </div>
     `;
     const r = await printHtmlSilently(slipHtml, `Payroll-${emp.employee_code}`, { widthMm: 72 });

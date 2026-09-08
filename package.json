@@ -1,5 +1,5 @@
 {
-  "name": "titaou-pos-crm",
+  "name": "titaou-poscrm",
   "private": true,
   "version": "0.6.0",
   "type": "module",
@@ -32,5 +32,5 @@
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
   },
-  "description": "TitaouPOS CRM — POS & admin station for TitaouCRM (Tauri + Svelte + Rust + Supabase cloud sync)"
+  "description": "TitaouPosCRM — Desktop POS + TitaouCRM admin station (Tauri + Svelte + Rust + Supabase cloud sync)"
 }

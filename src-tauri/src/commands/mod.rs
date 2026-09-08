@@ -743,7 +743,7 @@ pub fn verify_license(db: State<'_, DbState>, code: String) -> Result<bool, Stri
 #[tauri::command]
 pub fn activate_online(db: State<'_, DbState>) -> Result<bool, String> {
     let hwid = settings_service::get_hwid();
-    settings_service::activate_online_github(&db, &hwid, "titaou-bedreddine", "TitaouPosT-licenses")
+    settings_service::activate_online_github(&db, &hwid, "titaou-bedreddine", "TitaouPosCRM-licenses")
 }
 
 #[tauri::command]
@@ -1239,13 +1239,13 @@ pub async fn check_github_update(app_handle: tauri::AppHandle) -> Result<AppUpda
     let current_version = app_handle.package_info().version.to_string();
 
     let client = reqwest::Client::builder()
-        .user_agent("TitaouPOS-Desktop")
+        .user_agent("TitaouPosCRM-Desktop")
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
     let res = client
-        .get("https://api.github.com/repos/titaou-bedreddine/TitaouPosT/releases")
+        .get("https://api.github.com/repos/titaou-bedreddine/TitaouPosCRM/releases")
         .header("Accept", "application/vnd.github.v3+json")
         .send()
         .await
@@ -1268,7 +1268,7 @@ pub async fn check_github_update(app_handle: tauri::AppHandle) -> Result<AppUpda
             tag_name: format!("v{}", current_version),
             release_name: "No releases found".to_string(),
             release_notes: "".to_string(),
-            release_url: "https://github.com/titaou-bedreddine/TitaouPosT/releases".to_string(),
+            release_url: "https://github.com/titaou-bedreddine/TitaouPosCRM/releases".to_string(),
             download_url: "".to_string(),
             published_at: "".to_string(),
         });
@@ -1283,7 +1283,7 @@ pub async fn check_github_update(app_handle: tauri::AppHandle) -> Result<AppUpda
     let release_notes = latest["body"].as_str().unwrap_or("").to_string();
     let release_url = latest["html_url"]
         .as_str()
-        .unwrap_or("https://github.com/titaou-bedreddine/TitaouPosT/releases")
+        .unwrap_or("https://github.com/titaou-bedreddine/TitaouPosCRM/releases")
         .to_string();
     let published_at = latest["published_at"].as_str().unwrap_or("").to_string();
 
@@ -1298,7 +1298,7 @@ pub async fn check_github_update(app_handle: tauri::AppHandle) -> Result<AppUpda
         let asset = pick_asset.or_else(|| {
             assets.iter().find(|a| {
                 let name = a["name"].as_str().unwrap_or("");
-                name.ends_with(".exe") && !name.starts_with("titaou-post")
+                name.ends_with(".exe") && !name.starts_with("titaou-poscrm")
             })
         });
         if let Some(asset) = asset {
@@ -1342,7 +1342,7 @@ pub async fn check_github_update(app_handle: tauri::AppHandle) -> Result<AppUpda
         published_at,
     })
 }
-/// Launch TitaouPOS automatically when Windows starts (HKCU Run key -
+/// Launch TitaouPosCRM automatically when Windows starts (HKCU Run key -
 /// per-user, no admin rights needed).
 #[tauri::command]
 pub fn set_autostart(enable: bool) -> Result<(), String> {
@@ -1357,13 +1357,13 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
 
         let output = if enable {
             std::process::Command::new("reg")
-                .args(["add", KEY, "/v", "TitaouPOS", "/t", "REG_SZ", "/d", &exe, "/f"])
+                .args(["add", KEY, "/v", "TitaouPosCRM", "/t", "REG_SZ", "/d", &exe, "/f"])
                 .creation_flags(0x08000000) // CREATE_NO_WINDOW
                 .output()
                 .map_err(|e| e.to_string())?
         } else {
             std::process::Command::new("reg")
-                .args(["delete", KEY, "/v", "TitaouPOS", "/f"])
+                .args(["delete", KEY, "/v", "TitaouPosCRM", "/f"])
                 .creation_flags(0x08000000) // CREATE_NO_WINDOW
                 .output()
                 .map_err(|e| e.to_string())?
@@ -1395,7 +1395,7 @@ pub fn get_autostart() -> Result<bool, String> {
             .output()
             .map_err(|e| e.to_string())?;
         Ok(output.status.success()
-            && String::from_utf8_lossy(&output.stdout).contains("TitaouPOS"))
+            && String::from_utf8_lossy(&output.stdout).contains("TitaouPosCRM"))
     }
     #[cfg(not(windows))]
     {

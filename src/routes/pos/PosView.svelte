@@ -339,7 +339,7 @@
   let barcodeBuffer = '';
   let lastKeyTime = 0;
 
-  let currentShopName = 'TitaouPOS';
+  let currentShopName = 'TitaouPosCRM';
   let currentTime = new Date().toLocaleTimeString();
   let currentDate = new Date().toLocaleDateString();
   let timeInterval: any;
@@ -822,7 +822,7 @@
   onMount(async () => {
     try {
       const s = await invoke<Record<string, string>>('get_all_settings');
-      currentShopName = s['shop_name_fr'] || s['shop_name_ar'] || 'TitaouPOS';
+      currentShopName = s['shop_name_fr'] || s['shop_name_ar'] || 'TitaouPosCRM';
       if (s['cart_item_order'] === 'top' || s['cart_item_order'] === 'bottom') {
         $cartItemOrder = s['cart_item_order'];
       }

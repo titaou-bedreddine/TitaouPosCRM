@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn test_authenticate_real_db() {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let p = std::path::PathBuf::from(appdata).join("TitaouPosT").join("titaou_post.db");
+            let p = std::path::PathBuf::from(appdata).join("TitaouPosCRM").join("titaou_poscrm.db");
             if p.exists() {
                 println!("Testing against real DB: {:?}", p);
                 let conn = rusqlite::Connection::open(&p).unwrap();

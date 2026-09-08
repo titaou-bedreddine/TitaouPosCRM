@@ -503,8 +503,8 @@ impl DbState {
 
 pub fn get_database_path() -> PathBuf {
     let mut path = dirs_next().unwrap_or_else(|| PathBuf::from("."));
-    path.push("TitaouPosT");
-    path.push("titaou_post.db");
+    path.push("TitaouPosCRM");
+    path.push("titaou_poscrm.db");
     path
 }
 

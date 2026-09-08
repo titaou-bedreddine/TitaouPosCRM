@@ -69,7 +69,7 @@
             <p>Method: <strong>${paymentMethod.toUpperCase()}</strong></p>
             ${reference ? `<p>Ref: ${reference}</p>` : ''}
             ${notes ? `<p>Notes: ${notes}</p>` : ''}
-            <p style="font-size:8px; margin-top:6px;">TitaouPOS • Titaou Bedreddine</p>
+            <p style="font-size:8px; margin-top:6px;">TitaouPosCRM • Titaou Bedreddine</p>
           </div>
         `;
         const r = await printHtmlSilently(voucherHtml, 'Debt Payment Receipt', { widthMm: 72 });

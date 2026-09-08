@@ -335,7 +335,7 @@ pub fn validate_backup_file(path: &str) -> Result<String, String> {
 }
 
 /// Default backup directory when the user has not picked one:
-/// %APPDATA%\TitaouPosT\backups (always writable).
+/// %APPDATA%\TitaouPosCRM\backups (always writable).
 fn default_backup_dir() -> std::path::PathBuf {
     let mut dir = crate::database::get_database_path();
     dir.pop();
@@ -356,7 +356,7 @@ fn setting_str(map: &HashMap<String, String>, key: &str, default: &str) -> Strin
 }
 
 /// Create one timestamped backup in the configured location (default
-/// %APPDATA%\TitaouPosT\backups). Applies retention afterward. Returns the
+/// %APPDATA%\TitaouPosCRM\backups). Applies retention afterward. Returns the
 /// created file's path.
 pub fn create_backup(db: &DbState, tag: &str) -> Result<String, String> {
     let s = backup_settings_map(db);

@@ -117,7 +117,7 @@ fn configured_port(diag: Option<&DbState>) -> u16 {
             }
         }
     }
-    8080
+    8090 // TitaouPosCRM default — 8080 stays free for TitaouPOS on the same PC
 }
 
 /// Public accessors for the LAN network module (announce packets, status).
@@ -206,17 +206,17 @@ async fn api_handshake(
     let port = state.port;
     Json(serde_json::json!({
         "ok": true,
-        "server": "TitaouPosT Host",
+        "server": "TitaouPosCRM Host",
         "port": port,
         "paired": true,
     }))
 }
 
 async fn api_status() -> Json<serde_json::Value> {
-    let port = STATE.get().map(|s| s.port).unwrap_or(8080);
+    let port = STATE.get().map(|s| s.port).unwrap_or(8090);
     Json(serde_json::json!({
         "status": "online",
-        "server": "TitaouPosT Host",
+        "server": "TitaouPosCRM Host",
         "port": port,
     }))
 }

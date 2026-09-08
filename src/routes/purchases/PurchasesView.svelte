@@ -141,7 +141,7 @@
       isPrintingPurchase = true;
       const items = await invoke<any[]>('get_purchase_items', { purchaseId: pur.id });
       const settings = await invoke<Record<string, string>>('get_all_settings');
-      const shopName = settings['shop_name_fr'] || 'TitaouPOS';
+      const shopName = settings['shop_name_fr'] || 'TitaouPosCRM';
       const rows = items.map((it) => `
         <tr>
           <td style="padding:3px 4px;border-bottom:1px dashed #000;">${it.product_name || it.product_name_ar || '#' + it.product_id}</td>
@@ -174,7 +174,7 @@
           <div style="display:flex;justify-content:space-between;font-size:10px;">
             <span>Payé:</span><span>${pur.paid_amount.toLocaleString()} DZD</span>
           </div>
-          <p style="text-align:center;font-size:8px;margin-top:8px;">TitaouPOS • Titaou Bedreddine</p>
+          <p style="text-align:center;font-size:8px;margin-top:8px;">TitaouPosCRM • Titaou Bedreddine</p>
         </div>
       `;
       const { printHtmlSilently } = await import('../../lib/utils/printer');

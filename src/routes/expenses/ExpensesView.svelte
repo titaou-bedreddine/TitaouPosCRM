@@ -150,7 +150,7 @@
   async function printExpenseVoucher(exp: Expense) {
     try {
       const settings = await invoke<Record<string, string>>('get_all_settings');
-      const shopName = settings['shop_name_fr'] || 'TitaouPOS';
+      const shopName = settings['shop_name_fr'] || 'TitaouPosCRM';
       const shopPhone = settings['shop_phone'] || '0553444057';
       const shopAddress = settings['shop_address'] || 'Alger Centre';
 
