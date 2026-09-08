@@ -1257,6 +1257,27 @@ thread_local! {
     static CALLER_TERMINAL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
+/// Called by the invoke wrapper AFTER a mutating command ran LOCALLY on a
+/// serving PC (server/standalone): emit the registry's event so the UI of
+/// THIS PC invalidates and every connected client hears it over the WS —
+/// local mutations must behave exactly like networked ones (user report:
+/// stock changed on the client appeared on the server only after the page
+/// was left and re-entered; the server's own pages never auto-refreshed).
+pub fn note_local_mutation(command: &str) {
+    let rt = match net_opt() {
+        Some(rt) => rt,
+        None => return,
+    };
+    let serving = rt.mode.lock().unwrap().serving();
+    if !serving {
+        return;
+    }
+    let Some(event) = invoke_registry::lookup(command).and_then(|s| s.event) else {
+        return;
+    };
+    server_api::broadcast_event(event, json!({ "by": "local" }));
+}
+
 /// Record the calling terminal for the current network request (server API).
 pub fn set_caller_terminal(name: &str) {
     CALLER_TERMINAL.with(|c| *c.borrow_mut() = Some(name.to_string()));

@@ -1283,7 +1283,7 @@
               </div>
             {/if}
           </div>
-
+        {:else if activeTab === 'scalable'}
           <!-- Scale Tab -->
           <div class="space-y-4">
             <div class="flex items-center justify-between p-4 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 rounded-2xl">

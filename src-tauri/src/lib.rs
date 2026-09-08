@@ -36,6 +36,10 @@ fn lan_wrap_invoke_handler(
             });
             return true;
         }
+        // Local execution on this PC: when it is the serving authority AND
+        // the command is a known mutation, broadcast its event so THIS UI
+        // and every connected terminal invalidate in real time.
+        network::note_local_mutation(&cmd);
         generated(invoke)
     }
 }

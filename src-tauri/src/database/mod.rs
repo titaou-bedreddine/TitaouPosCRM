@@ -268,21 +268,28 @@ impl DbState {
             );
         ");
 
-        // Seed default Walk-in Customer if not present
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO customers (id, name, code, phone, qr_code, balance, is_active)
-             VALUES (1, 'Client Comptoir / زبون عادي', 'CUST-001', '0550000000', 'CUST-001', 0, 1);",
+        // Seed default Walk-in Customer if not present. The customers table
+        // has NO `code` column — the old seed referenced one, silently
+        // failed every startup (error swallowed), and left customer id 1
+        // MISSING → every POS checkout as "Client Comptoir" died with
+        // "FOREIGN KEY constraint failed" on sales.customer_id.
+        if let Err(e) = conn.execute(
+            "INSERT OR IGNORE INTO customers (id, name, phone, qr_code, balance, is_active)
+             VALUES (1, 'Client Comptoir / زبون عادي', '0550000000', 'CUST-001', 0, 1)",
             [],
-        );
-
-        // Heal legacy DBs where row id=1 was a real customer created before
-        // the walk-in seed existed: normalize the name back to the default
-        // walk-in label so it never shows as a random person's name.
-        let _ = conn.execute_batch("
-            UPDATE customers SET name = 'Client Comptoir / زبون عادي',
-                                 phone = '0550000000', code = 'CUST-001', qr_code = 'CUST-001'
-             WHERE id = 1 AND name NOT LIKE '%Client Comptoir%' AND name NOT LIKE '%زبون عادي%';
-        ");
+        ) {
+            eprintln!("[db] walk-in customer seed failed: {}", e);
+        } else {
+            // Self-heal: when the row exists but was renamed by a legacy DB
+            // heal that assumed a `code` column (which never applied),
+            // restore the default walk-in identity.
+            let _ = conn.execute(
+                "UPDATE customers SET name = 'Client Comptoir / زبون عادي',
+                                     phone = '0550000000', qr_code = 'CUST-001'
+                 WHERE id = 1 AND name NOT LIKE '%Client Comptoir%' AND name NOT LIKE '%زبون عادي%'",
+                [],
+            );
+        }
 
         // Seed default Walk-in Supplier if not present
         let _ = conn.execute(

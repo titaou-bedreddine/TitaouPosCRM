@@ -872,3 +872,67 @@ pub fn replace_sale(
     tx.commit().map_err(|e| e.to_string())?;
     Ok(sale_number)
 }
+
+#[cfg(test)]
+mod checkout_fk_tests {
+    use super::*;
+
+    fn fresh_db() -> DbState {
+        let dir = std::env::temp_dir().join("titaou_fk_tests");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!(
+            "fk_{}_{}.sqlite",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("t").replace("::", "_")
+        ));
+        let _ = std::fs::remove_file(&path);
+        let state = DbState { conn: std::sync::Mutex::new(rusqlite::Connection::open(&path).unwrap()) };
+        state.run_migrations().unwrap();
+        state.seed_default_admin().unwrap();
+        state
+    }
+
+    fn sale_input(session_id: i64, user_id: i64, customer_id: Option<i64>) -> CreateSaleInput {
+        CreateSaleInput {
+            session_id,
+            user_id,
+            customer_id,
+            subtotal: 100,
+            discount_amount: 0,
+            discount_percentage: 0.0,
+            discount_reason: None,
+            tax_amount: 0,
+            total_amount: 100,
+            paid_amount: 100,
+            change_amount: 0,
+            payment_method: Some("cash".into()),
+            is_refund: Some(false),
+            notes: None,
+            skip_stock: false,
+            payments: vec![],
+            items: vec![],
+        }
+    }
+
+    #[test]
+    fn checkout_with_nonexistent_session_fails_fk() {
+        let db = fresh_db();
+        // The POS sends `session_id: activeSession?.id || 1` — session 1
+        // does NOT exist in a fresh DB (sessions start at their own ids).
+        let r = process_sale(&db, sale_input(1, 1, Some(1)));
+        assert!(r.is_err(), "session 1 must not silently pass");
+        println!("error was: {:?}", r.err());
+    }
+
+    #[test]
+    fn checkout_with_real_session_succeeds() {
+        let db = fresh_db();
+        crate::services::cash_service::open_session(&db, 1, 1, 1000, None).unwrap();
+        let session_id: i64 = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT id FROM cash_sessions WHERE status='open' ORDER BY id DESC LIMIT 1", [], |r| r.get(0)).unwrap()
+        };
+        let r = process_sale(&db, sale_input(session_id, 1, Some(1)));
+        assert!(r.is_ok(), "real session must work: {:?}", r.err());
+    }
+}
