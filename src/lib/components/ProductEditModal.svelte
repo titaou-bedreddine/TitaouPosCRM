@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { normalizeBarcode } from '../utils/barcode';
   import WebcamCapture from './WebcamCapture.svelte';
   import { t, currentLocale } from '../i18n';
   import { currentUser } from '../stores/auth';
@@ -23,7 +24,9 @@
   export let onClose: () => void;
   export let onSaved: () => void;
 
-  let activeTab: 'details' | 'scalable' | 'history' = 'details';
+  let activeTab: 'details' | 'scalable' | 'packaging' | 'history' = 'details';
+  let applyMsg = '';
+  let savedProductId: number | null = null;
 
   let sku = '';
   let nameAr = '';
@@ -119,7 +122,7 @@
 
   function checkBarcodeDuplicate() {
     clearTimeout(barcodeCheckTimer);
-    const code = currentBarcodeTyped.trim().replace(/,/g, '');
+    const code = normalizeBarcode(currentBarcodeTyped).replace(/,/g, '');
     if (!code) {
       duplicateBarcodeWarning = '';
       return;
@@ -582,7 +585,7 @@
   }
 
   function addBarcodeToken() {
-    const raw = currentBarcodeTyped.trim().replace(/,/g, '');
+    const raw = normalizeBarcode(currentBarcodeTyped).replace(/,/g, '');
     if (!raw) return;
     if (editingTokenIndex !== null) {
       barcodeTokens[editingTokenIndex] = raw;
@@ -701,7 +704,14 @@
     }
   }
 
-  async function handleSave() {
+  // Apply = save WITHOUT closing: persist now, keep editing. The saved
+  // product id is remembered so a later Apply/Save UPDATES instead of
+  // creating duplicates.
+  async function handleApply() {
+    await handleSave(true);
+  }
+
+  async function handleSave(keepOpen = false) {
     if (!nameFr.trim() && !nameAr.trim()) {
       errorMsg = 'Product name is required / اسم المنتج إجباري';
       return;
@@ -757,7 +767,7 @@
 
       const savedId = await invoke<number>('save_product', {
         input,
-        productId: product ? product.id : null,
+        productId: (product ? product.id : null) ?? savedProductId,
         userId: $currentUser?.id,
       });
 
@@ -788,7 +798,15 @@
       }
 
       onSaved();
-      onClose();
+      if (keepOpen) {
+        applyMsg = '✅ Applied / تم الحفظ';
+        setTimeout(() => (applyMsg = ''), 2500);
+        // Continue editing the JUST-SAVED product (no duplicates on the
+        // next Apply): adopt its id.
+        savedProductId = savedId;
+      } else {
+        onClose();
+      }
     } catch (e: any) {
       errorMsg = typeof e === 'string' ? e : e.message || 'Failed to save product';
     } finally {
@@ -831,6 +849,14 @@
           >
             <Scale class="w-3.5 h-3.5" />
             <span>Scale</span>
+          </button>
+          <button
+            type="button"
+            on:click={() => (activeTab = 'packaging')}
+            class="px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 {activeTab === 'packaging' ? 'bg-white dark:bg-slate-800 text-sky-600 shadow-xs' : 'text-pos-muted'}"
+          >
+            <Package class="w-3.5 h-3.5" />
+            <span>Packaging</span>
           </button>
           {#if product}
             <button
@@ -1171,6 +1197,18 @@
             </p>
           </div>
 
+          <!-- Expiry Date & Min Stock -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-bold text-pos-muted mb-1">Expiry Date / تاريخ الصلاحية</label>
+              <input type="date" bind:value={expiryDate} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-mono font-bold text-pos-text outline-none" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-pos-muted mb-1">Min Stock Alert Level</label>
+              <input type="number" min="1" bind:value={minStock} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-mono font-bold text-pos-text outline-none" />
+            </div>
+          </div>
+        {:else if activeTab === 'packaging'}
           <!-- UNITS-IN-PACKAGING (carton 24 / fardeau 6 / palette 672) -->
           <div class="p-3.5 bg-slate-50 dark:bg-slate-800/40 border border-pos-border rounded-2xl space-y-3">
             <div class="flex items-center justify-between">
@@ -1246,18 +1284,6 @@
             {/if}
           </div>
 
-          <!-- Expiry Date & Min Stock -->
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-bold text-pos-muted mb-1">Expiry Date / تاريخ الصلاحية</label>
-              <input type="date" bind:value={expiryDate} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-mono font-bold text-pos-text outline-none" />
-            </div>
-            <div>
-              <label class="block text-xs font-bold text-pos-muted mb-1">Min Stock Alert Level</label>
-              <input type="number" min="1" bind:value={minStock} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-mono font-bold text-pos-text outline-none" />
-            </div>
-          </div>
-        {:else if activeTab === 'scalable'}
           <!-- Scale Tab -->
           <div class="space-y-4">
             <div class="flex items-center justify-between p-4 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 rounded-2xl">
@@ -1470,10 +1496,24 @@
           </button>
         </div>
 
-        <button on:click={handleSave} disabled={isSaving} class="px-6 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5">
-          <Check class="w-4 h-4" />
-          <span>{isSaving ? 'Saving...' : 'Save Product (حفظ المنتج)'}</span>
-        </button>
+        <div class="flex items-center gap-2">
+          {#if applyMsg}
+            <span class="text-[11px] font-black text-emerald-600 dark:text-emerald-400">{applyMsg}</span>
+          {/if}
+          <button
+            type="button"
+            on:click={handleApply}
+            disabled={isSaving}
+            class="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-black text-xs rounded-xl transition cursor-pointer shadow-2xs"
+            title="Save now and keep editing — safe to print or leave anytime (يحفظ الآن ويبقى مفتوحاً)"
+          >
+            Apply (حفظ دون إغلاق)
+          </button>
+          <button on:click={() => handleSave(false)} disabled={isSaving} class="px-6 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5">
+            <Check class="w-4 h-4" />
+            <span>{isSaving ? 'Saving...' : 'Save Product (حفظ المنتج)'}</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

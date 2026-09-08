@@ -3,6 +3,7 @@
   import { get } from 'svelte/store';
   import { invoke } from '@tauri-apps/api/core';
   import { t, currentLocale } from '../../lib/i18n';
+  import { localTodayISO } from '../../lib/utils/date';
   import type { Category, Product, Supplier, Unit } from '../../lib/types';
   import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities } from '../../lib/stores/cart';
   import { currentUser } from '../../lib/stores/auth';
@@ -12,6 +13,7 @@
   import { buildUnifiedReceipt, printReceiptSmart } from '../../lib/printing/unifiedReceipt';
   import { normalizeBarcode } from '../../lib/utils/barcode';
   import { networkStatus } from '../../lib/stores/network';
+  import { invalidations } from '../../lib/stores/invalidations';
   import { getLanguage } from '../../lib/i18n';
 
   // Route navigation for F7 (products) / F8 (register) / F9 (sales).
@@ -58,6 +60,13 @@
 
   let selectedCategory: number | null = null;
   let searchQuery = '';
+
+  // Live cross-PC stock sync: when another terminal (or the server) sells,
+  // saves or edits a product, this terminal's grid refreshes in place —
+  // no navigation, no manual refresh (user-reported bug).
+  $: if ($invalidations.products) {
+    void loadProducts();
+  }
   let searchType: 'all' | 'name' | 'barcode' | 'price' | 'qr' = 'all';
   let sortBy: 'name_asc' | 'name_desc' | 'price_asc' | 'price_desc' | 'stock' | 'best_sellers' | 'worst_sellers' = 'name_asc';
 
@@ -291,7 +300,7 @@
         employeeId: employeeBanner.employeeId,
         days,
         reason: 'POS quick-absence / غياب سريع',
-        date: new Date().toISOString().split('T')[0],
+        date: localTodayISO(),
       });
       qrSaleNotice = '✅ ' + (t('emp_absence_recorded') || 'Absence recorded');
       setTimeout(() => (qrSaleNotice = ''), 4000);
@@ -674,7 +683,7 @@
             invoice_number: 'ACH-' + stamp,
             supplier_id: $selectedSupplierId ?? 1,
             user_id: $currentUser?.id || 1,
-            date: new Date().toISOString().split('T')[0],
+            date: localTodayISO(),
             subtotal: total,
             discount: 0,
             tax: 0,
@@ -719,7 +728,7 @@
             invoice_number: 'BRK-' + stamp,
             supplier_id: 1,
             user_id: $currentUser?.id || 1,
-            date: new Date().toISOString().split('T')[0],
+            date: localTodayISO(),
             subtotal: total,
             discount: 0,
             tax: 0,

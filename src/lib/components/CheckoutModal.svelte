@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { normalizeBarcode } from '../utils/barcode';
   import type { Customer } from '../types';
   import { X, Check, Search, UserPlus, Banknote, Coins, ArrowRightLeft, Store } from 'lucide-svelte';
 
@@ -16,6 +17,8 @@
 
   let customers: Customer[] = [];
   let searchQuery = '';
+  // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
+  $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
   let selectedCustomerId: number | null = null;
   let selectedCustomerName = '';
   let paidAmount: number | null = null;
@@ -35,8 +38,8 @@
   let goodsStayAtShop = false;
 
   $: filteredCustomers = customers.filter(c =>
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (c.phone && c.phone.includes(searchQuery))
+    c.name.toLowerCase().includes(searchQueryN) ||
+    (c.phone && c.phone.includes(searchQueryN))
   );
   $: numericPaid = paidAmount === null || isNaN(paidAmount as number) ? 0 : (paidAmount as number);
   $: paidInvalid = numericPaid < 0;

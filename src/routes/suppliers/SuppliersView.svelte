@@ -3,6 +3,7 @@
   import QrImage from '../../lib/components/QrImage.svelte';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { normalizeBarcode } from '../../lib/utils/barcode';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import SupplierDebtModal from '../../lib/components/SupplierDebtModal.svelte';
   import { entityQrPayload, entityQrDataUrl, printHtmlSilently } from '../../lib/utils/printer';
@@ -14,6 +15,8 @@
 
   let suppliers: Supplier[] = [];
   let searchQuery = '';
+  // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
+  $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
   let isModalOpen = false;
   let previewSupplier: Supplier | null = null;
   let supplierHistory: any[] = [];
@@ -123,7 +126,7 @@
 
   // Omni search: name, contact, phone, email, ids, exact balance, QR.
   $: filteredSuppliers = suppliers.filter((x) => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQueryN;
     if (!q) return true;
     const hit = ['name', 'contact_person', 'phone', 'email', 'rc', 'nif', 'code', 'qr_code'].some(
       (f) => String((x as any)[f] || '').toLowerCase().includes(q)

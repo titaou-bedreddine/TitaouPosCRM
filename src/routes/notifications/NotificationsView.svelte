@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
+  import { localTodayISO } from '../../lib/utils/date';
   import { invoke } from '@tauri-apps/api/core';
   import {
     Bell, CheckCircle2, AlertTriangle, AlertOctagon,
@@ -35,7 +36,7 @@
     try {
       isLoading = true;
       // Fetch dynamic alerts based on database queries
-      const today = new Date().toISOString().split('T')[0];
+      const today = localTodayISO();
       const prods = await invoke<any[]>('search_products', { query: '', categoryId: null, searchType: 'all' });
 
       let dynamicList: NotificationLog[] = [];

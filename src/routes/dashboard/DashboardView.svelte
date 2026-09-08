@@ -1,16 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
+  import { localTodayISO } from '../../lib/utils/date';
+  import { invalidations } from '../../lib/stores/invalidations';
   import { invoke } from '@tauri-apps/api/core';
   import type { DashboardStats } from '../../lib/types';
-  import { TrendingUp, ShoppingBag, AlertTriangle, ArrowDownRight, DollarSign, Wallet, Trophy, RefreshCw, Layers, Eye, Pencil, Printer, X, Trash2, CheckCircle2, Monitor } from 'lucide-svelte';
+  import { TrendingUp, ShoppingBag, AlertTriangle, ArrowDownRight, DollarSign, Wallet, Trophy, RefreshCw, Layers, Eye, Pencil, Printer, X, Trash2, CheckCircle2, Monitor, PackagePlus } from 'lucide-svelte';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
 
   let stats: DashboardStats | null = null;
-  let fromDate = new Date().toISOString().split('T')[0];
-  let toDate = new Date().toISOString().split('T')[0];
+  let fromDate = localTodayISO();
+  let toDate = localTodayISO();
+
+  // Live cross-PC: stats refresh when any terminal sells or edits anything.
+  $: if ($invalidations.sales || $invalidations.expenses || $invalidations.products || $invalidations.sessions) {
+    void loadStats();
+  }
   let selectedTab: 'financial' | 'debts' | 'inventory' | 'expenses' | 'versement' | 'caisse' = 'financial';
 
   onMount(async () => {
@@ -390,6 +397,35 @@
               <span class="text-[10px] font-bold text-pos-muted">({tsr.count})</span>
             </div>
           {/each}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Newly added stock in the period: how much came in and what it's worth -->
+    {#if stats.new_stock && stats.new_stock.qty_added > 0}
+      <div class="mt-3 bg-pos-card border border-pos-border rounded-2xl shadow-xs overflow-hidden">
+        <div class="p-3 border-b border-pos-border bg-slate-50 dark:bg-slate-800/40 flex items-center gap-2">
+          <PackagePlus class="w-4 h-4 text-emerald-500" />
+          <h3 class="font-extrabold text-xs text-pos-text">Newly Added Stock (المخزون المُضاف)</h3>
+          <span class="text-[10px] font-bold text-pos-muted">{stats.new_stock.product_count} products</span>
+        </div>
+        <div class="p-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="px-3 py-2 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-900">
+            <span class="text-[10px] font-bold text-pos-muted uppercase">Qty Added</span>
+            <div class="text-sm font-black font-mono text-emerald-700 dark:text-emerald-300">{stats.new_stock.qty_added.toLocaleString()}</div>
+          </div>
+          <div class="px-3 py-2 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-pos-border">
+            <span class="text-[10px] font-bold text-pos-muted uppercase">Purchase Amount</span>
+            <div class="text-sm font-black font-mono text-pos-text">{stats.new_stock.cost_total.toLocaleString()} DZD</div>
+          </div>
+          <div class="px-3 py-2 bg-sky-50 dark:bg-sky-950/40 rounded-xl border border-sky-200 dark:border-sky-900">
+            <span class="text-[10px] font-bold text-pos-muted uppercase">Retail Value</span>
+            <div class="text-sm font-black font-mono text-sky-700 dark:text-sky-300">{stats.new_stock.sale_value.toLocaleString()} DZD</div>
+          </div>
+          <div class="px-3 py-2 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-900">
+            <span class="text-[10px] font-bold text-pos-muted uppercase">Possible Profit</span>
+            <div class="text-sm font-black font-mono text-amber-700 dark:text-amber-300">{stats.new_stock.possible_profit.toLocaleString()} DZD</div>
+          </div>
         </div>
       </div>
     {/if}

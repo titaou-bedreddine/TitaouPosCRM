@@ -9,6 +9,7 @@
  */
 import { writable, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
+import { invalidateFromEvent } from './invalidations';
 
 export interface NetPeerInfo {
   node_id: string;
@@ -103,6 +104,9 @@ export async function initNetwork(): Promise<void> {
     await listen<NetEvent>('network://event', (e) => {
       if (!e.payload) return;
       networkEvents.update((list) => [e.payload, ...list].slice(0, 50));
+      // Live cross-PC sync: server-side mutations invalidate the matching
+      // local caches (stock, sessions, settings...) so open views refresh.
+      invalidateFromEvent(String(e.payload.type || ''));
     });
   } catch {
     // Event API unavailable (non-Tauri context) — status polling still works.

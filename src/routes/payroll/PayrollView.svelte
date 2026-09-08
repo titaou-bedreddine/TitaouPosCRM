@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { normalizeBarcode } from '../../lib/utils/barcode';
   import type { Employee, Payroll } from '../../lib/types';
   import { t } from '../../lib/i18n';
   import {
@@ -26,10 +27,12 @@
   let rfidCode = '';
   let startDate = localDateStr();
   let employeeSearch = '';
+  // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
+  $: employeeSearchN = normalizeBarcode(employeeSearch).toLowerCase();
   // Search across name, employee code, job title and RFID tag.
   $: filteredEmployees = employeeSearch.trim()
     ? employees.filter(e => {
-        const q = employeeSearch.trim().toLowerCase();
+        const q = employeeSearchN;
         return (
           (e.full_name || '').toLowerCase().includes(q) ||
           (e.employee_code || '').toLowerCase().includes(q) ||

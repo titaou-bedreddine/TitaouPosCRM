@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { normalizeBarcode } from '../../lib/utils/barcode';
   import type { Customer } from '../../lib/types';
   import { printHtmlSilently, entityQrPayload, entityQrDataUrl } from '../../lib/utils/printer';
   import { refreshCustomers } from '../../lib/stores/customers';
@@ -16,6 +17,8 @@
 
   let customers: Customer[] = [];
   let searchQuery = '';
+  // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
+  $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
   let searchType: 'all' | 'name' | 'barcode' | 'price' | 'qr' = 'all';
 
   let isModalOpen = false;
@@ -137,7 +140,7 @@
 
     $: filteredCustomers = customers.filter((x) => {
     // Omni search: name, phone, email, ids, exact balance, or QR payload.
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQueryN;
     if (!q) return true;
     const hit = ['name', 'phone', 'email', 'rc', 'nif', 'code', 'qr_code', ].some(
       (f) => String((x as any)[f] || '').toLowerCase().includes(q)

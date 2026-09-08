@@ -2,6 +2,7 @@
   import QrImage from '../../lib/components/QrImage.svelte';
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
+  import { localTodayISO } from '../../lib/utils/date';
   import { invoke } from '@tauri-apps/api/core';
   import type { Expense } from '../../lib/types';
   import { currentUser } from '../../lib/stores/auth';
@@ -19,13 +20,16 @@
   let expenses: Expense[] = [];
   let isAddOpen = false;
   let editingExpense: Expense | null = null;
+  let deleteConfirmText = '';
+  let deleteAdminPassword = '';
+  let deleteErrorMsg = '';
   let previewExpense: Expense | null = null;
 
   // Date-range filter for the loaded expense list.
   let filterStartDate = '';
   let selectedUserFilter = ''; // '' = all users
   let filterEndDate = '';
-  let expenseDate = new Date().toISOString().split('T')[0];
+  let expenseDate = localTodayISO();
 
   $: usersWithExpenses = Array.from(
     new Set(expenses.map((e) => e.user_name || `User #${e.user_id}`))
@@ -101,19 +105,35 @@
       const userId = $currentUser?.id || 1;
       const sessionId = paymentMethod === 'cash' ? ($activeSession?.id || null) : null;
 
-      await invoke('add_expense', {
-        categoryId,
-        amount,
-        paymentMethod,
-        sessionId,
-        userId,
-        date: expenseDate,
-        recipient: recipient || null,
-        receiptReference: receiptRef || null,
-        notes: notes || null,
-      });
+      if (editingExpense) {
+        // Edit IN PLACE (replace_sale pattern): same row updated, drawer
+        // reversed and rebooked by the backend, MODIFIED tag in notes.
+        await invoke('update_expense', {
+          expenseId: editingExpense.id,
+          categoryId,
+          amount,
+          paymentMethod,
+          recipient: recipient || null,
+          receiptReference: receiptRef || null,
+          notes: notes || null,
+          date: expenseDate,
+        });
+      } else {
+        await invoke('add_expense', {
+          categoryId,
+          amount,
+          paymentMethod,
+          sessionId,
+          userId,
+          date: expenseDate,
+          recipient: recipient || null,
+          receiptReference: receiptRef || null,
+          notes: notes || null,
+        });
+      }
 
       isAddOpen = false;
+      editingExpense = null;
       amount = 0;
       recipient = '';
       receiptRef = '';
@@ -129,16 +149,31 @@
   function promptDelete(exp: Expense, e?: Event) {
     if (e) e.stopPropagation();
     expenseToDelete = exp;
+    deleteConfirmText = '';
+    deleteAdminPassword = '';
+    deleteErrorMsg = '';
     isDeleteModalOpen = true;
   }
 
   async function confirmDeleteExpense() {
     if (!expenseToDelete) return;
+    // Two guards: the word DELETE typed exactly, and the admin password.
+    if (deleteConfirmText.trim().toUpperCase() !== 'DELETE') {
+      deleteErrorMsg = 'Type DELETE to confirm / اكتب DELETE للتأكيد';
+      return;
+    }
     try {
       isDeleting = true;
+      deleteErrorMsg = '';
+      const ok = await invoke<boolean>('verify_admin_password', { password: deleteAdminPassword });
+      if (!ok) {
+        deleteErrorMsg = 'Wrong admin password / كلمة مرور المدير غير صحيحة';
+        return;
+      }
       await invoke('delete_expense', { expenseId: expenseToDelete.id });
       isDeleteModalOpen = false;
       expenseToDelete = null;
+      deleteAdminPassword = '';
       await loadExpenses();
     } catch (e: any) {
       alert('Failed to delete expense: ' + (e.message || e));
@@ -220,7 +255,7 @@
         recipient = '';
         receiptRef = '';
         notes = '';
-        expenseDate = new Date().toISOString().split('T')[0];
+        expenseDate = localTodayISO();
         isAddOpen = true;
         errorMsg = '';
       }}
@@ -327,7 +362,12 @@
         {:else}
           {#each sortedExpenses as exp}
             <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-              <td class="p-3 font-mono font-bold text-rose-600">#{exp.expense_number}</td>
+              <td class="p-3 font-mono font-bold text-rose-600">
+                #{exp.expense_number}
+                {#if exp.notes && exp.notes.includes('MODIFIED')}
+                  <span class="ms-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">Modified</span>
+                {/if}
+              </td>
               <td class="p-3 font-mono text-pos-muted">{exp.date}</td>
               <td class="p-3 font-bold text-pos-text">{exp.category_name || 'Général'}</td>
               <td class="p-3 text-pos-muted">{exp.recipient || 'Divers'}</td>
@@ -373,7 +413,7 @@
                       recipient = exp.recipient || '';
                       receiptRef = exp.receipt_reference || '';
                       notes = exp.notes || '';
-                      expenseDate = exp.date || new Date().toISOString().split('T')[0];
+                      expenseDate = exp.date || localTodayISO();
                       isAddOpen = true;
                       errorMsg = '';
                     }}
@@ -410,7 +450,7 @@
             <TrendingDown class="w-5 h-5" />
           </div>
           <div>
-            <h3 class="font-black text-base text-pos-text">{t('exp_new')}</h3>
+            <h3 class="font-black text-base text-pos-text">{editingExpense ? 'Edit Expense (تعديل المصروف)' : t('exp_new')}</h3>
             <p class="text-xs text-pos-muted">Deducts automatically from active cash drawer</p>
           </div>
         </div>
@@ -469,7 +509,7 @@
       </div>
 
       <div class="px-6 py-4 border-t border-pos-border bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between">
-        <button on:click={() => (isAddOpen = false)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">
+        <button on:click={() => { isAddOpen = false; editingExpense = null; }} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">
           Cancel
         </button>
         <button on:click={handleAddExpense} disabled={isSaving} class="px-6 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5">
@@ -490,13 +530,35 @@
         <h3 class="font-black text-sm text-pos-text">Confirm Expense Deletion</h3>
       </div>
       <p class="text-xs text-pos-muted">
-        Are you sure you want to delete expense voucher <strong class="text-pos-text">#{expenseToDelete.expense_number}</strong> ({expenseToDelete.amount.toLocaleString()} DZD)?
+        Delete voucher <strong class="text-pos-text">#{expenseToDelete.expense_number}</strong> ({expenseToDelete.amount.toLocaleString()} DZD)?
+        The drawer amount is refunded to the session automatically.
+        <br />This is a destructive action — type <span class="font-black text-pos-text">DELETE</span> and enter the admin password.
       </p>
+      {#if deleteErrorMsg}
+        <p class="text-[11px] font-bold text-rose-600 bg-rose-50 dark:bg-rose-950/40 rounded-lg p-2">{deleteErrorMsg}</p>
+      {/if}
+      <input
+        type="text"
+        bind:value={deleteConfirmText}
+        placeholder="Type DELETE here / اكتب DELETE هنا"
+        class="w-full px-3 py-2 bg-pos-bg border border-pos-border rounded-xl text-xs font-bold font-mono text-pos-text outline-none focus:border-rose-500"
+      />
+      <input
+        type="password"
+        bind:value={deleteAdminPassword}
+        placeholder="Admin password / كلمة مرور المدير"
+        class="w-full px-3 py-2 bg-pos-bg border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none focus:border-rose-500"
+        on:keydown={(e) => e.key === 'Enter' && confirmDeleteExpense()}
+      />
       <div class="flex justify-end gap-2 pt-2 border-t border-pos-border">
         <button on:click={() => (isDeleteModalOpen = false)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">
           Cancel
         </button>
-        <button on:click={confirmDeleteExpense} disabled={isDeleting} class="px-4 py-2 bg-rose-600 text-white text-xs font-black rounded-xl cursor-pointer shadow-md">
+        <button
+          on:click={confirmDeleteExpense}
+          disabled={isDeleting || deleteConfirmText.trim().toUpperCase() !== 'DELETE' || !deleteAdminPassword}
+          class="px-4 py-2 bg-rose-600 text-white text-xs font-black rounded-xl cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+        >
           {isDeleting ? 'Deleting...' : 'Delete Voucher'}
         </button>
       </div>

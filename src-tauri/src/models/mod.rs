@@ -552,6 +552,9 @@ pub struct DashboardStats {
     /// LAN: today's sales split per terminal (PC) — which counter sold what.
     #[serde(default)]
     pub sales_by_terminal: Vec<TerminalSalesStat>,
+    /// Newly added stock in the period (purchases + adjustments).
+    #[serde(default)]
+    pub new_stock: NewStockStat,
 }
 
 /// One terminal's share of today's sales (LAN multi-PC).
@@ -560,6 +563,22 @@ pub struct TerminalSalesStat {
     pub terminal: String,
     pub total: i64,
     pub count: i64,
+}
+
+/// Newly ADDED stock in the selected period: how much came in, what it
+/// cost, and the profit if it all sold at the current sale price.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct NewStockStat {
+    /// Units received (purchases + positive stock adjustments).
+    pub qty_added: f64,
+    /// Purchase cost of those units (cost at time of entry).
+    pub cost_total: i64,
+    /// Retail value of those units at the CURRENT sale price.
+    pub sale_value: i64,
+    /// sale_value - cost_total: the possible profit if everything sells.
+    pub possible_profit: i64,
+    /// Distinct products that received stock.
+    pub product_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

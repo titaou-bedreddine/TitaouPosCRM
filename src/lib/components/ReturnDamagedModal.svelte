@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { localTodayISO } from '../utils/date';
   import { currentUser } from '../stores/auth';
   import { t } from '../i18n';
   import type { Product, Supplier } from '../types';
@@ -14,7 +15,7 @@
   let foundProduct: Product | null = null;
   let returnQty = 1;
   let returnReason = 'damaged';
-  let returnDate = new Date().toISOString().split('T')[0];
+  let returnDate = localTodayISO();
   let isSaving = false;
   let errorMsg = '';
 

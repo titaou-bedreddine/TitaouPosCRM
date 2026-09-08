@@ -253,6 +253,9 @@
   // Countdown giving the user time to cancel before the destructive reset.
   let resetCountdown = 0;
   let resetTimer: any = null;
+  // Themed reset result (replaces the OS-native alert that ignored the
+  // app's dark theme).
+  let resetResult: { ok: boolean; text: string } | null = null;
   function scheduleFactoryReset() {
     if (resetConfirm !== 'RESET') return;
     resetCountdown = 10;
@@ -273,11 +276,11 @@
     try {
       await invoke('factory_reset', { resetType });
       resetConfirm = '';
-      alert('Reset completed successfully.');
-      window.location.reload();
+      resetResult = { ok: true, text: '✅ Reset completed — the app reloads in 2 seconds… / تمت إعادة الضبط' };
+      setTimeout(() => window.location.reload(), 2000);
     } catch (e) {
       console.error(e);
-      alert('Factory reset failed: ' + e);
+      resetResult = { ok: false, text: '❌ Factory reset failed: ' + (typeof e === 'string' ? e : e?.message || String(e)) };
     }
   }
 
@@ -3470,6 +3473,11 @@
                 >
                   Cancel / إلغاء
                 </button>
+              </div>
+            {/if}
+            {#if resetResult}
+              <div class="p-3 rounded-xl border animate-in fade-in duration-150 {resetResult.ok ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-800' : 'bg-rose-50 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800'}">
+                <span class="text-xs font-black {resetResult.ok ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}">{resetResult.text}</span>
               </div>
             {/if}
           </div>

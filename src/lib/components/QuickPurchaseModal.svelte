@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { localTodayISO } from '../utils/date';
   import { t, currentLocale } from '../i18n';
   import type { Supplier, Product, CreatePurchaseInput } from '../types';
   import { normalizeBarcode } from '../utils/barcode';
@@ -62,7 +63,7 @@
         supplier_id: selectedSupplierId,
         user_id: 1,
         invoice_number: 'ACH-' + Date.now().toString().slice(-6),
-        date: new Date().toISOString().split('T')[0],
+        date: localTodayISO(),
         subtotal: total,
         discount: 0,
         tax: 0,

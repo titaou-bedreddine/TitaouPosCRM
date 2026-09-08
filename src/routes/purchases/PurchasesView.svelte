@@ -2,7 +2,9 @@
   import QrImage from '../../lib/components/QrImage.svelte';
   import { onMount, tick } from 'svelte';
   import { t } from '../../lib/i18n';
+  import { localTodayISO } from '../../lib/utils/date';
   import { invoke } from '@tauri-apps/api/core';
+  import { normalizeBarcode } from '../../lib/utils/barcode';
   import { get } from 'svelte/store';
   import { entityQrPayload } from '../../lib/utils/printer';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
@@ -41,13 +43,15 @@
   let isCreateOpen = false;
   let selectedSupplierId: number | null = null;
   let invoiceNumber = '';
-  let invoiceDate = new Date().toISOString().split('T')[0];
+  let invoiceDate = localTodayISO();
   let paidAmount = 0;
   let paymentMethod = 'cash';
   let notes = '';
 
   // 1-character live search
   let searchQuery = '';
+  // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
+  $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
   let liveSearchResults: Product[] = [];
   let isSearchDropdownOpen = false;
 
@@ -256,7 +260,7 @@
   }
 
   $: if (searchQuery.trim().length > 0) {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQueryN;
     liveSearchResults = products
       .filter(p =>
         (p.name_fr && p.name_fr.toLowerCase().includes(q)) ||

@@ -5,34 +5,51 @@ use rusqlite::Result;
 pub fn get_stats(db: &DbState, start_date: Option<String>, end_date: Option<String>) -> Result<DashboardStats, String> {
     let conn = db.conn.lock().unwrap();
 
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    // The "All" quick filter sends empty strings, not null — treat those as
-    // "no bound" instead of comparing dates against '' (which matched
-    // nothing and made the All filter show zeros).
-    let s_date = start_date.filter(|d| !d.trim().is_empty()).unwrap_or(today.clone());
-    let e_date = end_date.filter(|d| !d.trim().is_empty()).unwrap_or(today);
+    // The "All" quick filter sends empty strings, not null — those mean
+    // NO BOUND (true all-time). A missing bound drops the SQL predicate
+    // entirely; it must NOT silently narrow to "today" (field-found: the
+    // All filter was showing only today's numbers).
+    let s_date: Option<String> = start_date.filter(|d| !d.trim().is_empty());
+    let e_date: Option<String> = end_date.filter(|d| !d.trim().is_empty());
+    // Build the WHERE fragment once per table's date expression.
+    let sales_where = match (&s_date, &e_date) {
+        (Some(a), Some(b)) => format!("DATE(created_at) >= '{}' AND DATE(created_at) <= '{}' AND", a, b),
+        (Some(a), None) => format!("DATE(created_at) >= '{}' AND", a),
+        (None, Some(b)) => format!("DATE(created_at) <= '{}' AND", b),
+        (None, None) => String::new(),
+    };
+    let sale_join_where = {
+        let w = sales_where.replace("DATE(created_at)", "DATE(s.created_at)");
+        w
+    };
+    let expenses_where = match (&s_date, &e_date) {
+        (Some(a), Some(b)) => format!("date >= '{}' AND date <= '{}' AND", a, b),
+        (Some(a), None) => format!("date >= '{}' AND", a),
+        (None, Some(b)) => format!("date <= '{}' AND", b),
+        (None, None) => String::new(),
+    };
 
     let today_sales: i64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(total_amount), 0) FROM sales WHERE DATE(created_at) >= ?1 AND DATE(created_at) <= ?2 AND status = 'completed'",
-            rusqlite::params![s_date, e_date],
+            &format!("SELECT COALESCE(SUM(total_amount), 0) FROM sales WHERE {} status = 'completed'", sales_where),
+            [],
             |r| r.get(0),
         )
         .unwrap_or(0);
 
     let today_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM sales WHERE DATE(created_at) >= ?1 AND DATE(created_at) <= ?2 AND status = 'completed'",
-            rusqlite::params![s_date, e_date],
-            |r| r.get(0),
+            &format!("SELECT COUNT(*) FROM sales WHERE {} status = 'completed'", sales_where),
+            rusqlite::params![],
+            |r| r.get::<_, i64>(0),
         )
         .unwrap_or(0);
 
     let returns_amount: i64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(total_price), 0) FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE si.is_refunded = 1 AND DATE(s.created_at) >= ?1 AND DATE(s.created_at) <= ?2",
-            rusqlite::params![s_date, e_date],
-            |r| r.get(0),
+            &format!("SELECT COALESCE(SUM(total_price), 0) FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE {} si.is_refunded = 1", sale_join_where),
+            rusqlite::params![],
+            |r| r.get::<_, i64>(0),
         )
         .unwrap_or(0);
 
@@ -54,9 +71,9 @@ pub fn get_stats(db: &DbState, start_date: Option<String>, end_date: Option<Stri
 
     let today_expenses: i64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE date >= ?1 AND date <= ?2",
-            rusqlite::params![s_date, e_date],
-            |r| r.get(0),
+            &format!("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE {} 1=1", expenses_where),
+            rusqlite::params![],
+            |r| r.get::<_, i64>(0),
         )
         .unwrap_or(0);
 
@@ -78,11 +95,11 @@ pub fn get_stats(db: &DbState, start_date: Option<String>, end_date: Option<Stri
     let sales_by_terminal: Vec<crate::models::TerminalSalesStat> = {
         let mut stmt = conn
             .prepare(
-                "SELECT COALESCE(NULLIF(terminal_name, ''), 'Unknown PC') as term,
+                &format!("SELECT COALESCE(NULLIF(terminal_name, ''), 'Unknown PC') as term,
                         COALESCE(SUM(total_amount), 0), COUNT(*)
                  FROM sales
-                 WHERE date(created_at) = date('now','localtime') AND status = 'completed'
-                 GROUP BY term ORDER BY 2 DESC",
+                 WHERE {} status = 'completed'
+                 GROUP BY term ORDER BY 2 DESC", sales_where),
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -97,14 +114,46 @@ pub fn get_stats(db: &DbState, start_date: Option<String>, end_date: Option<Stri
         rows.filter_map(|r| r.ok()).collect()
     };
 
+    // Newly ADDED stock in the period: purchases + positive adjustments.
+    // qty = units in, cost = what was paid, possible profit = current
+    // retail value minus that cost (what the shop could earn if it sells).
+    let new_stock: crate::models::NewStockStat = conn
+        .query_row(
+            &format!(
+                "SELECT COALESCE(SUM(im.quantity), 0),
+                        COALESCE(SUM(im.quantity * COALESCE(im.cost_at_time, 0)), 0),
+                        COALESCE(SUM(im.quantity * COALESCE(p.sale_price, 0)), 0),
+                        COUNT(DISTINCT im.product_id)
+                 FROM inventory_movements im
+                 LEFT JOIN products p ON im.product_id = p.id
+                 WHERE {} im.type IN ('purchase', 'adjustment_inc')",
+                sales_where.replace("DATE(created_at)", "DATE(im.created_at)")
+            ),
+            rusqlite::params![],
+            |r| {
+                let cost: i64 = r.get(1)?;
+                let sale: i64 = r.get(2)?;
+                Ok(crate::models::NewStockStat {
+                    qty_added: r.get(0)?,
+                    cost_total: cost,
+                    sale_value: sale,
+                    possible_profit: sale - cost,
+                    product_count: r.get(3)?,
+                })
+            },
+        )
+        .unwrap_or_default();
+
     // Fetch top products
     let mut top_stmt = conn.prepare(
-        "SELECT p.name_ar, COALESCE(c.name_ar, 'General'), SUM(si.quantity), SUM(si.total_price)
+        &format!("SELECT p.name_ar, COALESCE(c.name_ar, 'General'), SUM(si.quantity), SUM(si.total_price)
          FROM sale_items si
+         JOIN sales s ON si.sale_id = s.id
          JOIN products p ON si.product_id = p.id
          LEFT JOIN categories c ON p.category_id = c.id
+         WHERE {} s.status = 'completed'
          GROUP BY si.product_id
-         ORDER BY SUM(si.total_price) DESC LIMIT 10",
+         ORDER BY SUM(si.total_price) DESC LIMIT 10", sale_join_where),
     ).map_err(|e| e.to_string())?;
 
     let top_rows = top_stmt.query_map([], |row| {
@@ -141,5 +190,6 @@ pub fn get_stats(db: &DbState, start_date: Option<String>, end_date: Option<Stri
         average_basket,
         top_products,
         sales_by_terminal,
+        new_stock,
     })
 }

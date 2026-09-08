@@ -1,12 +1,13 @@
 <script lang="ts">
   import { X, Plus } from 'lucide-svelte';
+  import { normalizeBarcode } from '../utils/barcode';
 
   export let barcodes: string[] = [];
 
   let inputValue = '';
 
   function addBarcode() {
-    const val = inputValue.trim();
+    const val = normalizeBarcode(inputValue).trim();
     if (val && !barcodes.includes(val)) {
       barcodes = [...barcodes, val];
       inputValue = '';

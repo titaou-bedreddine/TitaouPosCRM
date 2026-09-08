@@ -2,7 +2,9 @@
   import QrImage from '../../lib/components/QrImage.svelte';
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
+  import { localTodayISO } from '../../lib/utils/date';
   import { invoke } from '@tauri-apps/api/core';
+  import { normalizeBarcode } from '../../lib/utils/barcode';
   import { entityQrPayload } from '../../lib/utils/printer';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import type { Sale, User } from '../../lib/types';
@@ -21,11 +23,13 @@
   let users: User[] = [];
 
   // History defaults to today; the user can widen the range.
-  let startDate = new Date().toISOString().split('T')[0];
-  let endDate = new Date().toISOString().split('T')[0];
+  let startDate = localTodayISO();
+  let endDate = localTodayISO();
   let selectedCashier: number | null = null;
   let selectedStatus: string = 'all';
   let searchQuery = '';
+  // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
+  $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
 
   // Sale Details Modal
   let isDetailModalOpen = false;
@@ -68,7 +72,7 @@
   $: filteredSales = sales.filter(s => {
     // Omni-search: sale number, customer name, exact amount, or the QR
     // payload (scan a receipt QR → 'SALE:POS-...' or plain code).
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQueryN;
     const qr = entityQrPayload('SALE', s.sale_number).toLowerCase();
     const stripped = q.startsWith('sale:') ? q.slice(5) : q;
     const matchesSearch =

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Customer } from '../types';
   import { invoke } from '@tauri-apps/api/core';
+  import { localTodayISO } from '../utils/date';
   import { currentUser } from '../stores/auth';
   import { activeSession } from '../stores/session';
   import { QrCode, Printer, FileText, X, Check, DollarSign, ShieldAlert, Eraser } from 'lucide-svelte';
@@ -12,7 +13,7 @@
   export let onPaymentRecorded: () => void = () => {};
 
   let paymentAmount = 0;
-  let paymentDate = new Date().toISOString().split('T')[0];
+  let paymentDate = localTodayISO();
   let paymentMethod = 'cash';
   let reference = '';
   let notes = '';

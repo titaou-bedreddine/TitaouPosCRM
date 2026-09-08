@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
+  import { localTodayISO } from '../../lib/utils/date';
   import { invoke } from '@tauri-apps/api/core';
   import type { CashMovement, CashSession, Customer } from '../../lib/types';
   import { activeSession } from '../../lib/stores/session';
@@ -102,8 +103,8 @@
       // Versement: remaining unpaid layaway balances today.
       try {
         const sales = await invoke<any[]>('list_sales', {
-          startDate: new Date().toISOString().split('T')[0],
-          endDate: new Date().toISOString().split('T')[0],
+          startDate: localTodayISO(),
+          endDate: localTodayISO(),
           userId: null,
           limit: 500,
         });

@@ -308,4 +308,12 @@ export interface DashboardStats {
     total: number;
     count: number;
   }>;
+  /** Newly added stock in the period: qty, cost, possible profit. */
+  new_stock?: {
+    qty_added: number;
+    cost_total: number;
+    sale_value: number;
+    possible_profit: number;
+    product_count: number;
+  };
 }

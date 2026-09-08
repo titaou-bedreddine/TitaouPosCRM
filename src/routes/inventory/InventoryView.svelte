@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { normalizeBarcode } from '../../lib/utils/barcode';
   import type { Category, Product, Unit } from '../../lib/types';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
+  import { localTodayISO } from '../../lib/utils/date';
+  import { invalidations } from '../../lib/stores/invalidations';
   import ProductEditModal from '../../lib/components/ProductEditModal.svelte';
   import PrintLabelModal from '../../lib/components/PrintLabelModal.svelte';
   import BatchLabelPrintModal from '../../lib/components/BatchLabelPrintModal.svelte';
@@ -55,6 +58,13 @@
   let units: Unit[] = [];
 
   let searchQuery = '';
+
+  // Live cross-PC: stock edited on another terminal appears here instantly.
+  $: if ($invalidations.products) {
+    void loadProducts();
+  }
+  // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
+  $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
   let searchType: 'all' | 'name' | 'barcode' | 'price' | 'qr' = 'all';
   let selectedCategory: number | null = null;
   let sortBy: string = 'default';
@@ -105,12 +115,12 @@
         : null;
 
       const list = await invoke<Product[]>('search_products', {
-        query: searchQuery || '',
+        query: searchQueryN || '',
         categoryId: (catId && !isNaN(catId)) ? catId : null,
         searchType: searchType === 'qr' ? 'barcode' : (searchType || 'all'),
       });
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = localTodayISO();
 
       if (sortBy === 'name_asc') {
         list.sort((a, b) => (a.name_fr || a.name_ar).localeCompare(b.name_fr || b.name_ar));
@@ -164,7 +174,7 @@
 
   function isProductExpired(expiryDate?: string): boolean {
     if (!expiryDate) return false;
-    const today = new Date().toISOString().split('T')[0];
+    const today = localTodayISO();
     return expiryDate < today;
   }
 
