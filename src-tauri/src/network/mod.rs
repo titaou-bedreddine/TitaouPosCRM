@@ -723,6 +723,17 @@ fn connect_client(base: &str, health: &Value, cfg: &NetConfig, shop_id: &str) {
 
     let Some(token) = have_token else { return };
     *net().server_base.lock().unwrap() = Some(base.to_string());
+    // A user token from a previous session can be stale (a server restart
+    // wipes its in-memory token map). Verify it with one cheap User-level
+    // call; when rejected, drop it — the UI sees logged_in flip false and
+    // sends the user back to the login screen instead of failing every
+    // operation with "Log in before running shop operations".
+    if let Some(ut) = net().user_token.lock().unwrap().clone() {
+        if !user_token_valid(base, &ut) {
+            clear_user_token();
+            log_net_event("user_token_invalid", json!({ "action": "logout_required" }));
+        }
+    }
     // Remember the coordinator identity for the UI (its announce may never
     // arrive on broadcast-filtered LANs — health already told us who).
     {
@@ -966,16 +977,24 @@ pub fn active_token_pub() -> Option<String> {
     device_token_pub()
 }
 
+fn user_token_valid(base: &str, token: &str) -> bool {
+    client::invoke_blocking(base, token, "get_units", &json!({}))
+        .map(|_| true)
+        .unwrap_or(false)
+}
+
 pub fn store_user_token(token: &str) {
     if let Some(rt) = net_opt() {
         *rt.user_token.lock().unwrap() = Some(token.to_string());
     }
+    emit_status();
 }
 
 pub fn clear_user_token() {
     if let Some(rt) = net_opt() {
         *rt.user_token.lock().unwrap() = None;
     }
+    emit_status();
 }
 
 fn best_coordinator_base(shop_filter: Option<&str>) -> Option<String> {
@@ -1212,7 +1231,15 @@ pub fn should_forward_ipc(command: &str) -> bool {
     // terminal "logged in" locally with no shop permissions — the exact
     // ghost-login bug seen in the field.
     if command == "login" {
-        return matches!(*rt.mode.lock().unwrap(), Mode::Connected);
+        if matches!(*rt.mode.lock().unwrap(), Mode::Connected) {
+            return true;
+        }
+        // A CLIENT-role terminal never falls back to a local login — the
+        // authoritative accounts live on the server. When disconnected the
+        // interception returns the clear "shop server unreachable" error
+        // (spec §14: an explicit client stays offline, never authoritative).
+        let cfg = current_config();
+        return cfg.enabled && cfg.role == "client";
     }
     if !invoke_registry::KNOWN_COMMANDS.contains(&command) {
         return false;

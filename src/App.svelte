@@ -23,7 +23,7 @@
   import CashDrawerModal from './lib/components/CashDrawerModal.svelte';
   import FirstSetupWizard from './lib/components/FirstSetupWizard.svelte';
   import NetworkStatusIndicator from './lib/components/NetworkStatusIndicator.svelte';
-  import { networkEvents } from './lib/stores/network';
+  import { networkEvents, networkStatus } from './lib/stores/network';
 
     import { stockWarningModal } from './lib/stores/cart';
 
@@ -230,6 +230,21 @@
   // Real-time LAN events from the shop server: session events invalidate the
   // locally cached register view so a connected terminal stays in sync.
   let lastNetEventTs = 0;
+  // Client-mode session safety: when the backend reports the user token is
+  // gone (stale after a server restart), log the UI out cleanly instead of
+  // hitting "Log in before running shop operations" on every operation.
+  let lastLoggedIn: boolean | null = null;
+  $: if ($currentUser && $networkStatus) {
+    const li = !!$networkStatus.logged_in;
+    if (lastLoggedIn === null) {
+      lastLoggedIn = li;
+    } else if (lastLoggedIn && !li) {
+      lastLoggedIn = li;
+      handleLogout();
+    } else {
+      lastLoggedIn = li;
+    }
+  }
   $: if ($networkEvents[0] && $networkEvents[0].ts !== lastNetEventTs) {
     lastNetEventTs = $networkEvents[0].ts;
     const t0 = String($networkEvents[0].type || '');
