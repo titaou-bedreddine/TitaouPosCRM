@@ -3,8 +3,9 @@
   import { invoke } from '@tauri-apps/api/core';
   import { t } from '../../lib/i18n';
   import { currentUser } from '../../lib/stores/auth';
+  import { networkStatus } from '../../lib/stores/network';
   import type { User } from '../../lib/types';
-  import { Lock, ChevronDown, Eye, EyeOff, X } from 'lucide-svelte';
+  import { Lock, ChevronDown, Eye, EyeOff, X, Wifi, WifiOff, Loader2 } from 'lucide-svelte';
 
   let usersList: User[] = [];
   let selectedUsername = 'admin';
@@ -246,7 +247,27 @@
         </div>
       </div>
 
-      {#if ipcDead}
+      {#if $networkStatus?.enabled && ($networkStatus?.role === 'client' || $networkStatus?.mode === 'connected')}
+      <div
+        class="p-2.5 rounded-xl border text-[11px] font-bold flex items-center gap-2
+        {$networkStatus?.mode === 'connected'
+          ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
+          : 'bg-amber-950/60 border-amber-800 text-amber-300'}"
+      >
+        {#if $networkStatus?.mode === 'connected'}
+          <Wifi class="w-4 h-4 shrink-0" />
+          <span>Connected to shop server {$networkStatus?.coordinator?.pc_name ? `(${$networkStatus.coordinator.pc_name})` : ''} — sign in with your shop account.</span>
+        {:else if $networkStatus?.mode === 'searching' || $networkStatus?.mode === 'reconnecting'}
+          <Loader2 class="w-4 h-4 shrink-0 animate-spin" />
+          <span>Searching for the shop server… login unlocks automatically once connected / جارٍ البحث عن الخادم…</span>
+        {:else}
+          <WifiOff class="w-4 h-4 shrink-0" />
+          <span>Shop server unreachable — login is blocked on this terminal until the connection returns / لا يمكن تسجيل الدخول قبل الاتصال بالخادم</span>
+        {/if}
+      </div>
+    {/if}
+
+    {#if ipcDead}
         <div class="p-3 bg-rose-100 text-rose-800 text-xs font-bold rounded-xl flex items-center justify-between gap-2">
           <span>Backend connection stuck — click Reload / انقطع الاتصال الداخلي</span>
           <button
