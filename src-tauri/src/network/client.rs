@@ -36,11 +36,16 @@ pub fn health_check(base_url: &str) -> Option<Value> {
         return None;
     }
     let v: Value = resp.json().ok()?;
-    if v.get("status").and_then(|s| s.as_str()) == Some("ok") {
-        Some(v)
-    } else {
-        None
+    if v.get("status").and_then(|s| s.as_str()) != Some("ok") {
+        return None;
     }
+    // App isolation: a TitaouPOS (old app) server answering on this address
+    // must NEVER be adopted as our shop server — its user/permission model
+    // is a different database ("Log in before running shop operations").
+    if v.get("app").and_then(|a| a.as_str()) != Some(super::discovery::SHOP_KIND) {
+        return None;
+    }
+    Some(v)
 }
 
 /// POST /api/v1/network/join. `confirm=false` returns the shop identity for
@@ -59,6 +64,7 @@ pub fn join_server(
         "role_pref": own.role_pref,
         "app_version": own.app_version,
         "shop_id": shop_id,
+        "app": super::discovery::SHOP_KIND,
         "confirm": confirm,
     });
     let resp = http().post(&url).json(&body).send().map_err(|e| format!("join failed: {}", e))?;

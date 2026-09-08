@@ -266,6 +266,10 @@ async fn api_health() -> axum::response::Response {
         "server_pc": pc_name,
         "shop_id": shop_id,
         "shop_name": shop_name,
+        // App discriminator: a TitaouPOS client (different app) must see a
+        // mismatch and refuse to adopt us as ITS shop server, exactly like
+        // we refuse TitaouPOS servers.
+        "app": super::discovery::SHOP_KIND,
         "app_version": env!("CARGO_PKG_VERSION"),
         "protocol_version": PROTOCOL_VERSION,
         "term": coordinator_term(),
@@ -288,6 +292,9 @@ struct JoinBody {
     app_version: String,
     #[serde(default)]
     shop_id: String,
+    /// Sending app ("titaouposcrm"). Empty = foreign/legacy client → refused.
+    #[serde(default)]
+    app: String,
     #[serde(default)]
     confirm: bool,
 }
@@ -305,6 +312,11 @@ async fn api_join(
     // shop is never allowed.
     if body.shop_id != shop_id {
         return err_json(StatusCode::FORBIDDEN, "This terminal targets a different shop");
+    }
+    // App isolation: a TitaouPOS (old app) terminal must never join a
+    // TitaouPosCRM shop, and vice versa.
+    if body.app != super::discovery::SHOP_KIND {
+        return err_json(StatusCode::FORBIDDEN, "Different application family — this shop runs TitaouPosCRM");
     }
     if super::is_node_blocked(&body.node_id) {
         return err_json(StatusCode::FORBIDDEN, "This terminal has been blocked by the shop administrator");

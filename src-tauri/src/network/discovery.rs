@@ -15,12 +15,18 @@ use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Fixed UDP discovery port (LAN-local, one listener per PC).
-pub const DISCOVERY_PORT: u16 = 50110;
+/// Fixed UDP discovery port (LAN-local, one listener per PC). Distinct from
+/// TitaouPOS's 50110 so the two apps never see each other's broadcasts.
+pub const DISCOVERY_PORT: u16 = 50120;
 /// mDNS service type.
 pub const MDNS_SERVICE: &str = "_titaouposcrm._tcp.local.";
-const MAGIC: &str = "TITAOPOS-NET";
+const MAGIC: &str = "TITAOPOSCRM-NET";
 const PROTOCOL_VERSION: u32 = 1;
+/// App discriminator: TitaouPOS broadcasts TITAOPOS-NET on port 50110,
+/// TitaouPosCRM broadcasts TITAOPOSCRM-NET on port 50120. Both fields differ,
+/// so a TitaouPOS packet can NEVER validate as ours even if a port/magic is
+/// ever shared again (belt + braces against cross-app shop merging).
+pub const SHOP_KIND: &str = "titaouposcrm";
 
 /// One announce/probe packet. Also the payload mDNS TXT records reconstruct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +51,10 @@ pub struct DiscoveryPacket {
     /// Sales+products+customers row estimate used by the election.
     #[serde(default)]
     pub data_rows: u64,
+    /// Which app family this node belongs to ("titaouposcrm"). TitaouPOS
+    /// packets carry no/none of this and fail is_valid().
+    #[serde(default)]
+    pub shop_kind: String,
 }
 
 impl DiscoveryPacket {
@@ -64,11 +74,15 @@ impl DiscoveryPacket {
             lan_ips: Vec::new(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             data_rows: 0,
+            shop_kind: SHOP_KIND.to_string(),
         }
     }
 
     pub fn is_valid(&self) -> bool {
-        self.magic == MAGIC && self.protocol == PROTOCOL_VERSION && !self.node_id.is_empty()
+        self.magic == MAGIC
+            && self.protocol == PROTOCOL_VERSION
+            && !self.node_id.is_empty()
+            && self.shop_kind == SHOP_KIND
     }
 }
 
@@ -291,6 +305,7 @@ fn packet_from_mdns_info(info: &ServiceInfo, from_ip: String) -> Option<Discover
     }
     Some(DiscoveryPacket {
         magic: MAGIC.into(),
+        shop_kind: SHOP_KIND.to_string(),
         protocol: PROTOCOL_VERSION,
         probe: false,
         node_id: node,

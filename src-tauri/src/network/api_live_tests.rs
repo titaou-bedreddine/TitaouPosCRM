@@ -101,12 +101,27 @@ fn live_api_join_login_invoke_and_permissions() {
     let health = health.expect("server did not come up");
     assert_eq!(health["status"], "ok");
     assert_eq!(health["shop_id"], "SHOP-TEST1");
+    assert_eq!(health["app"], crate::network::discovery::SHOP_KIND);
     assert!(health["term"].as_u64().unwrap() >= 1);
+
+    // ISOLATION: a join from a different application family (e.g. the old
+    // TitaouPOS) must be refused — it can never merge into this shop.
+    {
+        let foreign: Value = client
+            .post(format!("{}/api/v1/network/join", base))
+            .json(&json!({ "node_id": "NODE-TITAOUPOS", "pc_name": "Old POS", "shop_id": "SHOP-TEST1", "app": "titaoupos", "confirm": true }))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!(foreign["ok"], false, "foreign app must be refused");
+        assert!(foreign["error"].as_str().unwrap().contains("Different application"), "unexpected error: {foreign}");
+    }
 
     // Join (confirmation step first — no registration yet).
     let probe: Value = client
         .post(format!("{}/api/v1/network/join", base))
-        .json(&json!({ "node_id": "NODE-CLI1", "pc_name": "POS-CLI1", "shop_id": "SHOP-TEST1", "confirm": false }))
+        .json(&json!({ "node_id": "NODE-CLI1", "pc_name": "POS-CLI1", "shop_id": "SHOP-TEST1", "app": crate::network::discovery::SHOP_KIND, "confirm": false }))
         .send()
         .unwrap()
         .json()
@@ -120,7 +135,7 @@ fn live_api_join_login_invoke_and_permissions() {
     // shop id at this step — see tick_client in mod.rs).
     let wrong = client
         .post(format!("{}/api/v1/network/join", base))
-        .json(&json!({ "node_id": "NODE-CLI2", "pc_name": "X", "shop_id": "SHOP-OTHER", "confirm": true }))
+        .json(&json!({ "node_id": "NODE-CLI2", "pc_name": "X", "shop_id": "SHOP-OTHER", "app": crate::network::discovery::SHOP_KIND, "confirm": true }))
         .send()
         .unwrap();
     assert_eq!(wrong.status(), reqwest::StatusCode::FORBIDDEN);
@@ -128,7 +143,7 @@ fn live_api_join_login_invoke_and_permissions() {
     // Confirm the join → device token.
     let joined: Value = client
         .post(format!("{}/api/v1/network/join", base))
-        .json(&json!({ "node_id": "NODE-CLI1", "pc_name": "POS-CLI1", "role_pref": "client", "app_version": "0.0.0", "shop_id": "SHOP-TEST1", "confirm": true }))
+        .json(&json!({ "node_id": "NODE-CLI1", "pc_name": "POS-CLI1", "role_pref": "client", "app_version": "0.0.0", "shop_id": "SHOP-TEST1", "app": crate::network::discovery::SHOP_KIND, "confirm": true }))
         .send()
         .unwrap()
         .json()
@@ -224,7 +239,7 @@ fn live_api_join_login_invoke_and_permissions() {
 
     let joined2: Value = client
         .post(format!("{}/api/v1/network/join", base))
-        .json(&json!({ "node_id": "NODE-CLI3", "pc_name": "POS-CLI3", "shop_id": "SHOP-TEST1", "confirm": true }))
+        .json(&json!({ "node_id": "NODE-CLI3", "pc_name": "POS-CLI3", "shop_id": "SHOP-TEST1", "app": crate::network::discovery::SHOP_KIND, "confirm": true }))
         .send()
         .unwrap()
         .json()

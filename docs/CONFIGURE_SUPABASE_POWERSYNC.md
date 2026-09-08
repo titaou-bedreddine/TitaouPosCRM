@@ -104,6 +104,8 @@ side-by-side with the original TitaouPOS — **separate everything**:
 | App identifier | `com.titaou.pos` | `com.titaou.poscrm` |
 | LAN API port | **8080** (default) | **8090** (default) |
 | mDNS discovery | `_titaoupos._tcp.local.` | `_titaouposcrm._tcp.local.` |
+| UDP discovery | port 50110, magic `TITAOPOS-NET` | port **50120**, magic `TITAOPOSCRM-NET` |
+| Server app identity | `app: (none)` | `app: titaouposcrm` in /health + join |
 | Autostart key | `HKCU\...\Run\TitaouPOS` | `HKCU\...\Run\TitaouPosCRM` |
 | Updater feed | TitaouPosT releases | TitaouPosCRM releases |
 
@@ -251,3 +253,12 @@ flutter run -d <android-device-id>
   Cloud Sync on the PC that is the shop server (or a standalone PC).
 - **mDNS cross-talk**: impossible by construction — TitaouPOS advertises
   `_titaoupos._tcp.local.`, TitaouPosCRM advertises `_titaouposcrm._tcp.local.`.
+- **"Log in before running shop operations" during first setup** (v0.6.0
+  first-build symptom): the early build shared TitaouPOS's UDP discovery
+  (port 50110 / `TITAOPOS-NET`), so TitaouPosCRM could adopt a running
+  TitaouPOS as its "shop server" and forward operations there — which then
+  rejected them. Fixed in the current build: separate port + magic + an
+  `app` discriminator checked on BOTH sides (client refuses foreign
+  servers, server refuses foreign joins). If you still see the error,
+  uninstall the old build, delete `%APPDATA%\TitaouPosCRM`, reinstall from
+  the current release assets.
