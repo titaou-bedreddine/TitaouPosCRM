@@ -147,15 +147,32 @@ impl DbState {
         // LAN multi-terminal: every financial record is stamped with the
         // PC (terminal name) that created it. Existing rows are backfilled
         // with THIS machine's name (they were all created here pre-LAN).
-        let _ = conn.execute_batch("
-            ALTER TABLE sales ADD COLUMN terminal_name TEXT DEFAULT '';
-            ALTER TABLE purchases ADD COLUMN terminal_name TEXT DEFAULT '';
-            ALTER TABLE expenses ADD COLUMN terminal_name TEXT DEFAULT '';
-            ALTER TABLE cash_sessions ADD COLUMN terminal_name TEXT DEFAULT '';
-            ALTER TABLE cash_movements ADD COLUMN terminal_name TEXT DEFAULT '';
-            ALTER TABLE customer_debt_payments ADD COLUMN terminal_name TEXT DEFAULT '';
-            ALTER TABLE supplier_debt_payments ADD COLUMN terminal_name TEXT DEFAULT '';
-        ");
+        // Each ALTER is a SEPARATE statement: execute_batch stops at the
+        // first failure, which could silently skip every column after it
+        // (seen in the field: cash_movements missing → "Failed to open
+        // session"). Individual statements are also ID EMPOTENT — a
+        // partially migrated DB self-repairs on this pass.
+        for table in [
+            "sales",
+            "purchases",
+            "expenses",
+            "cash_sessions",
+            "cash_movements",
+            "customer_debt_payments",
+            "supplier_debt_payments",
+        ] {
+            // "duplicate column name" is the only expected error (column
+            // already added on a previous run) — anything else is real.
+            if let Err(e) = conn.execute(
+                &format!("ALTER TABLE {} ADD COLUMN terminal_name TEXT DEFAULT '';", table),
+                [],
+            ) {
+                let msg = e.to_string();
+                if !msg.contains("duplicate column") {
+                    eprintln!("[db] terminal_name migration failed for {}: {}", table, msg);
+                }
+            }
+        }
         let this_pc = crate::network::terminal_name_for_this_pc();
         let _ = conn.execute(
             "UPDATE sales SET terminal_name = ?1 WHERE terminal_name = '' OR terminal_name IS NULL",
@@ -516,5 +533,86 @@ fn dirs_next() -> Option<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config"))
+    }
+}
+
+#[cfg(test)]
+mod terminal_stamp_tests {
+    use super::*;
+
+    fn fresh_db() -> DbState {
+        let dir = std::env::temp_dir().join("titaou_migration_tests");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("mig_{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = DbState { conn: std::sync::Mutex::new(rusqlite::Connection::open(&path).unwrap()) };
+        state.run_migrations().unwrap();
+        state
+    }
+
+    fn has_column(conn: &rusqlite::Connection, table: &str, col: &str) -> bool {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table)).unwrap();
+        let names: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        names.iter().any(|name| name == col)
+    }
+
+    #[test]
+    fn all_stamp_tables_gain_terminal_name() {
+        let db = fresh_db();
+        let conn = db.conn.lock().unwrap();
+        for t in ["sales", "purchases", "expenses", "cash_sessions", "cash_movements",
+                  "customer_debt_payments", "supplier_debt_payments"] {
+            assert!(has_column(&conn, t, "terminal_name"),
+                    "{} missing terminal_name after migration", t);
+        }
+    }
+
+    #[test]
+    fn partial_migration_self_repairs() {
+        // Field-found defect: a DB whose batch ALTER stopped early (e.g.
+        // cash_movements never got the column) must be REPAIRED by the next
+        // run_migrations pass — idempotent per-table ALTERs.
+        let dir = std::env::temp_dir().join("titaou_migration_tests");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("mig_partial_{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let raw = rusqlite::Connection::open(&path).unwrap();
+        raw.execute_batch("
+            PRAGMA journal_mode = WAL;
+            CREATE TABLE cash_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                register_id INTEGER, user_id INTEGER, opening_amount INTEGER DEFAULT 0,
+                expected_cash INTEGER DEFAULT 0, status TEXT DEFAULT 'open',
+                notes TEXT, opened_at TEXT, closed_at TEXT, actual_cash INTEGER,
+                difference INTEGER, terminal_name TEXT DEFAULT ''
+            );
+            CREATE TABLE cash_movements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER, user_id INTEGER, type TEXT, amount INTEGER,
+                reason TEXT, notes TEXT, created_at TEXT
+            );
+        ").unwrap();
+        drop(raw);
+
+        let state = DbState { conn: std::sync::Mutex::new(rusqlite::Connection::open(&path).unwrap()) };
+        state.run_migrations().unwrap();
+        let conn = state.conn.lock().unwrap();
+        assert!(has_column(&conn, "cash_movements", "terminal_name"),
+                "cash_movements.terminal_name not repaired by migration");
+        assert!(has_column(&conn, "cash_sessions", "terminal_name"),
+                "cash_sessions.terminal_name not repaired by migration");
+    }
+
+    #[test]
+    fn migrations_are_idempotent() {
+        let db = fresh_db();
+        // A second pass must not error (all "duplicate column" cases).
+        db.run_migrations().unwrap();
+        let conn = db.conn.lock().unwrap();
+        assert!(has_column(&conn, "cash_movements", "terminal_name"));
     }
 }
