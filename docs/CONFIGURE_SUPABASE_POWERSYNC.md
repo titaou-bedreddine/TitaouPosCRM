@@ -253,6 +253,12 @@ flutter run -d <android-device-id>
   Cloud Sync on the PC that is the shop server (or a standalone PC).
 - **mDNS cross-talk**: impossible by construction — TitaouPOS advertises
   `_titaoupos._tcp.local.`, TitaouPosCRM advertises `_titaouposcrm._tcp.local.`.
+- **Pull errors in the Cloud Sync status** (`sync_clients.updated_at` /
+  `Could not find a relationship between 'orders' and 'profiles'`): fixed in
+  v0.6.1 — the puller now reads the base `clients` table (the `sync_clients`
+  view has no `updated_at` cursor column) and resolves member names
+  client-side (PostgREST can't follow the preseller FK into `profiles`; it
+  points at `auth.users`).
 - **"Log in before running shop operations" during first setup** (v0.6.0
   first-build symptom): the early build shared TitaouPOS's UDP discovery
   (port 50110 / `TITAOPOS-NET`), so TitaouPosCRM could adopt a running

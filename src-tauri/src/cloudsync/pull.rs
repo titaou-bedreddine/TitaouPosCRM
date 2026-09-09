@@ -53,6 +53,31 @@ fn pull_products(conn: &mut Connection, client: &SupabaseClient) -> Result<(), S
     // duplicating.
     let first_pull = cursor == "1970-01-01T00:00:00Z";
 
+    // Resolve member names (preseller/seller → full_name) without a
+    // PostgREST embed: FKs point at auth.users, so we fetch the small org
+    // profiles table once per cycle (admin org-read, 0016).
+    let mut member_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if !rows.is_empty() {
+        if let Ok(profs) = client.select("profiles", "id, full_name", &[]) {
+            for pr in profs {
+                if let (Some(id), Some(name)) =
+                    (pr["id"].as_str(), pr["full_name"].as_str())
+                {
+                    member_names.insert(id.to_string(), name.to_string());
+                }
+            }
+        }
+    }
+    let member_name_of = |row: &Value| -> String {
+        row["preseller_id"]
+            .as_str()
+            .or_else(|| row["seller_id"].as_str())
+            .and_then(|id| member_names.get(id))
+            .cloned()
+            .unwrap_or_else(|| "—".to_string())
+    };
+
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for row in &rows {
         let crm_id = row["id"].as_str().unwrap_or_default().to_string();
@@ -150,7 +175,7 @@ fn pull_products(conn: &mut Connection, client: &SupabaseClient) -> Result<(), S
 fn pull_clients(conn: &mut Connection, client: &SupabaseClient, org_id: &str) -> Result<(), String> {
     let cursor = outbox::get_cursor(conn, "clients").unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
     let rows = client.select(
-        "sync_clients",
+        "clients",
         "id, name, phone, owner_name, address, latitude, longitude, current_balance, is_active, updated_at",
         &[
             ("updated_at", format!("gt.{cursor}")),
@@ -233,7 +258,7 @@ fn pull_field_orders(conn: &mut Connection, client: &SupabaseClient, _org_id: &s
     let cursor = outbox::get_cursor(conn, "orders").unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
     let rows = client.select(
         "orders",
-        "*, client:clients(name), preseller:profiles!orders_preseller_id_fkey(full_name)",
+        "*, client:clients(name)",
         &[
             ("created_at", format!("gt.{cursor}")),
             ("source", "neq.pos".into()),
@@ -241,6 +266,31 @@ fn pull_field_orders(conn: &mut Connection, client: &SupabaseClient, _org_id: &s
             ("limit", BATCH.into()),
         ],
     )?;
+
+    // Resolve member names (preseller/seller → full_name) without a
+    // PostgREST embed: FKs point at auth.users, so we fetch the small org
+    // profiles table once per cycle (admin org-read, 0016).
+    let mut member_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if !rows.is_empty() {
+        if let Ok(profs) = client.select("profiles", "id, full_name", &[]) {
+            for pr in profs {
+                if let (Some(id), Some(name)) =
+                    (pr["id"].as_str(), pr["full_name"].as_str())
+                {
+                    member_names.insert(id.to_string(), name.to_string());
+                }
+            }
+        }
+    }
+    let member_name_of = |row: &Value| -> String {
+        row["preseller_id"]
+            .as_str()
+            .or_else(|| row["seller_id"].as_str())
+            .and_then(|id| member_names.get(id))
+            .cloned()
+            .unwrap_or_else(|| "—".to_string())
+    };
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for row in &rows {
@@ -277,7 +327,7 @@ fn pull_field_orders(conn: &mut Connection, client: &SupabaseClient, _org_id: &s
                     row["notes"].as_str(),
                     updated_at,
                     row["client"]["name"].as_str().unwrap_or("—"),
-                    row["preseller"]["full_name"].as_str().unwrap_or("—"),
+                    member_name_of(row),
                 ],
             );
             continue;
