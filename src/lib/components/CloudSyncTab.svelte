@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
-  import { Cloud, RefreshCw, Plug, Unplug, FlaskConical, AlertTriangle, CheckCircle2 } from 'lucide-svelte';
+  import { Cloud, RefreshCw, Plug, Unplug, FlaskConical, AlertTriangle, CheckCircle2, KeyRound, Lock } from 'lucide-svelte';
 
   let status: any = null;
   let url = '';
@@ -21,7 +21,18 @@
     }
   }
 
-  onMount(refresh);
+  let saved: any = null;
+  let setupCode = '';
+  let setupBusy = false;
+
+  onMount(async () => {
+    await refresh();
+    try {
+      saved = await invoke<any>('cloud_get_saved_config');
+      if (saved?.url && !url) url = saved.url;
+      if (saved?.email && !email) email = saved.email;
+    } catch {}
+  });
   // Poll while the tab is open (the backend loop cycles every 5s).
   const poll = setInterval(refresh, 5000);
   onDestroy(() => clearInterval(poll));
@@ -88,6 +99,23 @@
     }
   }
 
+  async function connectWithCode() {
+    error = '';
+    msg = '';
+    setupBusy = true;
+    try {
+      await invoke('cloud_setup_code', { code: setupCode.trim() });
+      msg = t('cloud_activated');
+      setupCode = '';
+      await refresh();
+      try { saved = await invoke<any>('cloud_get_saved_config'); if (saved?.url && !url) url = saved.url; if (saved?.email && !email) email = saved.email; } catch {}
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Activation failed';
+    } finally {
+      setupBusy = false;
+    }
+  }
+
   $: configured = !!status?.url;
   $: online = !!status?.online;
 </script>
@@ -99,6 +127,32 @@
       {t('cloud_title')}
     </h2>
     <p class="text-xs text-pos-muted mt-0.5">{t('cloud_desc')}</p>
+  </div>
+
+  <!-- Setup code: the customer-facing path (one code, nothing else) -->
+  <div class="p-5 bg-gradient-to-br from-sky-50 to-indigo-50 dark:from-slate-800/60 dark:to-slate-800/30 rounded-2xl border border-sky-200 dark:border-sky-900 space-y-3">
+    <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
+      <KeyRound class="w-4 h-4 text-sky-600" />
+      {t('cloud_setup_code')}
+    </h3>
+    <p class="text-xs text-pos-muted">{t('cloud_setup_code_hint')}</p>
+    {#if saved && !saved.product_ready}
+      <p class="text-[11px] font-bold text-amber-600">⚠️ {t('cloud_setup_unavailable')}</p>
+    {/if}
+    <div class="flex gap-2">
+      <input type="text" bind:value={setupCode} placeholder="TITAO-XXXX-XXXX-XXXX" maxlength="24"
+        class="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-black tracking-widest uppercase text-pos-text outline-none focus:border-sky-500"
+        on:keydown={(e) => { if (e.key === 'Enter') connectWithCode(); }} />
+      <button type="button" on:click={connectWithCode} disabled={setupBusy || !setupCode.trim() || status?.coordinator === false}
+        class="flex items-center gap-1.5 px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
+        <KeyRound class="w-3.5 h-3.5" />{t('cloud_setup_connect')}
+      </button>
+    </div>
+    {#if saved?.has_password}
+      <p class="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
+        <Lock class="w-3 h-3" />{t('cloud_saved_note')}
+      </p>
+    {/if}
   </div>
 
   {#if status && status.coordinator === false}

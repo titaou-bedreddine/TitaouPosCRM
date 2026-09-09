@@ -653,5 +653,11 @@
   "nav_fieldorders": "Field Orders",
   "nav_team": "Field Team",
   "nav_truckloads": "Truck Loads",
-  "nav_deletionrequests": "Deletion Requests"
+  "nav_deletionrequests": "Deletion Requests",
+  "cloud_setup_code": "Setup code",
+  "cloud_setup_code_hint": "Type the activation code your vendor gave you — everything else configures itself.",
+  "cloud_setup_connect": "Activate",
+  "cloud_saved_note": "Saved — credentials are stored on this PC (password encrypted).",
+  "cloud_setup_unavailable": "This build has no product endpoint baked in — use the manual form below.",
+  "cloud_activated": "Activated! Cloud sync is running."
 }

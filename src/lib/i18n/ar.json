@@ -653,5 +653,11 @@
   "nav_fieldorders": "الطلبات الميدانية",
   "nav_team": "الفريق الميداني",
   "nav_truckloads": "تحميل الشاحنات",
-  "nav_deletionrequests": "طلبات الحذف"
+  "nav_deletionrequests": "طلبات الحذف",
+  "cloud_setup_code": "رمز التفعيل",
+  "cloud_setup_code_hint": "أدخل رمز التفعيل الذي أعطاك إياه المورّد — يتم تهيئة كل شيء تلقائياً.",
+  "cloud_setup_connect": "تفعيل",
+  "cloud_saved_note": "محفوظ — يتم تخزين بيانات الدخول على هذا الجهاز (كلمة المرور مشفّرة).",
+  "cloud_setup_unavailable": "هذه النسخة لا تحتوي على نقطة اتصال مدمجة — استخدم النموذج اليدوي أدناه.",
+  "cloud_activated": "تم التفعيل! المزامنة السحابية تعمل."
 }

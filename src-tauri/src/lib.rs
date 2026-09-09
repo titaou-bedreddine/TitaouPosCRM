@@ -217,6 +217,8 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             cloudsync::cloud_cmds::cloud_sync_now,
             cloudsync::cloud_cmds::cloud_disconnect,
             cloudsync::cloud_cmds::cloud_test_connection,
+            cloudsync::cloud_cmds::cloud_setup_code,
+            cloudsync::cloud_cmds::cloud_get_saved_config,
             cloudsync::cloud_cmds::cloud_field_orders,
             cloudsync::cloud_cmds::cloud_field_order_lines,
             cloudsync::cloud_cmds::cloud_team_members,

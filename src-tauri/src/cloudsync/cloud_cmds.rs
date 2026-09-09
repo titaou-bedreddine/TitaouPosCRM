@@ -45,18 +45,23 @@ pub fn cloud_configure(
         return Err(format!("This CRM account is not an active admin (role: {role}) — the POS requires the owner's admin account"));
     }
 
-    // Persist config (password deliberately NOT stored).
+    // Persist config. The password is stored AES-GCM-encrypted with a
+    // machine-bound key (HWID) so the customer never re-types credentials;
+    // a copied DB file is undecryptable elsewhere.
+    let password_enc = cloud::secrets::encrypt(&password)?;
     {
         let conn = db.conn.lock().unwrap();
         let _ = conn.execute(
             "INSERT OR REPLACE INTO app_settings (key, value) VALUES
               ('cloud_url', ?1), ('cloud_anon_key', ?2), ('cloud_email', ?3),
-              ('cloud_refresh_token', ?4), ('cloud_enabled', 'true')",
+              ('cloud_refresh_token', ?4), ('cloud_password_enc', ?5),
+              ('cloud_enabled', 'true')",
             rusqlite::params![
                 url,
                 anon_key,
                 email,
-                session.refresh_token
+                session.refresh_token,
+                password_enc
             ],
         );
     }
@@ -96,7 +101,8 @@ pub fn cloud_disconnect(db: State<'_, DbState>) -> Result<(), String> {
         let conn = db.conn.lock().unwrap();
         let _ = conn.execute_batch(
             "UPDATE app_settings SET value = 'false' WHERE key = 'cloud_enabled';
-             DELETE FROM app_settings WHERE key = 'cloud_refresh_token';",
+             DELETE FROM app_settings WHERE key = 'cloud_refresh_token';
+             DELETE FROM app_settings WHERE key = 'cloud_password_enc';",
         );
     }
     *cloud::state().session.lock().unwrap() = None;
@@ -343,4 +349,103 @@ pub fn cloud_truck_loads() -> Result<Value, String> {
         &[("order", "created_at.desc".into())],
     )?;
     Ok(Value::Array(rows))
+}
+
+// ── Setup-code provisioning (reseller flow) ────────────────────────────────
+
+/// Compile-time product endpoint (set at build: TITAO_PRODUCT_SUPABASE_URL /
+/// TITAO_PRODUCT_SUPABASE_ANON_KEY). The customer's POS needs this to know
+/// WHERE to redeem a setup code — no technical input from them.
+pub fn product_endpoint() -> Result<(String, String), String> {
+    let url = option_env!("TITAO_PRODUCT_SUPABASE_URL").unwrap_or("").trim_end_matches('/');
+    let anon = option_env!("TITAO_PRODUCT_SUPABASE_ANON_KEY").unwrap_or("");
+    if !url.is_empty() && !anon.is_empty() {
+        return Ok((url.to_string(), anon.to_string()));
+    }
+    Err("No product endpoint baked into this build — use the manual connection form".into())
+}
+
+fn http_plain() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("reqwest client")
+}
+
+/// Redeem a one-time setup code (TITAO-XXXX-XXXX-XXXX): the pos-setup Edge
+/// Function provisions the org's POS admin account and returns the
+/// credentials once. Everything is persisted (password AES-GCM/HWID) and the
+/// first sync cycle runs immediately — the customer types ONE code, done.
+#[tauri::command]
+pub fn cloud_setup_code(db: State<'_, DbState>, code: String) -> Result<Value, String> {
+    if !cloud::is_coordinator() {
+        return Err("Cloud sync runs on the server terminal — enter the setup code there".into());
+    }
+    let (url, anon) = product_endpoint()?;
+    let code = code.trim().to_uppercase();
+    if code.is_empty() {
+        return Err("Setup code required".into());
+    }
+
+    let resp = http_plain()
+        .post(format!("{}/functions/v1/pos-setup", url))
+        .header("apikey", &anon)
+        .json(&serde_json::json!({
+            "code": code,
+            "node": crate::network::terminal_name_for_this_pc(),
+        }))
+        .send()
+        .map_err(|e| format!("network: {e}"))?;
+    let status = resp.status();
+    let body: Value = resp.json().map_err(|e| format!("bad response: {e}"))?;
+    if !status.is_success() {
+        let msg = body["error"].as_str().unwrap_or("Setup code rejected");
+        return Err(msg.to_string());
+    }
+
+    let email = body["email"].as_str().ok_or("response missing email")?.to_string();
+    let password = body["password"].as_str().ok_or("response missing password")?.to_string();
+
+    // Validate by signing in immediately.
+    let session = cloud::auth::sign_in(&url, &anon, &email, &password)?;
+    let profile = cloud::auth::fetch_profile(&cloud::http::SupabaseClient::new(&url, &anon, &session.access_token))?;
+    if profile["role"].as_str() != Some("admin") || !profile["is_active"].as_bool().unwrap_or(false) {
+        return Err("Provisioned account is not an active admin — contact your vendor".into());
+    }
+
+    // Persist everything (password encrypted, machine-bound).
+    let password_enc = cloud::secrets::encrypt(&password)?;
+    {
+        let conn = db.conn.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES
+              ('cloud_url', ?1), ('cloud_anon_key', ?2), ('cloud_email', ?3),
+              ('cloud_refresh_token', ?4), ('cloud_password_enc', ?5),
+              ('cloud_enabled', 'true')",
+            rusqlite::params![url, anon, email, session.refresh_token, password_enc],
+        );
+    }
+    *cloud::state().session.lock().unwrap() = Some(session);
+    cloud::load_config(&db);
+
+    // First cycle now — walk-in client + product linking pass + initial pull.
+    cloud::cycle(&db)
+}
+
+/// Saved config for the Cloud Sync form (preload; password never returned).
+#[tauri::command]
+pub fn cloud_get_saved_config(db: State<'_, DbState>) -> Result<Value, String> {
+    let cfg = cloud::state().config.lock().unwrap().clone();
+    let anon_masked = if cfg.anon_key.len() > 12 {
+        format!("{}…{}", &cfg.anon_key[..8], &cfg.anon_key[cfg.anon_key.len()-4..])
+    } else {
+        cfg.anon_key.clone()
+    };
+    Ok(serde_json::json!({
+        "url": cfg.url,
+        "email": cfg.email,
+        "anon_key_masked": anon_masked,
+        "has_password": !cfg.password_enc.is_empty(),
+        "product_ready": product_endpoint().is_ok(),
+    }))
 }

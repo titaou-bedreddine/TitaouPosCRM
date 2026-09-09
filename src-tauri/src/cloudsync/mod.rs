@@ -14,6 +14,7 @@ pub mod mapping;
 pub mod outbox;
 pub mod pull;
 pub mod push;
+pub mod secrets;
 
 use crate::database::DbState;
 use http::SupabaseClient;
@@ -37,7 +38,10 @@ pub struct CloudConfig {
     pub url: String,
     pub anon_key: String,
     pub email: String,
-    pub refresh_token: String, // password is NOT persisted — refresh token only
+    pub refresh_token: String,
+    /// AES-GCM(HWID)-encrypted CRM password — persisted so a non-technical
+    /// customer never re-types credentials. Empty = not stored.
+    pub password_enc: String,
     pub enabled: bool,
 }
 
@@ -70,6 +74,7 @@ pub fn load_config(db: &DbState) -> bool {
         anon_key: get_setting(db, "cloud_anon_key"),
         email: get_setting(db, "cloud_email"),
         refresh_token: get_setting(db, "cloud_refresh_token"),
+        password_enc: get_setting(db, "cloud_password_enc"),
         enabled: get_setting(db, "cloud_enabled") == "true",
     };
     let configured = !cfg.url.is_empty() && !cfg.anon_key.is_empty() && !cfg.email.is_empty();
@@ -102,11 +107,20 @@ pub fn ensure_session() -> Result<SupabaseClient, String> {
         None => true,
     };
     if needs_fresh {
+        // Renewal order: refresh token → stored (encrypted) password.
+        // The password path means a customer NEVER re-types credentials —
+        // only when the password was rotated on the server does the UI ask.
+        let stored_password = || -> Result<String, String> {
+            if cfg.password_enc.is_empty() {
+                return Err("no stored password — connect in Settings → Cloud Sync".into());
+            }
+            secrets::decrypt(&cfg.password_enc)
+        };
         let session = match session_slot.as_ref() {
-            // Try refresh first (no password stored).
             Some(s) => auth::refresh(&cfg.url, &cfg.anon_key, &s.refresh_token)
-                .or_else(|_| auth::sign_in(&cfg.url, &cfg.anon_key, &cfg.email, &password_prompt()?)),
-            None => auth::sign_in(&cfg.url, &cfg.anon_key, &cfg.email, &password_prompt()?),
+                .or_else(|_| stored_password().and_then(|pw| auth::sign_in(&cfg.url, &cfg.anon_key, &cfg.email, &pw))),
+            None => stored_password()
+                .and_then(|pw| auth::sign_in(&cfg.url, &cfg.anon_key, &cfg.email, &pw)),
         }?;
         *session_slot = Some(session);
     }
@@ -117,14 +131,6 @@ pub fn ensure_session() -> Result<SupabaseClient, String> {
         &cfg.anon_key,
         &session.access_token,
     ))
-}
-
-/// The password is not persisted; the first sign-in happens at configure
-/// time (cloud_configure passes it once and stores only the refresh token).
-/// Later restarts refresh; if the refresh token dies (rotation/older than
-/// 30 days unused), the UI re-asks for the password (cloud_configure again).
-fn password_prompt() -> Result<String, String> {
-    Err("session expired — re-enter your CRM password in Settings → Cloud Sync".into())
 }
 
 /// One full sync cycle: ensure session → verify admin profile → push → pull.

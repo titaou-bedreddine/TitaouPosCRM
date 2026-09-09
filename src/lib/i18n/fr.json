@@ -653,5 +653,11 @@
   "nav_fieldorders": "Commandes terrain",
   "nav_team": "Équipe terrain",
   "nav_truckloads": "Chargements",
-  "nav_deletionrequests": "Suppressions"
+  "nav_deletionrequests": "Suppressions",
+  "cloud_setup_code": "Code d'activation",
+  "cloud_setup_code_hint": "Saisissez le code d'activation fourni par votre revendeur — tout le reste se configure automatiquement.",
+  "cloud_setup_connect": "Activer",
+  "cloud_saved_note": "Enregistré — les identifiants sont stockés sur ce PC (mot de passe chiffré).",
+  "cloud_setup_unavailable": "Cette version n'a pas de point d'accès produit intégré — utilisez le formulaire manuel ci-dessous.",
+  "cloud_activated": "Activé ! La synchronisation cloud fonctionne."
 }
