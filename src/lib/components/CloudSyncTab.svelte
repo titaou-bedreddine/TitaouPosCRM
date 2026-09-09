@@ -143,7 +143,7 @@
       <input type="text" bind:value={setupCode} placeholder="TITAO-XXXX-XXXX-XXXX" maxlength="24"
         class="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-black tracking-widest uppercase text-pos-text outline-none focus:border-sky-500"
         on:keydown={(e) => { if (e.key === 'Enter') connectWithCode(); }} />
-      <button type="button" on:click={connectWithCode} disabled={setupBusy || !setupCode.trim() || status?.coordinator === false}
+      <button type="button" on:click={connectWithCode} disabled={setupBusy || !setupCode.trim() || status?.coordinator === false || (saved && !saved.product_ready)}
         class="flex items-center gap-1.5 px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
         <KeyRound class="w-3.5 h-3.5" />{t('cloud_setup_connect')}
       </button>

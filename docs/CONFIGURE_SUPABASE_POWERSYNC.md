@@ -91,6 +91,47 @@ update profiles set role='admin', organization_id=(select id from organizations 
 
 ---
 
+## Part 1b — Reseller: selling to a customer (setup codes)
+
+The customer-facing flow — they type **one code**, nothing else:
+
+1. **Prepare the customer shop** (you, once per customer): create the org row
+   + the owner's admin user (Part 1.4), and optionally their starter
+   products/clients. Deploy `pos-setup` (Part 1.3 adds it:
+   `supabase functions deploy pos-setup`).
+2. **Generate a setup code** — Supabase SQL Editor, as the customer's admin
+   (or any admin of that org):
+   ```sql
+   select create_pos_setup_code();
+   -- → TITAO-3F9A-8C21-B7D4   (one-time, expires in 30 days)
+   ```
+   `select * from list_pos_setup_codes();` shows status of recent codes.
+3. **Customer activates**: installs TitaouPosCRM → Settings → Cloud Sync →
+   types the code → **Activate**. The app calls `pos-setup`, which provisions
+   the org's dedicated admin account (`pos+…@pos.titaoucrm.local`, strong
+   random password), and returns credentials exactly once. The POS saves them
+   locally — password AES-GCM-encrypted with a machine-bound key (HWID) — and
+   the first sync cycle runs immediately. The customer never sees a URL, key,
+   or password.
+4. **Re-install / new PC**: the code is one-time; generate a new one (step 2)
+   — redeeming it again on the same org rotates the POS account's password
+   and re-connects. Old PC stops syncing (refresh token dies on next cycle).
+
+**Baking the product endpoint into your builds** (so the code box works):
+
+```powershell
+$env:TITAO_PRODUCT_SUPABASE_URL="https://<ref>.supabase.co"
+$env:TITAO_PRODUCT_SUPABASE_ANON_KEY="<anon key>"
+npm run tauri build
+```
+
+Without these, the setup-code card shows "no product endpoint baked in" and
+the manual form below it still works (you configuring shops yourself).
+
+> Multi-tenant note: all customers share this ONE Supabase project — the
+> `organizations` table separates them, and RLS guarantees isolation. The
+> setup code is the only thing linking a customer PC to their org.
+
 ## Part 2 — TitaouPosCRM (the POS / admin station)
 
 ### 2.1 Install
@@ -115,6 +156,9 @@ single-instance locks are per-identifier (opening TitaouPosCRM twice focuses
 its own window, and never touches a running TitaouPOS).
 
 ### 2.2 Connect to your org (Cloud Sync)
+
+**Customer path**: type the setup code from Part 1b → Activate. Done — the
+form below is the manual/advanced path (also used for your own machines):
 In TitaouPosCRM: **Settings → Cloud Sync**:
 
 | Field | What to paste |
