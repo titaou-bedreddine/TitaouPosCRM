@@ -660,5 +660,7 @@
   "cloud_setup_connect": "Activer",
   "cloud_saved_note": "Enregistré — les identifiants sont stockés sur ce PC (mot de passe chiffré).",
   "cloud_setup_unavailable": "Cette version n'a pas de point d'accès produit intégré — utilisez le formulaire manuel ci-dessous.",
-  "cloud_activated": "Activé ! La synchronisation cloud fonctionne."
+  "cloud_activated": "Activé ! La synchronisation cloud fonctionne.",
+  "cloud_push_catalog": "Pousser tout le catalogue",
+  "cloud_push_hint": "Envoie les produits existants vers TitaouCRM (nécessaire une fois pour les catalogues créés avant la sync cloud)."
 }

@@ -449,3 +449,81 @@ pub fn cloud_get_saved_config(db: State<'_, DbState>) -> Result<Value, String> {
         "product_ready": product_endpoint().is_ok(),
     }))
 }
+
+// ── Onboarding: push the pre-existing local catalog to the CRM ─────────────
+
+/// Enqueues every active product as a Product outbox event. For shops whose
+/// catalog predates cloud sync (create/update events never fired for it).
+/// Idempotent end-to-end: the CRM matches by SKU/barcode, and already-pending
+/// local ids are skipped.
+#[tauri::command]
+pub fn cloud_push_catalog(db: State<'_, DbState>) -> Result<Value, String> {
+    if !cloud::is_coordinator() {
+        return Err("Cloud sync runs on the server terminal".into());
+    }
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT p.id, p.sku, p.name_fr, p.name_ar, p.name_en,
+                    p.sale_price, p.purchase_price, p.min_stock,
+                    (SELECT b.barcode FROM product_barcodes b
+                      WHERE b.product_id = p.id ORDER BY b.is_primary DESC, b.id LIMIT 1)
+               FROM products p
+              WHERE p.is_active = 1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, f64>(7)?,
+                r.get::<_, Option<String>>(8)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut queued = 0i64;
+    let mut skipped = 0i64;
+    for row in rows.flatten() {
+        let (id, sku, name_fr, name_ar, name_en, sale, purchase, min_stock, barcode) = row;
+        // Skip products already queued (pending) — avoids duplicate spam on
+        // repeated clicks; already-synced ones just re-upsert harmlessly.
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_outbox
+                  WHERE entity = 'product' AND local_id = ?1 AND status = 'pending'",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if pending > 0 {
+            skipped += 1;
+            continue;
+        }
+        let payload = serde_json::json!({
+            "sku": sku,
+            "barcode": barcode,
+            "name_fr": name_fr,
+            "name_ar": name_ar,
+            "name_en": name_en,
+            "sale_price": sale,
+            "purchase_price": purchase,
+            "min_stock": min_stock,
+            "is_active": true,
+        });
+        conn.execute(
+            "INSERT INTO sync_outbox (entity, local_id, payload, status)
+             VALUES ('product', ?1, ?2, 'pending')",
+            rusqlite::params![id, payload.to_string()],
+        )
+        .map_err(|e| e.to_string())?;
+        queued += 1;
+    }
+    Ok(serde_json::json!({ "queued": queued, "skipped_pending": skipped }))
+}

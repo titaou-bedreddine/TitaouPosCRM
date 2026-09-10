@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
-  import { Cloud, RefreshCw, Plug, Unplug, FlaskConical, AlertTriangle, CheckCircle2, KeyRound, Lock } from 'lucide-svelte';
+  import { Cloud, RefreshCw, Plug, Unplug, FlaskConical, AlertTriangle, CheckCircle2, KeyRound, Lock, Package } from 'lucide-svelte';
 
   let status: any = null;
   let url = '';
@@ -81,6 +81,21 @@
       await refresh();
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Sync failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function pushCatalog() {
+    error = '';
+    msg = '';
+    busy = true;
+    try {
+      const r = await invoke<any>('cloud_push_catalog');
+      msg = `📦 +${r.queued ?? 0} catalog${(r.queued ?? 0) === 1 ? '' : ' items'} queued`;
+      await refresh();
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Push failed';
     } finally {
       busy = false;
     }
@@ -181,6 +196,11 @@
           {online ? t('cloud_status_online') : t('cloud_status_offline')}
         </h3>
         <div class="flex gap-1.5">
+          <button type="button" on:click={pushCatalog} disabled={busy || status?.coordinator === false}
+            title={t('cloud_push_hint')}
+            class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-40 text-pos-text rounded-xl cursor-pointer">
+            <Package class="w-3.5 h-3.5" />{t('cloud_push_catalog')}
+          </button>
           <button type="button" on:click={syncNow} disabled={busy || status?.coordinator === false}
             class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
             <RefreshCw class="w-3.5 h-3.5 {busy ? 'animate-spin' : ''}" />{t('cloud_sync_now')}

@@ -660,5 +660,7 @@
   "cloud_setup_connect": "Activate",
   "cloud_saved_note": "Saved — credentials are stored on this PC (password encrypted).",
   "cloud_setup_unavailable": "This build has no product endpoint baked in — use the manual form below.",
-  "cloud_activated": "Activated! Cloud sync is running."
+  "cloud_activated": "Activated! Cloud sync is running.",
+  "cloud_push_catalog": "Push full catalog",
+  "cloud_push_hint": "Send the shop's existing products to TitaouCRM (needed once for catalogs created before cloud sync)."
 }
