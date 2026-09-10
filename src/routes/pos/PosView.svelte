@@ -84,6 +84,10 @@
   let isPrintReceiptOpen = false;
   let isProductEditOpen = false;
   let editingProduct: Product | null = null;
+  // Bumped on every product-modal open so the modal component fully remounts
+  // — guarantees a virgin form (no leftover data from the previous popup,
+  // including after the APPLY-without-closing flow).
+  let productModalKey = 0;
   let isQuickPurchaseOpen = false;
   let isReturnDamagedOpen = false;
   let isCreditCustomerOpen = false;
@@ -568,6 +572,7 @@
     editingProduct = p;
     initialBarcodeForNewProduct = '';
     editingProductWithExtraBarcode = '';
+    productModalKey += 1;
     isProductEditOpen = true;
   }
 
@@ -577,6 +582,7 @@
     editingProduct = p;
     initialBarcodeForNewProduct = '';
     editingProductWithExtraBarcode = newBarcode;
+    productModalKey += 1;
     isProductEditOpen = true;
   }
 
@@ -584,6 +590,7 @@
     editingProduct = null;
     initialBarcodeForNewProduct = '';
     editingProductWithExtraBarcode = '';
+    productModalKey += 1;
     isProductEditOpen = true;
   }
 
@@ -1827,6 +1834,7 @@
     onClose={() => (isPrintReceiptOpen = false)}
   />
 
+  {#key productModalKey}
   <ProductEditModal
     isOpen={isProductEditOpen}
     product={editingProduct}
@@ -1845,6 +1853,7 @@
     }}
     onSaved={handleProductSaved}
   />
+  {/key}
 
   <UnknownBarcodeModal
     isOpen={isUnknownBarcodeModalOpen}
