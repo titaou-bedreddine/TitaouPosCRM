@@ -1405,7 +1405,7 @@ pub fn get_autostart() -> Result<bool, String> {
     #[cfg(windows)]
     {
         let output = std::process::Command::new("reg")
-            .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "/v", "TitaouPOS"])
+            .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "/v", "TitaouPosCRM"])
             .output()
             .map_err(|e| e.to_string())?;
         Ok(output.status.success()

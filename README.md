@@ -37,6 +37,7 @@ TitaouPosCRM connects a shop to a **TitaouCRM** organization (Supabase):
 - **Deletion Requests**: presellers can only *request* client deletion;
   the admin approves (FK-safe) or rejects here.
 - Design + exactly-once/conflict rules: `docs/SYNC_DESIGN.md`.
+- Keeping the POS in sync with upstream TitaouPosT fixes: `docs/SYNCING.md`.
 - CRM side: `TitaouCRM` repo, branch `feat/pos-integration`
   (migrations 0017 + 0018, `manage-user` function).
 
