@@ -662,5 +662,7 @@
   "cloud_setup_unavailable": "Cette version n'a pas de point d'accès produit intégré — utilisez le formulaire manuel ci-dessous.",
   "cloud_activated": "Activé ! La synchronisation cloud fonctionne.",
   "cloud_push_catalog": "Pousser tout le catalogue",
-  "cloud_push_hint": "Envoie les produits existants vers TitaouCRM (nécessaire une fois pour les catalogues créés avant la sync cloud)."
+  "cloud_push_hint": "Envoie les produits existants vers TitaouCRM (nécessaire une fois pour les catalogues créés avant la sync cloud).",
+  "cloud_reconcile_stock": "Niveaux de stock",
+  "cloud_stock_hint": "Aligne le stock TitaouCRM sur les comptages de ce POS (une fois, pour les catalogues antérieurs à la sync)."
 }

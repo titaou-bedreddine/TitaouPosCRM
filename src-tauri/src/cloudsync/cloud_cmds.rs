@@ -527,3 +527,62 @@ pub fn cloud_push_catalog(db: State<'_, DbState>) -> Result<Value, String> {
     }
     Ok(serde_json::json!({ "queued": queued, "skipped_pending": skipped }))
 }
+
+// ── Stock baseline reconcile (onboarding) ──────────────────────────────────
+
+/// Brings the CRM ledger's stock in line with this POS's counts for every
+/// mapped product: one 'adjustment' movement per product whose CRM stock
+/// differs (idempotent — same count = no-op). Fixes shops whose stock
+/// predates cloud sync (field apps would otherwise show 0 forever).
+#[tauri::command]
+pub fn cloud_reconcile_stock(db: State<'_, DbState>) -> Result<Value, String> {
+    if !cloud::is_coordinator() {
+        return Err("Cloud sync runs on the server terminal".into());
+    }
+    let client = cloud::ensure_session()?;
+    let conn = db.conn.lock().unwrap();
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT m.remote_id, p.current_stock
+               FROM sync_map m
+               JOIN products p ON p.id = m.local_id
+              WHERE m.entity = 'product' AND p.is_active = 1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut reconciled = 0i64;
+    let mut skipped = 0i64;
+    let mut errors = 0i64;
+    for row in rows.flatten() {
+        let (remote_id, local_qty) = row;
+        match client.rpc(
+            "pos_stock_baseline",
+            serde_json::json!({
+                "p_product_id": remote_id,
+                "p_qty": cloud::mapping::qty_round(local_qty),
+            }),
+        ) {
+            Ok(_) => {
+                // The RPC returns the qty; count a real reconcile only when
+                // it reports success (delta 0 runs are no-ops server-side —
+                // we can't distinguish cheaply, so count successes).
+                reconciled += 1;
+            }
+            Err(e) => {
+                errors += 1;
+                eprintln!("[stock-baseline] {remote_id}: {e}");
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "processed": reconciled,
+        "errors": errors,
+        "skipped_unlinked_note": skipped,
+    }))
+}

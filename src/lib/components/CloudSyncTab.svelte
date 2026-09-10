@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
-  import { Cloud, RefreshCw, Plug, Unplug, FlaskConical, AlertTriangle, CheckCircle2, KeyRound, Lock, Package } from 'lucide-svelte';
+  import { Cloud, RefreshCw, Plug, Unplug, FlaskConical, AlertTriangle, CheckCircle2, KeyRound, Lock, Package, Scale } from 'lucide-svelte';
 
   let status: any = null;
   let url = '';
@@ -96,6 +96,21 @@
       await refresh();
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Push failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function reconcileStock() {
+    error = '';
+    msg = '';
+    busy = true;
+    try {
+      const r = await invoke<any>('cloud_reconcile_stock');
+      msg = `⚖️ ${r.processed ?? 0} product${(r.processed ?? 0) === 1 ? '' : 's'} aligned${(r.errors ?? 0) > 0 ? `, ${r.errors} errors` : ''}`;
+      await refresh();
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Stock reconcile failed';
     } finally {
       busy = false;
     }
@@ -200,6 +215,11 @@
             title={t('cloud_push_hint')}
             class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-40 text-pos-text rounded-xl cursor-pointer">
             <Package class="w-3.5 h-3.5" />{t('cloud_push_catalog')}
+          </button>
+          <button type="button" on:click={reconcileStock} disabled={busy || status?.coordinator === false}
+            title={t('cloud_stock_hint')}
+            class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-40 text-pos-text rounded-xl cursor-pointer">
+            <Scale class="w-3.5 h-3.5" />{t('cloud_reconcile_stock')}
           </button>
           <button type="button" on:click={syncNow} disabled={busy || status?.coordinator === false}
             class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
