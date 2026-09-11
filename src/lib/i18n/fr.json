@@ -674,5 +674,7 @@
   "promo_fixed": "DZD de réduction / unité",
   "promo_min_qty": "Qté min",
   "promo_confirm_delete": "Supprimer cette promotion ?",
-  "nav_promotions": "Promotions"
+  "nav_promotions": "Promotions",
+  "promo_search_product": "Rechercher un produit…",
+  "promo_no_match": "aucun produit ne correspond"
 }

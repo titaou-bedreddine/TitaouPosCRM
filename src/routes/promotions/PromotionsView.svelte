@@ -18,6 +18,11 @@
   let fValue = 10;
   let fProductId = '';
   let fMinQty = 1;
+  let productSearch = '';
+  $: filteredProducts = productSearch.trim()
+    ? products.filter((pr) =>
+        pr.name.toLowerCase().includes(productSearch.trim().toLowerCase()))
+    : products;
   let fEndsAt = '';
   let fActive = true;
 
@@ -181,12 +186,17 @@
       </h3>
       <input type="text" bind:value={fName} placeholder={t('promo_name')}
         class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+      <input type="text" bind:value={productSearch} placeholder={t('promo_search_product')}
+        class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
       <select bind:value={fProductId}
         class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">
-        {#each products as pr}
+        {#each filteredProducts as pr}
           <option value={pr.id}>{pr.name}</option>
         {/each}
       </select>
+      {#if filteredProducts.length === 0}
+        <p class="text-[10px] text-pos-muted">— {t('promo_no_match')}</p>
+      {/if}
       <div class="grid grid-cols-2 gap-2.5">
         <select bind:value={fType}
           class="px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">

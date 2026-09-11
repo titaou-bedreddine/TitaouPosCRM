@@ -674,5 +674,7 @@
   "promo_fixed": "دج خصم للوحدة",
   "promo_min_qty": "الحد الأدنى",
   "promo_confirm_delete": "حذف هذا العرض؟",
-  "nav_promotions": "العروض"
+  "nav_promotions": "العروض",
+  "promo_search_product": "ابحث عن منتج…",
+  "promo_no_match": "لا يوجد منتج مطابق"
 }
