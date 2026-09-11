@@ -239,7 +239,7 @@ pub fn cloud_deletion_requests() -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "client_deletion_requests",
-        "*, client:clients(name), requested_by_profile:profiles!client_deletion_requests_requested_by_fkey(full_name)",
+        "*, client:clients(name)",
         &[
             ("status", "eq.pending".into()),
             ("order", "created_at.desc".into()),

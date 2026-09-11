@@ -14,6 +14,14 @@
     error = '';
     try {
       requests = await invoke<any[]>('cloud_deletion_requests');
+      // Member names resolved client-side: the requested_by FK points at
+      // auth.users, so PostgREST cannot embed profiles here.
+      const members = await invoke<any[]>('cloud_team_members').catch(() => []);
+      const names: Record<string, string> = {};
+      for (const m of members) names[m.id] = m.full_name;
+      for (const r of requests) {
+        r.requester_name = names[r.requested_by] ?? '—';
+      }
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
       requests = [];
@@ -81,7 +89,7 @@
           <div class="flex items-start justify-between gap-2">
             <div>
               <p class="text-sm font-black text-pos-text">{r.client?.name || '—'}</p>
-              <p class="text-[10px] text-pos-muted">{t('dr_by')}: {r.requested_by_profile?.full_name || '—'} · {new Date(r.created_at).toLocaleString()}</p>
+              <p class="text-[10px] text-pos-muted">{t('dr_by')}: {r.requester_name || '—'} · {new Date(r.created_at).toLocaleString()}</p>
             </div>
             <span class="px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-100 text-amber-700 shrink-0">{t('dr_pending')}</span>
           </div>
