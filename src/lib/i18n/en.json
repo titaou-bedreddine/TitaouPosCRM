@@ -664,5 +664,15 @@
   "cloud_push_catalog": "Push full catalog",
   "cloud_push_hint": "Send the shop's existing products to TitaouCRM (needed once for catalogs created before cloud sync).",
   "cloud_reconcile_stock": "Stock levels",
-  "cloud_stock_hint": "Align TitaouCRM stock with this POS's counts (one-time for catalogs predating cloud sync)."
+  "cloud_stock_hint": "Align TitaouCRM stock with this POS's counts (one-time for catalogs predating cloud sync).",
+  "promo_title": "Promotions",
+  "promo_subtitle": "TitaouCRM — visible to presellers & sellers in their order screen",
+  "promo_new": "New promotion",
+  "promo_empty": "No promotions yet.",
+  "promo_name": "Promotion name",
+  "promo_percent": "percent off",
+  "promo_fixed": "DZD off per unit",
+  "promo_min_qty": "Min qty",
+  "promo_confirm_delete": "Delete this promotion?",
+  "nav_promotions": "Promotions"
 }

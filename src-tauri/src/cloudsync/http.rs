@@ -136,6 +136,23 @@ impl SupabaseClient {
         Err(rpc_error(table, status, &body))
     }
 
+    /// DELETE /rest/v1/{table}?query — remove matching rows.
+    pub fn delete(&self, table: &str, query: &[(&str, String)]) -> Result<(), String> {
+        let resp = self
+            .client
+            .delete(format!("{}/rest/v1/{}", self.url, table))
+            .headers(self.headers(None))
+            .query(query)
+            .send()
+            .map_err(|e| format!("network: {e}"))?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body: Value = resp.json().unwrap_or(Value::Null);
+        Err(rpc_error(table, status, &body))
+    }
+
     /// Invoke an Edge Function (invite-user, manage-user).
     pub fn function(&self, name: &str, body: Value) -> Result<Value, String> {
         let resp = self

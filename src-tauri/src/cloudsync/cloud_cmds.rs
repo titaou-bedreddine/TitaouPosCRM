@@ -586,3 +586,100 @@ pub fn cloud_reconcile_stock(db: State<'_, DbState>) -> Result<Value, String> {
         "skipped_unlinked_note": skipped,
     }))
 }
+
+// ── Promotions (admin CRUD; field apps read active ones) ──────────────────
+
+fn org_id_of(client: &cloud::http::SupabaseClient) -> Result<String, String> {
+    let profile = cloud::auth::fetch_profile(client)?;
+    profile["organization_id"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| "profile has no organization".into())
+}
+
+#[tauri::command]
+pub fn cloud_promotions_list() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "promotions",
+        "*, product:products(name)",
+        &[("order", "created_at.desc".into())],
+    )?;
+    Ok(Value::Array(rows))
+}
+
+#[tauri::command]
+pub fn cloud_promotion_save(
+    db: State<'_, DbState>,
+    id: Option<String>,
+    name: String,
+    description: Option<String>,
+    discount_type: String,
+    discount_value: i64,
+    product_id: String,
+    min_quantity: f64,
+    ends_at: Option<String>,
+    is_active: bool,
+) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let org = org_id_of(&client)?;
+
+    if discount_type != "percent" && discount_type != "fixed" {
+        return Err("discount type must be percent or fixed".into());
+    }
+    if discount_value <= 0 || (discount_type == "percent" && discount_value > 100) {
+        return Err("invalid discount value".into());
+    }
+
+    let mut row = serde_json::json!({
+        "organization_id": org,
+        "name": name,
+        "description": description,
+        "discount_type": discount_type,
+        "discount_value": discount_value,
+        "product_id": product_id,
+        "min_quantity": cloud::mapping::qty_round(min_quantity),
+        "ends_at": ends_at,
+        "is_active": is_active,
+    });
+
+    match id {
+        Some(existing) => {
+            client.patch("promotions", row, &[("id", format!("eq.{existing}"))])?;
+            Ok(serde_json::json!({ "id": existing }))
+        }
+        None => {
+            row["created_by"] = Value::String(cloud::auth::fetch_profile(&client)?["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string());
+            let rows = client.insert("promotions", serde_json::json!([row]))?;
+            Ok(rows.into_iter().next().unwrap_or(Value::Null))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn cloud_promotion_delete(id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client.delete("promotions", &[("id", format!("eq.{id}"))])
+}
+
+/// Active promotions for the field apps' consumption + POS visibility.
+#[tauri::command]
+pub fn cloud_promotions_active() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    client.rpc("active_promotions", serde_json::json!({}))
+}
+
+/// CRM products (id, name) — the promotion product picker.
+#[tauri::command]
+pub fn cloud_products_for_promos() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "products",
+        "id, name",
+        &[("is_active", "eq.true".into()), ("order", "name.asc".into())],
+    )?;
+    Ok(Value::Array(rows))
+}

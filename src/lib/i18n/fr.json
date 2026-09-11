@@ -664,5 +664,15 @@
   "cloud_push_catalog": "Pousser tout le catalogue",
   "cloud_push_hint": "Envoie les produits existants vers TitaouCRM (nécessaire une fois pour les catalogues créés avant la sync cloud).",
   "cloud_reconcile_stock": "Niveaux de stock",
-  "cloud_stock_hint": "Aligne le stock TitaouCRM sur les comptages de ce POS (une fois, pour les catalogues antérieurs à la sync)."
+  "cloud_stock_hint": "Aligne le stock TitaouCRM sur les comptages de ce POS (une fois, pour les catalogues antérieurs à la sync).",
+  "promo_title": "Promotions",
+  "promo_subtitle": "TitaouCRM — visibles par les pré-vendeurs et vendeurs",
+  "promo_new": "Nouvelle promotion",
+  "promo_empty": "Aucune promotion.",
+  "promo_name": "Nom de la promotion",
+  "promo_percent": "réduction %",
+  "promo_fixed": "DZD de réduction / unité",
+  "promo_min_qty": "Qté min",
+  "promo_confirm_delete": "Supprimer cette promotion ?",
+  "nav_promotions": "Promotions"
 }

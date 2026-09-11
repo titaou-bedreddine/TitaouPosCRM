@@ -664,5 +664,15 @@
   "cloud_push_catalog": "رفع كل المنتجات",
   "cloud_push_hint": "إرسال منتجات المتجر الحالية إلى TitaouCRM (مرة واحدة للكتالوجات السابقة للمزامنة).",
   "cloud_reconcile_stock": "مستويات المخزون",
-  "cloud_stock_hint": "مواءمة مخزون TitaouCRM مع كميات هذا الجهاز (مرة واحدة للكتالوجات السابقة للمزامنة)."
+  "cloud_stock_hint": "مواءمة مخزون TitaouCRM مع كميات هذا الجهاز (مرة واحدة للكتالوجات السابقة للمزامنة).",
+  "promo_title": "العروض الترويجية",
+  "promo_subtitle": "TitaouCRM — تظهر للبائع والمندوب في شاشة الطلب",
+  "promo_new": "عرض جديد",
+  "promo_empty": "لا توجد عروض بعد.",
+  "promo_name": "اسم العرض",
+  "promo_percent": "خصم %",
+  "promo_fixed": "دج خصم للوحدة",
+  "promo_min_qty": "الحد الأدنى",
+  "promo_confirm_delete": "حذف هذا العرض؟",
+  "nav_promotions": "العروض"
 }
