@@ -27,7 +27,104 @@ pub fn pull_cycle(conn: &mut Connection, client: &SupabaseClient, org_id: &str) 
     if let Err(e) = pull_field_orders(conn, client, org_id) {
         errors.push(("orders".into(), e));
     }
+    if let Err(e) = pull_stock_movements(conn, client) {
+        errors.push(("stock".into(), e));
+    }
     errors
+}
+
+/// CRM stock_movements → POS inventory: THE stock channel. Every non-POS
+/// movement (field orders' loads/transfers/returns, admin adjustments,
+/// purchases created in the CRM) mirrors into the local ledger exactly once
+/// (sync_map on the movement uuid). Movements the POS itself caused (whose
+/// reference starts with 'POS') are echoes — the local ledger already has
+/// them.
+fn pull_stock_movements(conn: &mut Connection, client: &SupabaseClient) -> Result<(), String> {
+    let cursor =
+        outbox::get_cursor(conn, "stock_movements").unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
+    let rows = client.select(
+        "stock_movements",
+        "id, product_id, type, quantity, reference, reason, created_at, product:products(name)",
+        &[
+            ("created_at", format!("gt.{cursor}")),
+            ("order", "created_at.asc".into()),
+            ("limit", BATCH.into()),
+        ],
+    )?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for row in &rows {
+        let mv_id = row["id"].as_str().unwrap_or_default().to_string();
+        if mv_id.is_empty() {
+            continue;
+        }
+        // Echo filter: movements the POS itself caused.
+        let reference = row["reference"].as_str().unwrap_or_default();
+        if reference.starts_with("POS") {
+            continue;
+        }
+        // Exactly-once per movement uuid.
+        if outbox::local_id(&tx, "stock_movement", &mv_id).is_some() {
+            continue;
+        }
+
+        let product_crm = row["product_id"].as_str().unwrap_or_default().to_string();
+        let Some(local_product) = outbox::local_id(&tx, "product", &product_crm) else {
+            // Unlinked product: skipped; the movement is revisited while the
+            // cursor stays behind it (movements pull in created_at order and
+            // the cursor only advances past fully-processed batches — a later
+            // full-window re-scan catches it; acceptable v1 behavior).
+            continue;
+        };
+
+        let qty = row["quantity"].as_f64().unwrap_or(0.0);
+        let mv_type = row["type"].as_str().unwrap_or_default().to_string();
+        let (local_type, signed): (&'static str, f64) = match mv_type.as_str() {
+            "entry" => ("purchase", qty),
+            "sale" => ("sale", -qty.abs()),
+            "return" => ("sale_refund", qty.abs()),
+            "transfer" => ("adjustment_dec", -qty.abs()), // truck load: warehouse → truck
+            "adjustment" => (
+                if qty >= 0.0 {
+                    "adjustment_inc"
+                } else {
+                    "adjustment_dec"
+                },
+                qty,
+            ),
+            other => {
+                return Err(format!("unknown CRM movement type '{other}'"));
+            }
+        };
+
+        tx.execute(
+            "UPDATE products SET current_stock = current_stock + ?1 WHERE id = ?2",
+            rusqlite::params![signed, local_product],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO inventory_movements (product_id, quantity, type, reference_type, notes)
+             VALUES (?1, ?2, ?3, 'crm_movement', ?4)",
+            rusqlite::params![local_product, signed, local_type, row["reason"].as_str().unwrap_or("CRM stock movement")],
+        )
+        .map_err(|e| e.to_string())?;
+        outbox::map_local(&tx, "stock_movement", tx.last_insert_rowid(), &mv_id)
+            .map_err(|e| e.to_string())?;
+    }
+
+    let last = rows
+        .last()
+        .and_then(|r| r["created_at"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    tx.commit().map_err(|e| e.to_string())?;
+    if !last.is_empty() {
+        outbox::set_cursor(conn, "stock_movements", &last).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Products changed since the cursor: new CRM products insert into POS;
@@ -375,30 +472,10 @@ fn pull_field_orders(conn: &mut Connection, client: &SupabaseClient, _org_id: &s
                 rusqlite::params![crm_id, local_product, product_name, qty, unit_price, line_total],
             );
 
-            // Apply stock only when the product is linked (unlinked lines
-            // stay pending until the product pull links them — retried next
-            // cycle because stock_applied stays 0).
-            if let Some(local) = local_product {
-                let seen: i64 = tx
-                    .query_row(
-                        "SELECT COUNT(*) FROM inventory_movements WHERE reference_type = 'crm_order'
-                          AND reference_id = (SELECT rowid FROM crm_orders WHERE crm_id = ?1)",
-                        rusqlite::params![crm_id],
-                        |r| r.get(0),
-                    )
-                    .unwrap_or(0);
-                if seen == 0 && qty > 0.0 {
-                    let _ = tx.execute(
-                        "UPDATE products SET current_stock = current_stock - ?1 WHERE id = ?2",
-                        rusqlite::params![qty, local],
-                    );
-                    let _ = tx.execute(
-                        "INSERT INTO inventory_movements (product_id, quantity, type, reference_type, reference_id, notes)
-                         VALUES (?1, ?2, 'sale', 'crm_order', (SELECT rowid FROM crm_orders WHERE crm_id = ?3), ?4)",
-                        rusqlite::params![local, -qty, crm_id, "Field order from TitaouCRM"],
-                    );
-                }
-            }
+            // Stock for field orders moves via the CRM ledger's own
+            // movements (pull_stock_movements mirrors them: order-time = no
+            // movement, load = transfer, delivery = payment only). The
+            // mirror row here is VISIBILITY ONLY.
         }
 
         // Flip the applied flag only when every line had a linked product.
