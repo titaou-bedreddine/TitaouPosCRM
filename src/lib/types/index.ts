@@ -102,12 +102,27 @@ export interface CartItem {
   // Carried from the product so the cart line can show an EXPIRED badge
   // the moment an expired item is added.
   expiry_date?: string;
-  // Product's purchase cost (cart profit/estimated-sale-price indicators).
+  // Product's purchase cost per BASE unit (cart profit indicators).
   purchase_price?: number;
   // Product's available inventory balance for negative-stock enforcement.
   current_stock?: number;
   // Scale product: enables weight-suggestion chips on the cart line.
   is_scalable?: boolean;
+  // Packaging sale: the unit this line is billed in ("Palette", "Fardeau"…).
+  // null/absent = base unit (bottle). base_quantity = quantity ×
+  // units_per_package — the stock truth in base units.
+  sale_unit?: string;
+  units_per_package?: number;
+  base_quantity?: number;
+}
+
+export interface PackagingDef {
+  id: number;
+  product_id: number;
+  name: string;
+  units_per_package: number;
+  sale_price: number;
+  purchase_price: number;
 }
 
 export interface CashSession {

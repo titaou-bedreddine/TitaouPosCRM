@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { decomposeStock } from '../../lib/utils/stockUnits';
   import { normalizeBarcode } from '../../lib/utils/barcode';
   import type { Category, Product, Unit } from '../../lib/types';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
@@ -90,6 +91,7 @@
     await loadCategories();
     await loadUnits();
     await loadProducts();
+    await loadAllPacks();
   });
 
   async function loadCategories() {
@@ -166,6 +168,30 @@
 
   // Real Database Statistics Computed from Product List
   $: totalProductsCount = products.length;
+  let allPacks: Array<{ product_id: number; name: string; units_per_package: number }> = [];
+
+  $: stockLabelById = (() => {
+    const map: Record<number, string> = {};
+    for (const pk of allPacks) {
+      (map[pk.product_id] ??= []).push(pk);
+    }
+    return map;
+  })();
+
+  function stockLabel(productId: number, stock: number): string | null {
+    const packs = stockLabelById[productId];
+    if (!packs || packs.length === 0) return null;
+    return decomposeStock(stock, packs);
+  }
+
+  async function loadAllPacks() {
+    try {
+      allPacks = await invoke<any[]>('list_all_packagings');
+    } catch {
+      allPacks = [];
+    }
+  }
+
   $: totalStockQuantity = products.reduce((sum, p) => sum + (p.current_stock || 0), 0);
   $: positiveStockUnits = products.reduce((sum, p) => sum + (p.current_stock > 0 ? p.current_stock : 0), 0);
   $: negativeStockUnits = products.reduce((sum, p) => sum + (p.current_stock < 0 ? Math.abs(p.current_stock) : 0), 0);
@@ -445,6 +471,9 @@
                 <td class="p-3 text-end font-mono font-black text-sky-600">{p.sale_price.toLocaleString()} DZD</td>
                 <td class="p-3 text-center font-mono font-bold {p.current_stock <= p.min_stock ? 'text-rose-600' : 'text-pos-text'}">
                   {p.current_stock}
+                  {#if stockLabel(p.id, p.current_stock)}
+                    <p class="text-[9px] font-sans font-bold text-pos-muted">{stockLabel(p.id, p.current_stock)}</p>
+                  {/if}
                 </td>
                 <td class="p-3 text-center font-mono text-[10px]">
                   {#if expired}
@@ -621,6 +650,9 @@
                 </div>
                 <span class="text-[10px] font-black font-mono px-2 py-1 rounded-lg border {p.current_stock <= p.min_stock ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border-rose-300' : 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-200'}">
                   Qté: {p.current_stock}
+                  {#if stockLabel(p.id, p.current_stock)}
+                    <p class="text-[9px] font-sans font-bold text-pos-muted">{stockLabel(p.id, p.current_stock)}</p>
+                  {/if}
                 </span>
               </div>
             </div>

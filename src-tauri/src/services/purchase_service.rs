@@ -20,29 +20,44 @@ pub fn create_purchase(db: &DbState, input: CreatePurchaseInput) -> Result<Strin
 
     let purchase_id = tx.last_insert_rowid();
 
-    // Process purchase items & increment stock
+    // Process purchase items & increment stock. A line bought by PACKAGING
+    // (10 palettes of 672 bottles) bills in palettes but stocks in base
+    // units: base = quantity × units_per_package; the product's per-bottle
+    // cost derives from the packaging cost.
     for item in &input.items {
+        let upp = if item.units_per_package > 0.0 {
+            item.units_per_package
+        } else {
+            1.0
+        };
+        let base_qty = item.quantity * upp;
+        let per_base_cost = if upp > 1.0 {
+            ((item.unit_cost as f64 / upp) * 100.0).round() / 100.0
+        } else {
+            item.unit_cost as f64
+        };
+
         tx.execute(
-            "INSERT INTO purchase_items (purchase_id, product_id, quantity, unit_cost, discount, tax, total)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO purchase_items (purchase_id, product_id, quantity, unit_cost, discount, tax, total, base_quantity)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 purchase_id, item.product_id, item.quantity, item.unit_cost,
-                item.discount, item.tax, item.total
+                item.discount, item.tax, item.total, base_qty
             ],
         )
         .map_err(|e| e.to_string())?;
 
-        // Increase product stock & update purchase cost
+        // Increase product stock & update per-bottle purchase cost
         tx.execute(
             "UPDATE products SET current_stock = current_stock + ?1, purchase_price = ?2 WHERE id = ?3",
-            rusqlite::params![item.quantity, item.unit_cost, item.product_id],
+            rusqlite::params![base_qty, per_base_cost.round() as i64, item.product_id],
         )
         .map_err(|e| e.to_string())?;
 
         tx.execute(
             "INSERT INTO inventory_movements (product_id, quantity, type, reference_type, reference_id, user_id, cost_at_time)
              VALUES (?1, ?2, 'purchase', 'purchase', ?3, ?4, ?5)",
-            rusqlite::params![item.product_id, item.quantity, purchase_id, input.user_id, item.unit_cost],
+            rusqlite::params![item.product_id, base_qty, purchase_id, input.user_id, item.unit_cost],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -63,10 +78,12 @@ pub fn create_purchase(db: &DbState, input: CreatePurchaseInput) -> Result<Strin
             .items
             .iter()
             .map(|it| {
+                let upp = if it.units_per_package > 0.0 { it.units_per_package } else { 1.0 };
                 serde_json::json!({
                     "product_local_id": it.product_id,
                     "quantity": it.quantity,
                     "unit_cost": it.unit_cost,
+                    "base_quantity": it.quantity * upp,
                 })
             })
             .collect();

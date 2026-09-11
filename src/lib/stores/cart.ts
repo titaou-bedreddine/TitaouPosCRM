@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { CartItem, Product, HeldSale } from '../types';
+import type { CartItem, Product, HeldSale, PackagingDef } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 import { selectedCustomerId, DEFAULT_WALKIN_CUSTOMER_ID } from './customers';
 
@@ -12,6 +12,9 @@ export const lastAddedProductId = writable<number | null>(null);
 export const heldNotification = writable<string | null>(null);
 export const cartItemOrder = writable<'top' | 'bottom'>('bottom');
 export const allowNegativeStock = writable<boolean>(false);
+// Every packaging definition (loaded once per session in PosView) — drives
+// the cart unit pickers and the stock decomposition displays.
+export const allPackagings = writable<PackagingDef[]>([]);
 
 // POS transaction mode: sale (default), purchase (stock from supplier),
 // broken (damaged goods written off as expenses).
@@ -47,17 +50,37 @@ export const stockWarningModal = writable<{
   requested: number;
 } | null>(null);
 
-export function addToCart(product: Product, quantity = 1, asRefund = false): boolean {
+// Base-quantity helper: a packaging line's stock weight in base units.
+export function lineBaseQuantity(item: {
+  quantity: number;
+  units_per_package?: number;
+}): number {
+  const upp = item.units_per_package && item.units_per_package > 0
+    ? item.units_per_package
+    : 1;
+  return item.quantity * upp;
+}
+
+export function addToCart(
+  product: Product,
+  quantity = 1,
+  asRefund = false,
+  packaging?: PackagingDef
+): boolean {
+  const upp = packaging ? packaging.units_per_package : 1;
+  const baseQty = quantity * upp;
   if (!asRefund && !get(allowNegativeStock) && get(posMode) === 'sale') {
     const items = get(cartItems);
     const existing = items.find((i) => i.product_id === product.id && !i.is_refund);
-    const existingQty = existing ? existing.quantity : 0;
+    const existingBase = existing ? lineBaseQuantity(existing) : 0;
     const available = product.current_stock ?? 0;
-    if (existingQty + quantity > available) {
+    if (existingBase + baseQty > available) {
       stockWarningModal.set({
-        productName: product.name_fr || product.name_ar || product.name_en || 'Product',
+        productName:
+          (packaging ? packaging.name + ' — ' : '') +
+          (product.name_fr || product.name_ar || product.name_en || 'Product'),
         available,
-        requested: existingQty + quantity,
+        requested: existingBase + baseQty,
       });
       return false;
     }
@@ -72,10 +95,11 @@ export function addToCart(product: Product, quantity = 1, asRefund = false): boo
       (item) => item.product_id === product.id && item.is_refund === asRefund
     );
 
-    if (existingIndex > -1) {
+    if (existingIndex > -1 && (!packaging || items[existingIndex].sale_unit === packaging.name)) {
       const updated = [...items];
       updated[existingIndex].quantity += quantity;
       const unitNet = Math.max(0, updated[existingIndex].unit_price - updated[existingIndex].discount_amount);
+      updated[existingIndex].base_quantity = lineBaseQuantity(updated[existingIndex]);
       updated[existingIndex].total_price = Math.round(updated[existingIndex].quantity * unitNet);
       return updated;
     } else {
@@ -87,12 +111,15 @@ export function addToCart(product: Product, quantity = 1, asRefund = false): boo
         name_fr: product.name_fr,
         name_en: product.name_en,
         image_path: product.image_path,
-        unit_price: product.sale_price,
+        unit_price: packaging ? packaging.sale_price : product.sale_price,
         quantity,
         discount_amount: 0,
         tax_amount: 0,
-        total_price: product.sale_price * quantity,
+        total_price: (packaging ? packaging.sale_price : product.sale_price) * quantity,
         is_refund: asRefund,
+        sale_unit: packaging ? packaging.name : undefined,
+        units_per_package: packaging ? packaging.units_per_package : 1,
+        base_quantity: baseQty,
         expiry_date: (product as any).expiry_date,
         purchase_price: product.purchase_price,
         current_stock: product.current_stock,
@@ -144,7 +171,8 @@ export function applyItemDiscount(productId: number, isRefund: boolean, discount
     items.map((item) => {
       if (item.product_id === productId && item.is_refund === isRefund) {
         const disc = Math.min(Math.max(0, discountPerUnit), item.unit_price);
-        const total = Math.round(item.quantity * (item.unit_price - disc));
+        item.base_quantity = lineBaseQuantity(item);
+      const total = Math.round(item.quantity * (item.unit_price - disc));
         return { ...item, discount_amount: disc, total_price: total };
       }
       return item;
@@ -168,6 +196,37 @@ export function toggleAllCartRefund() {
     const anyNormal = items.some((i) => !i.is_refund);
     return items.map((i) => ({ ...i, is_refund: anyNormal }));
   });
+}
+
+export function setLineUnit(
+  item: CartItem,
+  packaging: PackagingDef | null,
+  baseSalePrice: number
+): boolean {
+  const items = get(cartItems);
+  const target = items.find(
+    (i) => i.product_id === item.product_id && i.sale_unit === item.sale_unit
+  );
+  if (!target) return false;
+  const updated = [...items];
+  const idx = updated.indexOf(target);
+  const line = { ...updated[idx] };
+  const oldBase = lineBaseQuantity(line);
+  if (packaging) {
+    line.sale_unit = packaging.name;
+    line.units_per_package = packaging.units_per_package;
+    line.unit_price = packaging.sale_price;
+  } else {
+    line.sale_unit = undefined;
+    line.units_per_package = 1;
+    line.unit_price = baseSalePrice;
+  }
+  const unitNet = Math.max(0, line.unit_price - line.discount_amount);
+  line.total_price = Math.round(line.quantity * unitNet);
+  line.base_quantity = lineBaseQuantity(line);
+  updated[idx] = line;
+  cartItems.set(updated);
+  return true;
 }
 
 export function removeFromCart(productId: number, isRefund: boolean) {

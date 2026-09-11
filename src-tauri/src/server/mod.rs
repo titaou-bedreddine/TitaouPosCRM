@@ -28,7 +28,7 @@ pub struct ConnectedDevice {
 static STATE: OnceLock<Arc<ServerState>> = OnceLock::new();
 // A separate open DB handle for diagnostics reads, so API requests never
 // contend on the UI's DbState mutex.
-static DIAG_DB: OnceLock<DbState> = OnceLock::new();
+pub static DIAG_DB: OnceLock<DbState> = OnceLock::new();
 
 pub fn set_diag_db(db: DbState) {
     let _ = DIAG_DB.set(db);

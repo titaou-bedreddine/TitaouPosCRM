@@ -8,6 +8,8 @@
     applyItemDiscount,
     toggleItemRefund,
     removeFromCart,
+    setLineUnit,
+    allPackagings,
     lastAddedProductId,
     qtyEditTarget,
     itemKey,
@@ -18,10 +20,23 @@
   export let item: CartItem;
   // Eye: reveal this item's purchase cost inline; Pen: open its editor.
   export let purchaseCost: number | null = null;
+  // Base-unit sale price (for switching the line back to bottles).
+  export let baseSalePrice: number = 0;
   export let onEdit: () => void = () => {};
   let showCost = false;
 
   let showDiscountInput = false;
+
+  function changeUnit(e: Event) {
+    const name = (e.currentTarget as HTMLSelectElement).value;
+    if (!name || name === (item.sale_unit ?? 'BASE')) return;
+    if (name === 'BASE') {
+      setLineUnit(item, null, baseSalePrice);
+    } else {
+      const packaging = linePackagings.find((pp) => pp.name === name);
+      if (packaging) setLineUnit(item, packaging, baseSalePrice);
+    }
+  }
   let lineDiscountValue: number | null = item.discount_amount;
   let discountInputEl: HTMLInputElement;
   let qtyInputEl: HTMLInputElement;
@@ -39,6 +54,9 @@
   // F6 quantity-edit mode: when this line is the active target, focus and
   // select the quantity so the user can just type a new value.
   $: myKey = itemKey(item);
+  // This product's packagings (largest first) for the unit picker.
+  $: linePackagings = ($allPackagings || []).filter((pp: any) => pp.product_id === item.product_id);
+  $: hasUnits = (item.units_per_package ?? 1) !== 1 || linePackagings.length > 0;
   $: isQtyEditTarget = $qtyEditTarget === myKey;
   $: if (isQtyEditTarget && qtyInputEl) {
     qtyInputEl.focus();
@@ -159,6 +177,25 @@
           <span class="text-purple-600 font-bold">(-{item.discount_amount} DZD)</span>
         {/if}
       </div>
+      {#if hasUnits}
+        <div class="flex items-center gap-1.5 mt-0.5">
+          <select
+            class="text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg px-1.5 py-0.5 text-pos-text outline-none cursor-pointer"
+            value={item.sale_unit ?? 'BASE'}
+            on:change={changeUnit}
+          >
+            <option value="BASE">Bouteille / زجاجة</option>
+            {#each linePackagings as pp (pp.id)}
+              <option value={pp.name}>{pp.name} ({pp.units_per_package})</option>
+            {/each}
+          </select>
+          {#if (item.units_per_package ?? 1) !== 1}
+            <span class="text-[9px] font-mono text-pos-muted">
+              = {item.base_quantity?.toLocaleString()} u
+            </span>
+          {/if}
+        </div>
+      {/if}
       {#if showCost}
         <div class="text-[10px] font-mono font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
           {t('pem_purchase_cost')}: {(purchaseCost ?? item.purchase_price ?? item.unit_price).toLocaleString()} DZD

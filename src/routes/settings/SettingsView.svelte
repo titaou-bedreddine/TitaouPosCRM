@@ -1667,6 +1667,14 @@
                   <label class="block text-xs font-bold text-pos-muted mb-1">Shop Website (receipt header)</label>
                   <input type="text" bind:value={settings.shop_website} on:change={autoSaveSettings} placeholder="www.titaoupos.dz" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
                 </div>
+                <div>
+                  <label class="block text-xs font-bold text-pos-muted mb-1">TVA défaut vente / Default sale VAT (%)</label>
+                  <input type="number" min="0" max="100" bind:value={settings.default_tva_sale} on:change={autoSaveSettings} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-pos-muted mb-1">TVA défaut achat / Default purchase VAT (%)</label>
+                  <input type="number" min="0" max="100" bind:value={settings.default_tva_purchase} on:change={autoSaveSettings} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+                </div>
               </div>
               <p class="text-[10px] text-pos-muted">Printed silently through the Windows print API (GDI) — never a browser dialog. The live preview on the right is exactly what prints.</p>
             </div>

@@ -61,12 +61,13 @@
     name: string;
     unitsPerPackage: number;
     salePrice: number;
+    purchasePrice: number;
     isDefault: boolean;
   }
   let packagingRows: PackagingRow[] = [];
 
   function addPackagingRow() {
-    packagingRows = [...packagingRows, { name: '', unitsPerPackage: 2, salePrice: 0, isDefault: false }];
+    packagingRows = [...packagingRows, { name: '', unitsPerPackage: 2, salePrice: 0, purchasePrice: 0, isDefault: false }];
   }
 
   function removePackagingRow(idx: number) {
@@ -84,6 +85,7 @@
         name: p.name,
         unitsPerPackage: p.units_per_package,
         salePrice: p.sale_price,
+        purchasePrice: p.purchase_price ?? 0,
         isDefault: !!p.is_default,
       }));
     } catch {
@@ -102,6 +104,7 @@
             name: r.name.trim(),
             units_per_package: r.unitsPerPackage,
             sale_price: r.salePrice || 0,
+            purchase_price: r.purchasePrice || 0,
             is_default: r.isDefault,
           })),
       });
@@ -1238,9 +1241,9 @@
                       type="text"
                       bind:value={row.name}
                       placeholder="Name (carton / fardeau...)"
-                      class="col-span-4 px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-bold text-pos-text outline-none"
+                      class="col-span-3 px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-bold text-pos-text outline-none"
                     />
-                    <div class="col-span-3 flex items-center gap-1">
+                    <div class="col-span-2 flex items-center gap-1">
                       <span class="text-[10px] font-bold text-pos-muted whitespace-nowrap">=</span>
                       <input
                         type="number"
@@ -1257,9 +1260,18 @@
                       min="0"
                       inputmode="numeric"
                       bind:value={row.salePrice}
-                      placeholder="Price/pack"
-                      title="Sale price for the whole packaging (optional)"
+                      placeholder="Sale/pack"
+                      title="Sale price for the whole packaging (TTC)"
                       class="col-span-3 px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-mono font-bold text-sky-600 outline-none"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      inputmode="numeric"
+                      bind:value={row.purchasePrice}
+                      placeholder="Buy/pack"
+                      title="Purchase price for the whole packaging (TTC)"
+                      class="col-span-2 px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-mono font-bold text-emerald-600 outline-none"
                     />
                     <div class="col-span-2 flex items-center justify-end gap-1">
                       <button

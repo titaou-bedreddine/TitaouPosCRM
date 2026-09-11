@@ -1713,6 +1713,7 @@
           {#each $cartItems as item (item.product_id + (item.is_refund ? '_ref' : ''))}
             <CartItemCard
               {item}
+              baseSalePrice={products.find((pp) => pp.id === item.product_id)?.sale_price ?? 0}
               purchaseCost={item.purchase_price ?? products.find((pp) => pp.id === item.product_id)?.purchase_price ?? null}
               onEdit={() => {
                 const live = products.find((pp) => pp.id === item.product_id);

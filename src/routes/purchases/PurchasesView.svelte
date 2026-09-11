@@ -63,9 +63,29 @@
     unit_cost: number;
     sale_price: number;
     total: number;
+    // Purchase-by-packaging: the billed unit ("Palette"…) + how many base
+    // units (bottles) each sold unit contains. null = base unit.
+    sale_unit?: string;
+    units_per_package?: number;
   }
 
+  // TVA (TTC pricing): the stored tax is the VAT INSIDE the TTC total.
+  let purchaseTva = 19; // default from settings; editable per invoice
+
   let items: ItemRow[] = [];
+  let allPacks: Array<{ product_id: number; name: string; units_per_package: number; purchase_price: number }> = [];
+
+  function packsFor(productId: number) {
+    return allPacks.filter((pk) => pk.product_id === productId);
+  }
+
+  async function loadAllPacks() {
+    try {
+      allPacks = await invoke<any[]>('list_all_packagings');
+    } catch {
+      allPacks = [];
+    }
+  }
   let isSaving = false;
   let errorMsg = '';
   let previewPurchase: Purchase | null = null;
@@ -229,7 +249,8 @@
   $: sortedPurchases = sortRows(filteredPurchases, sortKey, sortDir, filteredPurchases);
 
   onMount(async () => {
-    await loadData();
+
+    await loadAllPacks();    await loadData();
   });
 
   // Deep-link from a scanned purchase QR: once the list lands, open the
@@ -290,14 +311,21 @@
       items = [...items];
       targetIndex = existingIndex;
     } else {
+      const packs = packsFor(p.id);
+      const pack = packs.length > 0 ? packs[0] : null; // largest first
+      const startUnitCost = pack && pack.purchase_price > 0
+        ? pack.purchase_price
+        : p.purchase_price;
       items = [...items, {
         product_id: p.id,
         name: p.name_fr || p.name_ar,
         barcode: (p.barcodes && p.barcodes[0]) || p.sku || '',
         quantity: 1,
-        unit_cost: p.purchase_price,
+        unit_cost: startUnitCost,
         sale_price: p.sale_price,
-        total: p.purchase_price,
+        total: startUnitCost,
+        sale_unit: pack ? pack.name : undefined,
+        units_per_package: pack ? pack.units_per_package : undefined,
       }];
       targetIndex = items.length - 1;
     }
@@ -409,6 +437,19 @@
     paidManuallyEdited = true;
   }
 
+  onMount(async () => {
+    try {
+      const st = await invoke<Record<string, string>>('get_all_settings');
+      const r = parseFloat(st?.default_tva_purchase ?? '19');
+      if (!isNaN(r)) purchaseTva = r;
+    } catch {}
+  });
+
+  function tvaOf(ttc: number): number {
+    const r = Math.max(0, purchaseTva);
+    return Math.round((ttc * r) / (100 + r));
+  }
+
   async function handleCreatePurchase() {
     if (!selectedSupplierId || items.length === 0) {
       errorMsg = 'Please add products and select supplier / الرجاء إضافة منتجات واختيار المورد';
@@ -424,9 +465,9 @@
           supplier_id: selectedSupplierId,
           user_id: $currentUser?.id || 1,
           date: invoiceDate,
-          subtotal: subtotal,
+          subtotal: total - tvaOf(total),
           discount: 0,
-          tax: 0,
+          tax: tvaOf(total),
           total: total,
           paid_amount: paidAmount,
           payment_method: paymentMethod,
@@ -438,6 +479,7 @@
             discount: 0,
             tax: 0,
             total: i.total,
+            units_per_package: i.units_per_package ?? 0,
             expiry_date: null,
             batch_number: null,
           })),
@@ -776,8 +818,41 @@
                     <td class="p-2.5 font-bold text-pos-text">
                       <p>{item.name}</p>
                       <p class="text-[10px] text-pos-muted font-mono">{item.barcode}</p>
+                      {#if item.sale_unit}
+                        <p class="text-[9px] font-black text-amber-600">{item.sale_unit}</p>
+                      {/if}
                     </td>
                     <td class="p-2.5 text-center">
+                      {#if packsFor(item.product_id).length > 0}
+                        <select
+                          class="w-20 mb-1 px-1 py-0.5 text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-pos-text outline-none cursor-pointer"
+                          value={item.sale_unit ?? 'BASE'}
+                          on:change={(e) => {
+                            const name = e.currentTarget.value;
+                            const packs = packsFor(item.product_id);
+                            const pack = name === 'BASE' ? null : packs.find((pp) => pp.name === name);
+                            if (pack) {
+                              item.sale_unit = pack.name;
+                              item.units_per_package = pack.units_per_package;
+                              item.unit_cost = pack.purchase_price > 0 ? pack.purchase_price : Math.round(item.unit_cost * pack.units_per_package);
+                              item.total = item.quantity * item.unit_cost;
+                              items = [...items];
+                            } else if (name === 'BASE') {
+                              const basePrice = Math.round(item.unit_cost / (item.units_per_package || 1));
+                              item.sale_unit = undefined;
+                              item.units_per_package = undefined;
+                              item.unit_cost = basePrice;
+                              item.total = item.quantity * item.unit_cost;
+                              items = [...items];
+                            }
+                          }}
+                        >
+                          <option value="BASE">Bouteille</option>
+                          {#each packsFor(item.product_id) as pp (pp.id)}
+                            <option value={pp.name}>{pp.name} ({pp.units_per_package})</option>
+                          {/each}
+                        </select>
+                      {/if}
                       <input
                         id={`qty-${idx}`}
                         type="number"
@@ -854,7 +929,13 @@
           </div>
 
           <div class="text-end">
-            <p class="text-xs text-pos-muted font-bold">Total Invoice:</p>
+            <div class="flex items-center justify-end gap-2 mb-1">
+              <span class="text-[10px] font-bold text-pos-muted">TVA %</span>
+              <input type="number" min="0" max="100" bind:value={purchaseTva}
+                class="w-16 px-2 py-0.5 text-center bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-black font-mono text-pos-text outline-none" />
+              <span class="text-[10px] font-mono font-bold text-pos-muted">dont TVA: {tvaOf(total).toLocaleString()} DZD</span>
+            </div>
+            <p class="text-xs text-pos-muted font-bold">Total Invoice (TTC):</p>
             <p class="text-2xl font-black font-mono text-sky-600">{total.toLocaleString()} DZD</p>
             {#if estSaleValue > 0}
               <p class="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">

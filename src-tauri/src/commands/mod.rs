@@ -1454,3 +1454,39 @@ pub fn list_printers() -> Result<Vec<String>, String> {
         Ok(Vec::new())
     }
 }
+
+/// Every packaging definition (for stock decomposition + cart unit pickers).
+#[tauri::command]
+pub fn list_all_packagings() -> Result<Vec<PackagingRow>, String> {
+    let db = crate::server::DIAG_DB.get().ok_or("no db")?;
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, product_id, name, units_per_package, sale_price, COALESCE(purchase_price, 0)
+               FROM product_packagings ORDER BY units_per_package DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(PackagingRow {
+                id: r.get(0)?,
+                product_id: r.get(1)?,
+                name: r.get(2)?,
+                units_per_package: r.get(3)?,
+                sale_price: r.get(4)?,
+                purchase_price: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PackagingRow {
+    pub id: i64,
+    pub product_id: i64,
+    pub name: String,
+    pub units_per_package: i64,
+    pub sale_price: i64,
+    pub purchase_price: i64,
+}

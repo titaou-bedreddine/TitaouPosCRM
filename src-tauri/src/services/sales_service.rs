@@ -55,6 +55,17 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
         .map(|v| v == "true")
         .unwrap_or(false);
 
+    // Base quantity: the cart line's quantity expressed in the BASE product
+    // unit (bottles). Selling 2 palettes of 672 bottles = base 1344 — the
+    // billing line stays "2 × palette price", the stock ledger moves 1344.
+    let base_of = |item: &CartItem| -> f64 {
+        if item.base_quantity > 0.0 {
+            item.base_quantity
+        } else {
+            item.quantity
+        }
+    };
+
     // Process each cart item & update stock
     for item in &input.items {
         if !skip_stock && !item.is_refund && !allow_negative_stock {
@@ -75,12 +86,13 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
         }
 
         tx.execute(
-            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity, base_quantity)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 sale_id, item.product_id, item.quantity, item.unit_price,
                 item.discount_amount, item.tax_amount, item.total_price,
-                item.is_refund, if item.is_refund { item.quantity } else { 0.0 }
+                item.is_refund, if item.is_refund { item.quantity } else { 0.0 },
+                base_of(item)
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -90,7 +102,8 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
         }
 
         let movement_type = if item.is_refund { "sale_refund" } else { "sale" };
-        let stock_change = if item.is_refund { item.quantity } else { -item.quantity };
+        let base_qty = base_of(item);
+        let stock_change = if item.is_refund { base_qty } else { -base_qty };
 
         tx.execute(
             "UPDATE products SET current_stock = current_stock + ?1 WHERE id = ?2",
@@ -180,7 +193,8 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let item_cost = (p_cost as f64 * item.quantity).round() as i64;
+        // Cost is per BASE bottle — weigh the line by its base quantity.
+        let item_cost = (p_cost as f64 * base_of(item)).round() as i64;
         if item.is_refund {
             total_cost -= item_cost;
         } else {
@@ -205,6 +219,8 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
                     "quantity": it.quantity,
                     "unit_price": it.unit_price,
                     "line_total": it.total_price,
+                    "base_quantity": if it.base_quantity > 0.0 { it.base_quantity } else { it.quantity },
+                    "sale_unit": it.sale_unit,
                 })
             })
             .collect();
@@ -471,6 +487,8 @@ fn get_sale_by_query(
                     tax_amount: row.get(10)?,
                     total_price: row.get(11)?,
                     is_refund: row.get(12)?,
+                sale_unit: None,
+                base_quantity: 0.0,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -512,6 +530,8 @@ pub fn get_sale_items(db: &DbState, sale_id: i64) -> Result<Vec<CartItem>, Strin
                 tax_amount: row.get(10)?,
                 total_price: row.get(11)?,
                 is_refund: row.get(12)?,
+                sale_unit: None,
+                base_quantity: 0.0,
             })
         })
         .map_err(|e| e.to_string())?;

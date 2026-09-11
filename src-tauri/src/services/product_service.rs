@@ -362,6 +362,31 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
     // stock_adjustment event (append-only ledger on the CRM side).
     {
         let primary_barcode = clean_barcodes.first().cloned();
+        // Packaging definitions travel with the product so the CRM mirrors
+        // the Palette/Fardeau/Bottle tier prices for the field apps.
+        let mut packagings_json: Vec<serde_json::Value> = vec![];
+        {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, name, units_per_package, sale_price, COALESCE(purchase_price, 0)
+                       FROM product_packagings WHERE product_id = ?1",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(rusqlite::params![id], |r| {
+                    Ok(serde_json::json!({
+                        "pos_packaging_id": r.get::<_, i64>(0)?,
+                        "name": r.get::<_, String>(1)?,
+                        "units_per_package": r.get::<_, f64>(2)?,
+                        "sale_price": r.get::<_, i64>(3)?,
+                        "purchase_price": r.get::<_, i64>(4)?,
+                    }))
+                })
+                .map_err(|e| e.to_string())?;
+            for row in rows.flatten() {
+                packagings_json.push(row);
+            }
+        }
         let payload = serde_json::json!({
             "sku": input.sku,
             "barcode": primary_barcode,
@@ -372,6 +397,7 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
             "purchase_price": input.purchase_price,
             "min_stock": input.min_stock,
             "is_active": true,
+            "packagings": packagings_json,
         });
         let _ = crate::cloudsync::outbox::enqueue_tx(
             &tx,
@@ -646,13 +672,14 @@ pub fn save_packagings(db: &DbState, product_id: i64, inputs: Vec<PackagingInput
             continue; // single unit is not a packaging
         }
         tx.execute(
-            "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price, is_default)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price, purchase_price, is_default)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 product_id,
                 input.name.trim(),
                 input.units_per_package,
                 input.sale_price,
+                input.purchase_price,
                 if input.is_default { 1 } else { 0 }
             ],
         )

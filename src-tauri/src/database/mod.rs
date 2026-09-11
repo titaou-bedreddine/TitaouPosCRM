@@ -370,6 +370,17 @@ impl DbState {
             );
         ");
 
+        // ---- Packaging sales: bill in Palette/Fardeau/Bottle, stock in base
+        // units. base_quantity = the line's quantity expressed in the base
+        // product unit (bottles) — what the stock ledger uses. Packagings
+        // also gain a purchase price per packaging.
+        let _ = conn.execute("ALTER TABLE sale_items ADD COLUMN base_quantity REAL;", []);
+        let _ = conn.execute("ALTER TABLE purchase_items ADD COLUMN base_quantity REAL;", []);
+        let _ = conn.execute(
+            "ALTER TABLE product_packagings ADD COLUMN purchase_price INTEGER DEFAULT 0;",
+            [],
+        );
+
         // ---- Cloud sync (TitaouCRM integration) ---------------------------
         // Transactional outbox: business services enqueue events INSIDE their
         // write transaction (a rolled-back sale never syncs). The cloudsync

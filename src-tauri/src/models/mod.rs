@@ -195,6 +195,13 @@ pub struct CartItem {
     pub total_price: i64,
     #[serde(default)]
     pub is_refund: bool,
+    /// Sold unit label ("Palette", "Fardeau", …) — None = base unit.
+    #[serde(default)]
+    pub sale_unit: Option<String>,
+    /// Quantity in the BASE product unit (bottles). 0/absent = same as
+    /// quantity (base-unit sale).
+    #[serde(default)]
+    pub base_quantity: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -362,6 +369,10 @@ pub struct PurchaseItemInput {
     pub tax: i64,
     #[serde(default)]
     pub total: i64,
+    /// Units of the base product per sold unit (672 for a palette of
+    /// 112×6-bottle fardeaux). 0/absent = quantity is already base units.
+    #[serde(default)]
+    pub units_per_package: f64,
     #[serde(default)]
     pub expiry_date: Option<String>,
     #[serde(default)]
@@ -666,6 +677,9 @@ pub struct PackagingInput {
     pub units_per_package: i64,
     #[serde(default)]
     pub sale_price: i64,
+    // Purchase price PER PACKAGING (DZD) — e.g. 15,000 DZD per palette.
+    #[serde(default)]
+    pub purchase_price: i64,
     #[serde(default)]
     pub is_default: bool,
 }

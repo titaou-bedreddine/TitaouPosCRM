@@ -102,6 +102,7 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             commands::get_units,
             commands::toggle_product_pin,
             commands::list_packagings,
+            commands::list_all_packagings,
             commands::save_packagings,
             commands::reorder_pinned_products,
             commands::process_sale,

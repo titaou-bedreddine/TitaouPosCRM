@@ -105,6 +105,8 @@ fn push_sale(
             "quantity": qty_round(it["quantity"].as_f64().unwrap_or(0.0)),
             "unit_price": dzd_to_centimes(it["unit_price"].as_i64().unwrap_or(0)),
             "line_total": dzd_to_centimes(it["line_total"].as_i64().unwrap_or(0)),
+            "base_quantity": qty_round(it["base_quantity"].as_f64().unwrap_or(0.0)),
+            "sale_unit": it["sale_unit"],
         }));
     }
 
@@ -193,7 +195,8 @@ fn push_purchase(
             .ok_or_else(|| format!("product {local_id} not linked to CRM yet"))?;
         items_json.push(json!({
             "product_id": product_id,
-            "quantity": qty_round(it["quantity"].as_f64().unwrap_or(0.0)),
+            "quantity": qty_round(it["base_quantity"].as_f64().unwrap_or(
+                it["quantity"].as_f64().unwrap_or(0.0))),
             "unit_cost": dzd_to_centimes(it["unit_cost"].as_i64().unwrap_or(0)),
         }));
     }
@@ -232,6 +235,7 @@ fn push_product(
             "p_cost_price": dzd_to_centimes(p["purchase_price"].as_i64().unwrap_or(0)),
             "p_min_stock_alert": qty_round(p["min_stock"].as_f64().unwrap_or(0.0)),
             "p_is_active": p["is_active"].as_bool().unwrap_or(true),
+            "p_packagings": p["packagings"],
         }),
     )?;
     let id = remote.as_str().unwrap_or_default().to_string();
