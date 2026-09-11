@@ -191,6 +191,7 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             commands::update_user,
             commands::delete_user,
             commands::check_github_update,
+            commands::download_and_install_update,
             commands::set_autostart,
             commands::get_autostart,
             commands::list_printers,

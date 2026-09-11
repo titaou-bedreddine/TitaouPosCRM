@@ -1490,3 +1490,66 @@ pub struct PackagingRow {
     pub sale_price: i64,
     pub purchase_price: i64,
 }
+
+/// In-app update WITHOUT the signed-updater plugin: downloads the NSIS setup
+/// from OUR GitHub releases (URL allow-listed), streams progress to the UI,
+/// launches the installer and exits so files unlock. No signing key needed —
+/// the integrity guarantee is HTTPS + the pinned releases of our own repo.
+#[tauri::command]
+pub async fn download_and_install_update(
+    app_handle: tauri::AppHandle,
+    url: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    const ALLOWED_PREFIX: &str = "https://github.com/titaou-bedreddine/TitaouPosCRM/releases/";
+    if !url.starts_with(ALLOWED_PREFIX) {
+        return Err("Untrusted update URL".into());
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("TitaouPosCRM-Desktop")
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|e| format!("HTTP client: {e}"))?;
+
+    let mut res = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Download failed: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", res.status()));
+    }
+
+    let total = res.content_length().unwrap_or(0);
+    let file_name = url.rsplit('/').next().unwrap_or("TitaouPosCRM_setup.exe");
+    let file_path = std::env::temp_dir().join(file_name);
+
+    let mut file = std::fs::File::create(&file_path)
+        .map_err(|e| format!("Cannot write installer: {e}"))?;
+    let mut downloaded: u64 = 0;
+    loop {
+        let chunk = res
+            .chunk()
+            .await
+            .map_err(|e| format!("Download interrupted: {e}"))?;
+        let Some(chunk) = chunk else { break };
+        std::io::Write::write_all(&mut file, &chunk)
+            .map_err(|e| format!("Write failed: {e}"))?;
+        downloaded += chunk.len() as u64;
+        if total > 0 {
+            let pct = ((downloaded * 100) / total) as i32;
+            let _ = app_handle.emit("update-progress", serde_json::json!({ "progress": pct }));
+        }
+    }
+    drop(file);
+
+    // Launch the NSIS installer detached, then exit so the setup can replace
+    // the running files.
+    std::process::Command::new(&file_path)
+        .spawn()
+        .map_err(|e| format!("Failed to launch installer: {e}"))?;
+    app_handle.exit(0);
+    Ok(())
+}

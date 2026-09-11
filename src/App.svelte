@@ -161,40 +161,30 @@
   // Set by notifications: open this product's editor when the POS mounts.
   let posOpenProductId: number | null = null;
 
-  // Download the signed update package in-app, install it, and relaunch —
-  // no browser, no separate installer window.
+  // In-app update WITHOUT the signed-updater plugin: download the NSIS
+  // setup from our GitHub release (progress events), the Rust side launches
+  // the installer and exits the app. Integrity via HTTPS + our own repo.
   async function installUpdate() {
     try {
       updateStatus = 'downloading';
       updateError = '';
       updateProgress = 0;
-      const { check } = await import('@tauri-apps/plugin-updater');
-      const { relaunch } = await import('@tauri-apps/plugin-process');
-      const update = await check();
-      if (!update) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const { listen } = await import('@tauri-apps/api/event');
+      const unlisten = await listen<{ progress: number }>('update-progress', (e) => {
+        updateProgress = e.payload.progress;
+      });
+      const result = await invoke<{ download_url: string }>('check_github_update');
+      if (!result.download_url || !result.has_update) {
         updateStatus = '';
         newUpdateAvailable = false;
+        unlisten();
         return;
       }
-      updateTag = update.version;
-      let downloaded = 0;
-      let total = 0;
-      await update.downloadAndInstall((event) => {
-        switch (event.event) {
-          case 'Started':
-            total = event.data.contentLength ?? 0;
-            break;
-          case 'Progress':
-            downloaded += event.data.chunkLength;
-            updateProgress = total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
-            break;
-          case 'Finished':
-            updateProgress = 100;
-            break;
-        }
-      });
-      updateStatus = 'restarting';
-      await relaunch();
+      updateTag = result.tag_name;
+      await invoke('download_and_install_update', { url: result.download_url });
+      // The app exits itself once the installer is launched.
+      unlisten();
     } catch (e: any) {
       console.error('Auto-update failed:', e);
       updateStatus = 'error';
