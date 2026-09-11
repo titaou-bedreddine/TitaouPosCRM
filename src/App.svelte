@@ -393,6 +393,7 @@
     } else {
       document.documentElement.classList.remove('dark');
     }
+    // The skin re-asserts itself: data-theme stays set, only .dark changed.
   }
 
   function handleLogout() {

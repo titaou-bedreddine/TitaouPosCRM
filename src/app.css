@@ -47,3 +47,147 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--pos-muted);
 }
+
+/* ==========================================================================
+   THEME SKINS — selectable from Settings → General (data-theme on <html>).
+   Composes with dark mode (.dark on <html>); the glass skin has its own
+   dark variant. Composing selectors: html[data-theme='x'] (+ ).dark).
+   ========================================================================== */
+
+/* ── 1 · SOFT — Neumorphic fintech light (default) ─────────────────────── */
+html[data-theme='soft'] {
+  --pos-bg: #F5F7FA;
+  --pos-card: #FFFFFF;
+  --pos-border: #E4E9F2;
+  --pos-primary: #1E75FF;
+  --pos-accent: #FFC107;
+  --pos-text: #2C3E50;
+  --pos-muted: #A0AEC0;
+  --pos-radius: 20px;
+}
+html[data-theme='soft'] .rounded-2xl { border-radius: 20px; }
+html[data-theme='soft'] .rounded-xl  { border-radius: 16px; }
+html[data-theme='soft'] .shadow-xs, html[data-theme='soft'] .shadow-sm {
+  box-shadow:
+    0 1px 2px rgba(44, 62, 80, 0.04),
+    0 8px 24px rgba(44, 62, 80, 0.06);
+}
+html[data-theme='soft'] .bg-sky-600 { background-color: #1E75FF; }
+html[data-theme='soft'] .bg-sky-600:hover, html[data-theme='soft'] .hover\:bg-sky-700:hover { background-color: #1661E0; }
+html[data-theme='soft'] .text-sky-600, html[data-theme='soft'] .text-sky-500 { color: #1E75FF; }
+html[data-theme='soft'].dark {
+  --pos-bg: #12161E;
+  --pos-card: #1B2130;
+  --pos-border: #283048;
+  --pos-text: #E9EDF5;
+  --pos-muted: #94A3C0;
+  --pos-primary: #5B97FF;
+}
+
+/* ── 2 · GLASS — macOS glassmorphism (light/dark variants) ─────────────── */
+html[data-theme='glass'] body {
+  background:
+    radial-gradient(120% 90% at 12% 10%, #7C3AED88 0%, transparent 55%),
+    radial-gradient(110% 80% at 88% 14%, #F59E0B77 0%, transparent 50%),
+    radial-gradient(120% 120% at 82% 88%, #EC489966 0%, transparent 55%),
+    linear-gradient(135deg, #3B0764 0%, #1E0733 55%, #43130A 100%);
+}
+html[data-theme='glass'] {
+  --pos-bg: #2A1508;
+  --pos-card: rgba(232, 222, 216, 0.62);  /* frosted cream over the gradient */
+  --pos-border: rgba(255, 255, 255, 0.35);
+  --pos-primary: #F28C28;
+  --pos-accent: #F28C28;
+  --pos-text: #241512;
+  --pos-muted: #6B5250;
+  --pos-radius: 18px;
+}
+html[data-theme='glass'].dark {
+  --pos-card: rgba(30, 19, 16, 0.60);     /* translucent dark chocolate */
+  --pos-border: rgba(242, 140, 40, 0.28);
+  --pos-text: #F2E6DC;
+  --pos-muted: #B08F7A;
+}
+html[data-theme='glass'] .rounded-2xl { border-radius: 18px; }
+html[data-theme='glass'] .rounded-xl  { border-radius: 16px; }
+html[data-theme='glass'] .bg-pos-card,
+html[data-theme='glass'] .bg-white,
+html[data-theme='glass'] .bg-slate-50,
+html[data-theme='glass'] .bg-slate-100 {
+  background-color: var(--pos-card);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+}
+html[data-theme='glass'].dark .bg-slate-800, html[data-theme='glass'].dark .dark\:bg-slate-900,
+html[data-theme='glass'].dark .dark\:bg-slate-800 {
+  background-color: var(--pos-card);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+}
+html[data-theme='glass'] .bg-sky-600 { background-color: #F28C28; }
+html[data-theme='glass'] .hover\:bg-sky-700:hover { background-color: #D9780F; }
+html[data-theme='glass'] .text-sky-600, html[data-theme='glass'] .text-sky-500 { color: #F28C28; }
+
+/* ── 3 · CONTRAST — canary marketing, black pills ──────────────────────── */
+html[data-theme='contrast'] {
+  --pos-bg: #FFCC00;
+  --pos-card: #FFFFFF;
+  --pos-border: #0B0B0B;
+  --pos-primary: #000000;
+  --pos-accent: #FFCC00;
+  --pos-text: #000000;
+  --pos-muted: #3A3400;
+  --pos-radius: 18px;
+}
+html[data-theme='contrast'] .rounded-2xl { border-radius: 18px; }
+html[data-theme='contrast'] .rounded-xl  { border-radius: 16px; }
+html[data-theme='contrast'] .shadow-xs, html[data-theme='contrast'] .shadow-sm {
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.14);
+}
+html[data-theme='contrast'] .bg-sky-600 { background-color: #0B0B0B; color: #FFCC00; }
+html[data-theme='contrast'] .hover\:bg-sky-700:hover { background-color: #1F1F00; color: #FFCC00; }
+html[data-theme='contrast'] .bg-pos-card { border: 1.5px solid #0B0B0B; }
+html[data-theme='contrast'] .text-sky-600, html[data-theme='contrast'] .text-sky-500,
+html[data-theme='contrast'] .text-emerald-600, html[data-theme='contrast'] .text-emerald-500 { color: #0B0B0B; }
+html[data-theme='contrast'] button, html[data-theme='contrast'] .rounded-full {
+  border-radius: 9999px;  /* black pills touch the canary*/
+}
+html[data-theme='contrast'].dark {
+  --pos-bg: #0F0F00;
+  --pos-card: #1B1B00;
+  --pos-border: #FFE55C;
+  --pos-text: #FFF7CC;
+  --pos-muted: #C9B82E;
+}
+html[data-theme='contrast'].dark .bg-sky-600 { background-color: #FFCC00; color: #0B0B0B; }
+
+/* ── 4 · CORAL — warm duotone mobile-clean ─────────────────────────────── */
+html[data-theme='coral'] {
+  --pos-bg: #FFF3F2;
+  --pos-card: #FFFFFF;
+  --pos-border: #FBD5D2;
+  --pos-primary: #FF3B30;
+  --pos-accent: #FF3B30;
+  --pos-text: #1C1C1E;
+  --pos-muted: #8A6F6C;
+  --pos-radius: 24px;
+}
+html[data-theme='coral'] body {
+  background: radial-gradient(120% 70% at 50% 0%, #FFE0DD 0%, #FFF3F2 55% 100%);
+}
+html[data-theme='coral'] .rounded-2xl { border-radius: 24px; }
+html[data-theme='coral'] .rounded-xl  { border-radius: 20px; }
+html[data-theme='coral'] .button, html[data-theme='coral'] button { border-radius: 9999px; }
+html[data-theme='coral'] .shadow-xs, html[data-theme='coral'] .shadow-sm {
+  box-shadow: 0 6px 20px rgba(255, 91, 77, 0.16), 0 1px 2px rgba(59, 13, 7, 0.05);
+}
+html[data-theme='coral'] .bg-sky-600 { background-color: #FF3B30; }
+html[data-theme='coral'] .hover\:bg-sky-700:hover { background-color: #E03226; }
+html[data-theme='coral'] .text-sky-600, html[data-theme='coral'] .text-sky-500 { color: #FF3B30; }
+html[data-theme='coral'].dark {
+  --pos-bg: #1F1314;
+  --pos-card: #2E1B1D;
+  --pos-border: #4C2B28;
+  --pos-text: #F7E9E7;
+  --pos-muted: #C2958E;
+}

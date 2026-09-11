@@ -7,6 +7,14 @@
     <title>TitaouPosCRM — Point of Sale + TitaouCRM</title>
   </head>
   <body>
+    <script>
+      // Apply the saved theme skin before first paint (no flash).
+      try {
+        var t = localStorage.getItem('pos_theme');
+        if (t) document.documentElement.setAttribute('data-theme', t);
+        else document.documentElement.setAttribute('data-theme', 'soft');
+      } catch (e) {}
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

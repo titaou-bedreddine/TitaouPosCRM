@@ -8,6 +8,7 @@
   import { printLabelSilently, printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
   import CloudSyncTab from '../../lib/components/CloudSyncTab.svelte';
+  import { themeSkin, setThemeSkin, THEME_SKINS } from '../../lib/stores/theme';
   import {
     LABEL_PRESETS,
     LABEL_PRESET_IDS,
@@ -1470,7 +1471,30 @@
     <!-- 1. GENERAL TAB -->
     <div class:hidden={currentTab !== 'general'}>
       <div class="max-w-4xl space-y-6">
-        <div>
+        
+  <!-- Appearance: selectable theme skins -->
+        <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border">
+          <h3 class="text-sm font-black text-pos-text mb-3">Appearance / المظهر / Apparence</h3>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+            {#each THEME_SKINS as skin (skin.id)}
+              <button
+                type="button"
+                on:click={() => setThemeSkin(skin.id)}
+                class="p-3 rounded-2xl border-2 text-start transition cursor-pointer {$themeSkin === skin.id
+                  ? 'border-sky-600 ring-2 ring-sky-300'
+                  : 'border-pos-border hover:border-sky-400'}"
+              >
+                <div class="flex gap-1 mb-2">
+                  {#each skin.colors as c}
+                    <span class="w-4 h-4 rounded-full border border-black/10" style={`background:${c}`} />
+                  {/each}
+                </div>
+                <p class="text-[11px] font-black text-pos-text">{skin.name}</p>
+              </button>
+            {/each}
+          </div>
+        </div>
+<div>
           <h2 class="text-base font-black text-pos-text">Shop Profile & Store Logo</h2>
           <p class="text-xs text-pos-muted">Configure store identity, commercial register info, and logo preview</p>
         </div>
