@@ -684,6 +684,8 @@ mod tests {
             user_id: 1,
             customer_id: None,
             items: vec![CartItem {
+                sale_unit: None,
+                base_quantity: 0.0,
                 product_id,
                 sku: None, barcode: None, name_ar: None, name_fr: None,
                 name_en: None, image_path: None,
