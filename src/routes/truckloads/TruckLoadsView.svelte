@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
-  import { Truck, Plus, RefreshCw, Printer, Package, X, Undo2 } from 'lucide-svelte';
+  import { Truck, Plus, RefreshCw, Printer, Package, X, Undo2, Eye } from 'lucide-svelte';
 
   let loads: any[] = [];
   let staff: any[] = [];
@@ -32,11 +32,33 @@
         invoke<any[]>('cloud_field_staff').catch(() => []),
         invoke<any[]>('cloud_recent_routes', { limit: 30 }).catch(() => []),
       ]);
+      const nameById: Record<string, string> = {};
+      for (const m of staff) nameById[m.id] = m.full_name;
+      // Enrich each route with seller name + stop count for the dropdown so
+      // the user can't pick the wrong one blind.
+      for (const r of routes) {
+        r.seller_name = nameById[r.seller_id] ?? '—';
+        try {
+          const detail = await invoke<any>('cloud_route_detail', { routeId: r.id }).catch(() => null);
+          r.stop_count = detail?.stops?.length ?? 0;
+          r.stop_preview = (detail?.stops ?? [])
+            .slice(0, 3)
+            .map((st: any) => st.client?.name)
+            .filter(Boolean)
+            .join(', ');
+        } catch { r.stop_count = 0; }
+      }
+      routes = [...routes];
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
     } finally {
       loading = false;
     }
+  }
+
+  let viewingRoute: any = null;
+  async function viewRoute(id: string) {
+    viewingRoute = await invoke<any>('cloud_route_detail', { routeId: id });
   }
 
   async function fillFromRoute() {
@@ -45,7 +67,8 @@
       return;
     }
     try {
-      const lines = await invoke<any[]>('cloud_route_order_items', { routeId });
+      const payload = await invoke<any>('cloud_route_order_items', { routeId });
+      const lines = payload?.lines ?? [];
       // Aggregate per product (routes can serve the same product to several stops).
       const agg = new Map<string, { product_id: string; product_name: string; quantity: number; unit_price: number }>();
       for (const ln of lines) {
@@ -255,13 +278,23 @@
           </div>
           <div class="col-span-2">
             <label class="block text-[10px] font-black text-pos-muted mb-1">Route (auto-fill)</label>
-            <select bind:value={routeId} on:change={fillFromRoute}
-              class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">
-              <option value="">—</option>
-              {#each routes as r (r.id)}
-                <option value={r.id}>{String(r.route_date).slice(0, 10)} · {r.status}</option>
-              {/each}
-            </select>
+            <div class="flex gap-1.5 items-center">
+              <select bind:value={routeId} on:change={fillFromRoute}
+                class="flex-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">
+                <option value="">—</option>
+                {#each routes as r (r.id)}
+                  <option value={r.id}>
+                    {String(r.route_date).slice(0, 10)} · {r.seller_name} · {r.stop_count} stops {r.stop_preview ? '· ' + r.stop_preview : ''}
+                  </option>
+                {/each}
+              </select>
+              {#if routeId}
+                <button type="button" class="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer"
+                  title="View route" on:click={() => viewRoute(routeId)}>
+                  <Eye class="w-4 h-4" />
+                </button>
+              {/if}
+            </div>
           </div>
         </div>
 
@@ -312,6 +345,36 @@
         <button type="button" on:click={() => (returnsLoad = null)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
         <button type="button" on:click={saveReturns} disabled={busy}
           class="px-4 py-2 text-[11px] font-black bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">OK</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if viewingRoute}
+  <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (viewingRoute = null)} role="presentation">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-md max-h-[80vh] flex flex-col" on:click|stopPropagation>
+      <div class="p-4 border-b border-pos-border flex items-center justify-between sticky top-0 bg-inherit rounded-t-2xl">
+        <h3 class="text-sm font-black text-pos-text">Feuille de route — {String(viewingRoute.route.route_date).slice(0, 10)}</h3>
+        <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (viewingRoute = null)}>
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+      <div class="p-4 overflow-y-auto">
+        <p class="text-xs font-bold text-pos-muted mb-2">{viewingRoute.route.seller?.full_name ?? '—'} · {viewingRoute.route.status}</p>
+        <table class="w-full text-xs">
+          <thead><tr class="text-pos-muted font-black">
+            <th class="p-2 text-start">#</th><th class="p-2 text-start">Client</th><th class="p-2 text-end">Total</th>
+          </tr></thead>
+          <tbody>
+            {#each viewingRoute.stops as st, i}
+              <tr class="border-t border-pos-border">
+                <td class="p-2">{i + 1}</td>
+                <td class="p-2 font-bold">{st.client?.name ?? '—'}</td>
+                <td class="p-2 text-end font-mono">{((st.order?.total_amount ?? 0) / 100).toLocaleString('fr-DZ')} DA</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

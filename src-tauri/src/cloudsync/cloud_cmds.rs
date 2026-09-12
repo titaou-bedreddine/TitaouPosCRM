@@ -283,25 +283,41 @@ pub fn cloud_recent_routes(limit: Option<i64>) -> Result<Value, String> {
 }
 
 /// Orders validated for a route (to auto-fill a truck load): aggregated
-/// product quantities + totals from the route's stops.
+/// product quantities + totals from the route's stops. route_stops has no
+/// direct FK to order_items (it runs through orders), so the lines are
+/// fetched in two steps.
 #[tauri::command]
 pub fn cloud_route_order_items(route_id: String) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
-    let rows = client.select(
+    let stops = client.select(
         "route_stops",
-        "order_id, items:order_items(product_id, quantity, unit_price, line_total, product:products(name))",
-        &[("route_id", format!("eq.{route_id}"))],
+        "order_id, stop_order, status, client:clients(name)",
+        &[
+            ("route_id", format!("eq.{route_id}")),
+            ("order", "stop_order.asc".into()),
+        ],
     )?;
-    // Flatten to one list of lines.
-    let mut lines: Vec<serde_json::Value> = vec![];
-    for stop in rows {
-        if let Some(items) = stop["items"].as_array() {
-            for it in items {
-                lines.push(it.clone());
-            }
-        }
+    let order_ids: Vec<String> = stops
+        .iter()
+        .filter_map(|st| st["order_id"].as_str().map(String::from))
+        .collect();
+    if order_ids.is_empty() {
+        return Ok(Value::Array(vec![]));
     }
-    Ok(Value::Array(lines))
+    let in_list = order_ids
+        .iter()
+        .map(|id| format!("({id})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let lines = client.select(
+        "order_items",
+        "order_id, product_id, quantity, unit_price, line_total, product:products(name)",
+        &[("order_id", format!("in.{in_list}"))],
+    )?;
+    Ok(serde_json::json!({
+        "stops": stops,
+        "lines": lines,
+    }))
 }
 
 /// Create a truck load (manifest document — no stock movement at load time).
@@ -746,9 +762,21 @@ pub fn cloud_create_route(
 
     let mut stops = Vec::new();
     for (i, order_id) in order_ids.iter().enumerate() {
+        // route_stops.client_id is NOT NULL — resolve it from the order.
+        let order_rows = client.select(
+            "orders",
+            "client_id",
+            &[("id", format!("eq.{order_id}"))],
+        )?;
+        let client_id = order_rows
+            .first()
+            .and_then(|r| r["client_id"].as_str())
+            .ok_or_else(|| format!("order {order_id} has no client"))?
+            .to_string();
         stops.push(serde_json::json!({
             "route_id": route_id,
             "order_id": order_id,
+            "client_id": client_id,
             "stop_order": (i + 1) as i64,
             "status": "validated",
         }));
@@ -766,4 +794,134 @@ fn json_route_stop_placeholder(id: &str) -> Value {
 pub fn cloud_delete_route(route_id: String) -> Result<(), String> {
     let client = cloud::ensure_session()?;
     client.delete("routes", &[("id", format!("eq.{route_id}"))])
+}
+
+// ── Field-order edit/delete (admin RPCs already exist in the CRM) ────────
+
+/// Fetch one order's full detail for the editor (lines + notes + member).
+#[tauri::command]
+pub fn cloud_field_order_detail(order_id: String) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "orders",
+        "*, client:clients(name), preseller:profiles!orders_preseller_id_fkey(id, full_name)",
+        &[("id", format!("eq.{order_id}"))],
+    )?;
+    let order = rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| "order not found".to_string())?;
+    let lines = client.select(
+        "order_items",
+        "*, product:products(name)",
+        &[("order_id", format!("eq.{order_id}"))],
+    )?;
+    Ok(serde_json::json!({ "order": order, "lines": lines }))
+}
+
+/// Edit an order's lines/notes: p_items [{product_id, quantity, unit_price,
+/// line_total?}] — stock + balance compensated server-side.
+#[tauri::command]
+pub fn cloud_field_order_edit(
+    order_id: String,
+    items: Value,
+    notes: Option<String>,
+) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc("update_order_items", serde_json::json!({
+            "p_order_id": order_id,
+            "p_items": items,
+            "p_notes": notes,
+        }))
+        .map(|_| ())
+}
+
+/// Delete an order: reverses its stock movements and remaining due, then
+/// removes the order (payments detach).
+#[tauri::command]
+pub fn cloud_field_order_delete(order_id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc("delete_order", serde_json::json!({ "p_order_id": order_id }))
+        .map(|_| ())
+}
+
+// ── Route detail / edit / weekday plan ─────────────────────────────────────
+
+/// Full route detail: stops in order with client names + order totals —
+/// powers the "view route" modal, the load dropdown's details and printing.
+#[tauri::command]
+pub fn cloud_route_detail(route_id: String) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "routes",
+        "id, route_date, seller_id, status, seller:profiles!routes_seller_id_fkey(full_name)",
+        &[("id", format!("eq.{route_id}"))],
+    )?;
+    let route = rows.into_iter().next().ok_or("route not found")?;
+    let stops = client.select(
+        "route_stops",
+        "stop_order, status, arrived_at, completed_at, order_id, client:clients(name), order:orders(total_amount, amount_paid)",
+        &[
+            ("route_id", format!("eq.{route_id}")),
+            ("order", "stop_order.asc".into()),
+        ],
+    )?;
+    Ok(serde_json::json!({ "route": route, "stops": stops }))
+}
+
+/// Replace a route's seller/date/status and its ordered stops.
+/// stop order = array index; each {order_id, client_id}.
+#[tauri::command]
+pub fn cloud_update_route(
+    route_id: String,
+    seller_id: String,
+    route_date: String,
+    status: String,
+    stops: Value,
+) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client.patch(
+        "routes",
+        serde_json::json!({
+            "seller_id": seller_id,
+            "route_date": route_date,
+            "status": status,
+        }),
+        &[("id", format!("eq.{route_id}"))],
+    )?;
+    client.delete("route_stops", &[("route_id", format!("eq.{route_id}"))])?;
+    let arr = stops.as_array().cloned().unwrap_or_default();
+    if !arr.is_empty() {
+        let mut rows = Vec::new();
+        for (i, st) in arr.iter().enumerate() {
+            rows.push(serde_json::json!({
+                "route_id": route_id,
+                "order_id": st["order_id"],
+                "client_id": st["client_id"],
+                "stop_order": (i + 1) as i64,
+                "status": "validated",
+            }));
+        }
+        client.insert("route_stops", serde_json::Value::Array(rows))?;
+    }
+    Ok(())
+}
+
+/// Reusable weekday plan: which clients this seller serves on which day.
+/// Written to the clients' visit_days via a dedicated lightweight table:
+/// client_visit_days exists on clients (visit_days text[]). We set it per
+/// client directly.
+#[tauri::command]
+pub fn cloud_set_client_visit_days(
+    client_id: String,
+    days: Vec<String>,
+) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client.patch(
+        "clients",
+        serde_json::json!({ "visit_days": days }),
+        &[("id", format!("eq.{client_id}"))],
+    )
 }

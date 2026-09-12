@@ -27,3 +27,17 @@ document.addEventListener(
 );
 
 export default app;
+// Devtools hard-off (also enforced by the Rust build: no devtools feature in
+// release). Block the usual inspector shortcuts + their browser-menu variants.
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', (e: KeyboardEvent) => {
+    const key = e.key.toLowerCase();
+    if (key === 'f12' ||
+        (e.ctrlKey && e.shiftKey && (key === 'i' || key === 'j' || key === 'c')) ||
+        (e.ctrlKey && key === 'u')) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+  window.addEventListener('contextmenu', (e) => e.preventDefault());
+}
