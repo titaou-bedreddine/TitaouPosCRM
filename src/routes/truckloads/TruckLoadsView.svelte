@@ -13,6 +13,7 @@
 
   // New load form
   let showForm = false;
+  let loadName = '';
   let sellerId = '';
   let routeId = '';
   let routeDate = new Date().toISOString().slice(0, 10);
@@ -108,6 +109,7 @@
         routeId: routeId || null,
         routeDate,
         items: payload,
+        name: loadName || null,
       });
       showForm = false;
       items = [];
@@ -220,7 +222,7 @@
         <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border space-y-2">
           <div class="flex items-start justify-between">
             <div>
-              <p class="text-sm font-black text-pos-text">{l.seller?.full_name ?? '—'}</p>
+              <p class="text-sm font-black text-pos-text">{l.name || l.seller?.full_name || '—'}</p>
               <p class="text-[10px] text-pos-muted">{String(l.route_date).slice(0, 10)} · {l.status}</p>
             </div>
             <div class="flex gap-1">
@@ -263,6 +265,11 @@
       </div>
       <div class="p-4 overflow-y-auto space-y-3">
         <div class="grid grid-cols-2 gap-2.5">
+          <div class="col-span-2">
+            <label class="block text-[10px] font-black text-pos-muted mb-1">{t('routes_name')}</label>
+            <input type="text" bind:value={loadName} placeholder="Tournée eau — {routeDate}"
+              class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+          </div>
           <div>
             <label class="block text-[10px] font-black text-pos-muted mb-1">{t('tl_seller')}</label>
             <select bind:value={sellerId}

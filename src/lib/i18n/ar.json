@@ -685,5 +685,6 @@
   "routes_orders": "طلبات التوصيلة",
   "routes_create": "إنشاء التوصيلة",
   "routes_empty": "لا توجد توصيلات بعد.",
-  "routes_stops": "محطات"
+  "routes_stops": "محطات",
+  "routes_name": "اسم التوصيلة"
 }

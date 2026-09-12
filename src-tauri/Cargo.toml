@@ -1,6 +1,6 @@
 [package]
 name = "titaou-poscrm"
-version = "0.8.4"
+version = "0.8.5"
 description = "TitaouPosCRM — POS & TitaouCRM admin station (offline-first + Supabase cloud sync)"
 edition = "2021"
 

@@ -176,12 +176,21 @@ impl SupabaseClient {
 /// Extract a readable error from a PostgREST/GoTrue error body:
 /// {"code":"PGRST202","message":"...","details":...,"hint":...}.
 fn rpc_error(ctx: &str, status: reqwest::StatusCode, body: &Value) -> String {
-    let code = body["code"].as_str().unwrap_or("");
-    let msg = body["message"]
+    let code = body["code"]
+        .as_str()
+        .map(String::from)
+        .or_else(|| body["code"].as_i64().map(|c| c.to_string()))
+        .unwrap_or_default();
+    let mut msg = body["message"]
         .as_str()
         .or_else(|| body["error_description"].as_str())
         .or_else(|| body["msg"].as_str())
-        .unwrap_or("unknown error");
+        .or_else(|| body["error"].as_str())
+        .map(String::from)
+        .unwrap_or_else(|| body.to_string());
+    if msg.len() > 300 {
+        msg.truncate(300);
+    }
     if code.is_empty() {
         format!("{ctx} failed (HTTP {status}): {msg}")
     } else {

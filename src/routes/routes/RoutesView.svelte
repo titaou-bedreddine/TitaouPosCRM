@@ -25,6 +25,7 @@
   let editSellerId = '';
   let editDate = '';
   let editStatus = 'planned';
+  let editName = '';
 
   function toggleWeekday(orderId: string, day: string) {
     const days = weekdayPlan[orderId] ?? [];
@@ -44,6 +45,7 @@
     editSellerId = detail.route.seller_id ?? '';
     editDate = String(detail.route.route_date).slice(0, 10);
     editStatus = detail.route.status ?? 'planned';
+    editName = detail.route.name ?? '';
   }
 
   async function saveEditedRoute() {
@@ -54,6 +56,7 @@
         sellerId: editSellerId,
         routeDate: editDate,
         status: editStatus,
+        name: editName,
         stops: editing.stops.map((st: any) => ({
           order_id: st.order_id,
           client_id: st.client_id ?? st.client?.id,
@@ -210,8 +213,8 @@
         <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border space-y-1.5">
           <div class="flex items-start justify-between">
             <div>
-              <p class="text-sm font-black text-pos-text">{String(r.route_date).slice(0, 10)}</p>
-              <p class="text-[10px] text-pos-muted">{r.status} · {t('routes_stops')}: {r.stop_count ?? 0}</p>
+              <p class="text-sm font-black text-pos-text">{r.name || String(r.route_date).slice(0, 10)}</p>
+              <p class="text-[10px] text-pos-muted">{String(r.route_date).slice(0, 10)} · {r.status} · {t('routes_stops')}: {r.stop_count ?? 0}</p>
             </div>
             <div class="flex gap-1">
               <button type="button" class="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer"
@@ -322,7 +325,7 @@
   <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (viewing = null)} role="presentation">
     <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-lg max-h-[80vh] flex flex-col" on:click|stopPropagation>
       <div class="p-4 border-b border-pos-border flex items-center justify-between sticky top-0 bg-inherit rounded-t-2xl">
-        <h3 class="text-sm font-black text-pos-text">Feuille de route — {String(viewing.route.route_date).slice(0, 10)}</h3>
+        <h3 class="text-sm font-black text-pos-text">Feuille de route{viewing.route.name ? ' — ' + viewing.route.name : ''} · {String(viewing.route.route_date).slice(0, 10)}</h3>
         <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (viewing = null)}><X class="w-4 h-4" /></button>
       </div>
       <div class="p-4 overflow-y-auto">
@@ -352,6 +355,8 @@
   <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (editing = null)} role="presentation">
     <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-md p-5 space-y-3" on:click|stopPropagation>
       <h3 class="text-sm font-black text-pos-text">Modifier la tournée</h3>
+      <input type="text" bind:value={editName} placeholder={t('routes_name')}
+        class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
       <select bind:value={editSellerId} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">
         {#each staff as s (s.id)}<option value={s.id}>{s.full_name} ({s.role})</option>{/each}
       </select>

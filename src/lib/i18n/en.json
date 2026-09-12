@@ -685,5 +685,6 @@
   "routes_orders": "Orders on this route",
   "routes_create": "Create route",
   "routes_empty": "No routes yet.",
-  "routes_stops": "stops"
+  "routes_stops": "stops",
+  "routes_name": "Route name"
 }

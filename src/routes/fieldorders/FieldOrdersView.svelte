@@ -2,24 +2,88 @@
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
-  import { Truck, RefreshCw, X, Receipt } from 'lucide-svelte';
+  import { Truck, RefreshCw, X, Receipt, Pencil, Trash2, Plus } from 'lucide-svelte';
 
   let orders: any[] = [];
   let loading = true;
   let error = '';
   let selected: any = null;
   let lines: any[] = [];
+  let busy = false;
 
   async function load() {
     loading = true;
     error = '';
     try {
       orders = await invoke<any[]>('cloud_field_orders', { limit: 200 });
+      // Member names resolved client-side (the FK runs through auth.users —
+      // PostgREST cannot embed profiles here).
+      const members = await invoke<any[]>('cloud_team_members').catch(() => []);
+      const names: Record<string, string> = {};
+      for (const m of members) names[m.id] = m.full_name;
+      for (const o of orders) {
+        if (o.member_name === '—' || !o.member_name) o.member_name = names[o.member_id] ?? o.member_name ?? '—';
+      }
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed to load';
       orders = [];
     } finally {
       loading = false;
+    }
+  }
+
+  let editMode = false;
+  let editQty: Record<string, number> = {};
+  let editNotes = '';
+
+  function startEdit() {
+    editMode = true;
+    editQty = {};
+    editNotes = selected?.notes ?? '';
+    for (const ln of lines) {
+      editQty[ln.product_id] = ln.quantity;
+    }
+  }
+
+  async function saveEdit() {
+    if (!selected) return;
+    busy = true;
+    error = '';
+    try {
+      const items = lines.map((ln) => ({
+        product_id: ln.product_id,
+        quantity: editQty[ln.product_id] ?? ln.quantity,
+        unit_price: ln.unit_price,
+      }));
+      await invoke('cloud_field_order_edit', {
+        orderId: selected.crm_id,
+        items,
+        notes: editNotes,
+      });
+      editMode = false;
+      await load();
+      const fresh = orders.find((o: any) => o.crm_id === selected.crm_id);
+      if (fresh) selected = fresh;
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function deleteOrder() {
+    if (!selected) return;
+    if (!confirm('Supprimer cette commande ? (stock + dues reversés)')) return;
+    busy = true;
+    error = '';
+    try {
+      await invoke('cloud_field_order_delete', { orderId: selected.crm_id });
+      selected = null;
+      await load();
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      busy = false;
     }
   }
 
@@ -121,6 +185,16 @@
         </button>
       </div>
       <div class="p-4 overflow-y-auto space-y-3">
+        <div class="flex items-center justify-end gap-2">
+          <button type="button" class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-amber-500 hover:bg-amber-600 text-white rounded-xl cursor-pointer"
+            on:click={() => startEdit()}>
+            <Pencil class="w-3.5 h-3.5" />Modifier
+          </button>
+          <button type="button" class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-rose-600 hover:bg-rose-700 text-white rounded-xl cursor-pointer"
+            on:click={() => deleteOrder()}>
+            <Trash2 class="w-3.5 h-3.5" />Supprimer
+          </button>
+        </div>
         <div class="grid grid-cols-3 gap-2 text-xs">
           <div class="p-2.5 bg-slate-50 dark:bg-slate-800 rounded-xl">
             <p class="text-[9px] font-black text-pos-muted uppercase">{t('fo_member')}</p>
@@ -151,14 +225,38 @@
                 <tr class="border-t border-pos-border">
                   <td class="p-2">{i + 1}. {ln.product_name}</td>
                   <td class="p-2 text-end font-mono">{ln.unit_price}</td>
-                  <td class="p-2 text-end font-mono">{ln.quantity}</td>
-                  <td class="p-2 text-end font-black">{ln.line_total}</td>
+                  <td class="p-2 text-end">
+                    {#if editMode}
+                      <input type="number" step="0.001" min="0"
+                        bind:value={editQty[ln.product_id]}
+                        class="w-20 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs font-mono text-pos-text outline-none text-end" />
+                    {:else}
+                      <span class="font-mono">{ln.quantity}</span>
+                    {/if}
+                  </td>
+                  <td class="p-2 text-end font-black">
+                    {#if editMode}
+                      {Math.round((editQty[ln.product_id] ?? ln.quantity) * ln.unit_price)}
+                    {:else}
+                      {ln.line_total}
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             </tbody>
           </table>
         </div>
-        {#if selected.notes}
+        {#if editMode}
+          <textarea bind:value={editNotes} rows="2" placeholder="Notes"
+            class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+          <div class="flex justify-end gap-2">
+            <button type="button" on:click={() => (editMode = false)}
+              class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">Annuler</button>
+            <button type="button" on:click={saveEdit} disabled={busy}
+              class="px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">Enregistrer</button>
+          </div>
+        {/if}
+        {#if !editMode && selected.notes}
           <p class="text-[11px] text-pos-muted bg-slate-50 dark:bg-slate-800 rounded-xl p-3">📝 {selected.notes}</p>
         {/if}
       </div>

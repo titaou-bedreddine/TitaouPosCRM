@@ -273,7 +273,7 @@ pub fn cloud_recent_routes(limit: Option<i64>) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "routes",
-        "id, route_date, seller_id, status",
+        "id, route_date, seller_id, status, name",
         &[
             ("order", "route_date.desc".into()),
             ("limit", limit.unwrap_or(30).to_string().into()),
@@ -328,6 +328,7 @@ pub fn cloud_create_truck_load(
     route_date: Option<String>,
     items: Value,
     notes: Option<String>,
+    name: Option<String>,
 ) -> Result<String, String> {
     let client = cloud::ensure_session()?;
     let id = client.rpc(
@@ -338,6 +339,7 @@ pub fn cloud_create_truck_load(
             "p_route_date": route_date,
             "p_items": items,
             "p_notes": notes,
+            "p_name": name,
         }),
     )?;
     id.as_str().map(String::from).ok_or_else(|| "no id returned".into())
@@ -361,7 +363,7 @@ pub fn cloud_truck_loads() -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "truck_loads",
-        "*, seller:profiles!truck_loads_seller_id_fkey(full_name), items:truck_load_items(quantity, returned_quantity, product:products(name))",
+        "*, items:truck_load_items(quantity, returned_quantity, product:products(name))",
         &[("order", "created_at.desc".into())],
     )?;
     Ok(Value::Array(rows))
@@ -727,6 +729,7 @@ pub fn cloud_create_route(
     route_date: String,
     order_ids: Vec<String>,
     notes: Option<String>,
+    name: Option<String>,
 ) -> Result<String, String> {
     let client = cloud::ensure_session()?;
     if order_ids.is_empty() {
@@ -752,6 +755,7 @@ pub fn cloud_create_route(
             "seller_id": seller_id,
             "route_date": route_date,
             "status": "planned",
+            "name": name,
         }]),
     )?;
     let route_id = rows
@@ -804,7 +808,7 @@ pub fn cloud_field_order_detail(order_id: String) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "orders",
-        "*, client:clients(name), preseller:profiles!orders_preseller_id_fkey(id, full_name)",
+        "*, client:clients(name)",
         &[("id", format!("eq.{order_id}"))],
     )?;
     let order = rows
@@ -856,7 +860,7 @@ pub fn cloud_route_detail(route_id: String) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "routes",
-        "id, route_date, seller_id, status, seller:profiles!routes_seller_id_fkey(full_name)",
+        "id, route_date, seller_id, status, name",
         &[("id", format!("eq.{route_id}"))],
     )?;
     let route = rows.into_iter().next().ok_or("route not found")?;
@@ -880,6 +884,7 @@ pub fn cloud_update_route(
     route_date: String,
     status: String,
     stops: Value,
+    name: Option<String>,
 ) -> Result<(), String> {
     let client = cloud::ensure_session()?;
     client.patch(
@@ -888,6 +893,7 @@ pub fn cloud_update_route(
             "seller_id": seller_id,
             "route_date": route_date,
             "status": status,
+            "name": name,
         }),
         &[("id", format!("eq.{route_id}"))],
     )?;

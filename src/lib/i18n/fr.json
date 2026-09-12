@@ -685,5 +685,6 @@
   "routes_orders": "Commandes de la tournée",
   "routes_create": "Créer la tournée",
   "routes_empty": "Aucune tournée.",
-  "routes_stops": "arrêts"
+  "routes_stops": "arrêts",
+  "routes_name": "Nom de la tournée"
 }
