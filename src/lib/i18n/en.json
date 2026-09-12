@@ -676,5 +676,14 @@
   "promo_confirm_delete": "Delete this promotion?",
   "nav_promotions": "Promotions",
   "promo_search_product": "Search product…",
-  "promo_no_match": "no product matches"
+  "promo_no_match": "no product matches",
+  "nav_routes": "Routes",
+  "routes_title": "Delivery Routes",
+  "routes_new": "New route",
+  "routes_seller": "Seller",
+  "routes_date": "Date",
+  "routes_orders": "Orders on this route",
+  "routes_create": "Create route",
+  "routes_empty": "No routes yet.",
+  "routes_stops": "stops"
 }

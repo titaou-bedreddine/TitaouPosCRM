@@ -676,5 +676,14 @@
   "promo_confirm_delete": "Supprimer cette promotion ?",
   "nav_promotions": "Promotions",
   "promo_search_product": "Rechercher un produit…",
-  "promo_no_match": "aucun produit ne correspond"
+  "promo_no_match": "aucun produit ne correspond",
+  "nav_routes": "Tournées",
+  "routes_title": "Tournées de livraison",
+  "routes_new": "Nouvelle tournée",
+  "routes_seller": "Vendeur",
+  "routes_date": "Date",
+  "routes_orders": "Commandes de la tournée",
+  "routes_create": "Créer la tournée",
+  "routes_empty": "Aucune tournée.",
+  "routes_stops": "arrêts"
 }

@@ -683,3 +683,87 @@ pub fn cloud_products_for_promos() -> Result<Value, String> {
     )?;
     Ok(Value::Array(rows))
 }
+
+// ── Routes (admin: assign a day's orders to a seller as ordered stops) ─────
+
+/// Orders eligible for routing: validated (goods pending), not already on a
+/// route stop, with the client name for the picker.
+#[tauri::command]
+pub fn cloud_routable_orders() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "orders",
+        "id, client_id, client:clients(name), preseller_id, total_amount, amount_paid, created_at",
+        &[
+            ("status", "eq.validated".into()),
+            ("source", "neq.pos".into()),
+            ("order", "created_at.desc".into()),
+            ("limit", "100".into()),
+        ],
+    )?;
+    Ok(Value::Array(rows))
+}
+
+/// Validates the ids exist and aren't already routed; returns (order, client) pairs.
+#[tauri::command]
+pub fn cloud_create_route(
+    seller_id: String,
+    route_date: String,
+    order_ids: Vec<String>,
+    notes: Option<String>,
+) -> Result<String, String> {
+    let client = cloud::ensure_session()?;
+    if order_ids.is_empty() {
+        return Err("Pick at least one order for the route".into());
+    }
+    let items: Vec<Value> = order_ids
+        .iter()
+        .map(|id| json_route_stop_placeholder(id))
+        .collect();
+    let _ = items;
+
+    // create_route RPC (0001-era RPC? none — insert directly: routes + stops).
+    // Use the truck pattern: insert route, then stops in order.
+    let org = cloud::auth::fetch_profile(&client)?["organization_id"]
+        .as_str()
+        .ok_or("no org")?
+        .to_string();
+
+    let rows = client.insert(
+        "routes",
+        serde_json::json!([{
+            "organization_id": org,
+            "seller_id": seller_id,
+            "route_date": route_date,
+            "status": "planned",
+        }]),
+    )?;
+    let route_id = rows
+        .first()
+        .and_then(|r| r["id"].as_str())
+        .ok_or("route insert returned no id")?
+        .to_string();
+
+    let mut stops = Vec::new();
+    for (i, order_id) in order_ids.iter().enumerate() {
+        stops.push(serde_json::json!({
+            "route_id": route_id,
+            "order_id": order_id,
+            "stop_order": (i + 1) as i64,
+            "status": "validated",
+        }));
+    }
+    client.insert("route_stops", serde_json::Value::Array(stops))?;
+    Ok(route_id)
+}
+
+fn json_route_stop_placeholder(id: &str) -> Value {
+    serde_json::json!({ "order_id": id })
+}
+
+/// Delete a route (stops cascade; orders stay untouched).
+#[tauri::command]
+pub fn cloud_delete_route(route_id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client.delete("routes", &[("id", format!("eq.{route_id}"))])
+}

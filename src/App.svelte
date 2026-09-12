@@ -25,6 +25,7 @@
   import TruckLoadsView from './routes/truckloads/TruckLoadsView.svelte';
   import DeletionRequestsView from './routes/deletionrequests/DeletionRequestsView.svelte';
   import PromotionsView from './routes/promotions/PromotionsView.svelte';
+  import RoutesView from './routes/routes/RoutesView.svelte';
   import CashDrawerModal from './lib/components/CashDrawerModal.svelte';
   import FirstSetupWizard from './lib/components/FirstSetupWizard.svelte';
   import NetworkStatusIndicator from './lib/components/NetworkStatusIndicator.svelte';
@@ -36,7 +37,7 @@
   import {
     LayoutDashboard, ShoppingCart, Receipt, DollarSign, UsersRound, FileWarning,
     Package, TrendingDown, Users, Settings, LogOut,
-    Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle, Percent
+    Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle, Percent, Route
   } from 'lucide-svelte';
 
   let currentRoute = 'pos';
@@ -488,6 +489,14 @@
         </button>
         <button
           type="button"
+          on:click={() => currentRoute = 'routes'}
+          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'routes' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
+        >
+          <Route class="w-4 h-4" />
+          <span>{t('nav_routes', $currentLocale)}</span>
+        </button>
+        <button
+          type="button"
           on:click={() => currentRoute = 'truckloads'}
           class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'truckloads' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
         >
@@ -786,6 +795,8 @@
           <FieldOrdersView />
         {:else if currentRoute === 'team'}
           <TeamView />
+        {:else if currentRoute === 'routes'}
+          <RoutesView />
         {:else if currentRoute === 'truckloads'}
           <TruckLoadsView />
         {:else if currentRoute === 'deletionrequests'}
