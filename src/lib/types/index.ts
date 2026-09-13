@@ -114,6 +114,8 @@ export interface CartItem {
   sale_unit?: string;
   units_per_package?: number;
   base_quantity?: number;
+  // Per-line TVA override (TTC extraction). null = follow the receipt rate.
+  tva_rate?: number | null;
 }
 
 export interface PackagingDef {

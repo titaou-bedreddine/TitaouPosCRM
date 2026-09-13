@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { t } from '../../lib/i18n';
+    import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
-  import { Truck, RefreshCw, X, Receipt, Pencil, Trash2, Plus } from 'lucide-svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { Truck, RefreshCw, X, Receipt, Pencil, Trash2, Plus, AlertTriangle } from 'lucide-svelte';
 
   let orders: any[] = [];
   let loading = true;
@@ -71,9 +71,15 @@
     }
   }
 
+  let showDeleteConfirm = false;
+
+  function askDeleteOrder() {
+    showDeleteConfirm = true;
+  }
+
   async function deleteOrder() {
     if (!selected) return;
-    if (!confirm('Supprimer cette commande ? (stock + dues reversés)')) return;
+    showDeleteConfirm = false;
     busy = true;
     error = '';
     try {
@@ -97,7 +103,11 @@
     }
   }
 
-  onMount(load);
+  onMount(() => {
+    load();
+    const timer = setInterval(load, 20000);
+    return () => clearInterval(timer);
+  });
 
   $: fmt = (v: number) => new Intl.NumberFormat('fr-DZ').format(v) + ' DA';
   $: due = (o: any) => Math.max(0, (o.total_amount ?? 0) - (o.amount_paid ?? 0));
@@ -138,6 +148,7 @@
           <tr class="bg-slate-50 dark:bg-slate-800 text-pos-muted font-black">
             <th class="p-3 text-start">{t('fo_client')}</th>
             <th class="p-3 text-start">{t('fo_member')}</th>
+            <th class="p-3 text-start">{t('date')}</th>
             <th class="p-3 text-center">{t('fo_status')}</th>
             <th class="p-3 text-center">{t('fo_payment')}</th>
             <th class="p-3 text-end">{t('fo_total')}</th>
@@ -150,6 +161,7 @@
             <tr class="border-t border-pos-border hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer" on:click={() => openOrder(o)}>
               <td class="p-3 font-bold text-pos-text">{o.client_name}</td>
               <td class="p-3 text-pos-muted">{o.member_name}</td>
+              <td class="p-3 text-pos-muted text-[10px]">{new Date(o.created_at).toLocaleString()}</td>
               <td class="p-3 text-center">
                 <span class="px-2 py-0.5 rounded-full text-[9px] font-black
                   {o.status === 'delivered' ? 'bg-emerald-100 text-emerald-700' : o.status === 'cancelled' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}">
@@ -191,7 +203,7 @@
             <Pencil class="w-3.5 h-3.5" />Modifier
           </button>
           <button type="button" class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-rose-600 hover:bg-rose-700 text-white rounded-xl cursor-pointer"
-            on:click={() => deleteOrder()}>
+            on:click={() => askDeleteOrder()}>
             <Trash2 class="w-3.5 h-3.5" />Supprimer
           </button>
         </div>
@@ -259,6 +271,23 @@
         {#if !editMode && selected.notes}
           <p class="text-[11px] text-pos-muted bg-slate-50 dark:bg-slate-800 rounded-xl p-3">📝 {selected.notes}</p>
         {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showDeleteConfirm && selected}
+  <div class="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" on:click={() => (showDeleteConfirm = false)} role="presentation">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-rose-300 dark:border-rose-800 w-full max-w-xs p-5 space-y-3" on:click|stopPropagation>
+      <div class="flex items-center gap-2 text-rose-600">
+        <AlertTriangle class="w-5 h-5" />
+        <h3 class="text-sm font-black">Supprimer la commande ?</h3>
+      </div>
+      <p class="text-[11px] text-pos-muted">{selected.client_name} — stock et dus reversés automatiquement.</p>
+      <div class="flex justify-end gap-2">
+        <button type="button" on:click={() => (showDeleteConfirm = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">Annuler</button>
+        <button type="button" on:click={deleteOrder} disabled={busy}
+          class="px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">Supprimer</button>
       </div>
     </div>
   </div>

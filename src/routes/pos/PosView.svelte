@@ -838,6 +838,8 @@
   onMount(async () => {
     try {
       const s = await invoke<Record<string, string>>('get_all_settings');
+      const tva = parseFloat(s?.default_tva_sale ?? '19');
+      if (!isNaN(tva)) receiptTvaRate = tva;
       currentShopName = s['shop_name_fr'] || s['shop_name_ar'] || 'TitaouPosCRM';
       if (s['cart_item_order'] === 'top' || s['cart_item_order'] === 'bottom') {
         $cartItemOrder = s['cart_item_order'];
@@ -1713,6 +1715,7 @@
           {#each $cartItems as item (item.product_id + (item.is_refund ? '_ref' : ''))}
             <CartItemCard
               {item}
+              receiptTvaRate={Number(settings.default_tva_sale) || 19}
               baseSalePrice={products.find((pp) => pp.id === item.product_id)?.sale_price ?? 0}
               purchaseCost={item.purchase_price ?? products.find((pp) => pp.id === item.product_id)?.purchase_price ?? null}
               onEdit={() => {

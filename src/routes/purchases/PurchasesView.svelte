@@ -67,6 +67,8 @@
     // units (bottles) each sold unit contains. null = base unit.
     sale_unit?: string;
     units_per_package?: number;
+    // Per-line TVA override; null = follow the invoice-level rate.
+    tva_rate?: number | null;
   }
 
   // TVA (TTC pricing): the stored tax is the VAT INSIDE the TTC total.
@@ -105,6 +107,7 @@
         quantity: it.quantity,
         unit_cost: it.unit_cost,
         sale_price: it.sale_price || it.unit_cost,
+        tva_rate: null,
         total: it.total,
       }));
       editingPurchase = pur;
@@ -326,6 +329,7 @@
         total: startUnitCost,
         sale_unit: pack ? pack.name : undefined,
         units_per_package: pack ? pack.units_per_package : undefined,
+        tva_rate: null,
       }];
       targetIndex = items.length - 1;
     }
@@ -450,6 +454,16 @@
     return Math.round((ttc * r) / (100 + r));
   }
 
+  // Per-line TVA: a line's own rate when set, otherwise the invoice rate.
+  function tvaOfLine(i: ItemRow): number {
+    const r = i.tva_rate ?? purchaseTva;
+    return Math.round((i.total * Math.max(0, r)) / (100 + Math.max(0, r)));
+  }
+
+  function itemsTvaTotal(): number {
+    return items.reduce((sum, i) => sum + tvaOfLine(i), 0);
+  }
+
   async function handleCreatePurchase() {
     if (!selectedSupplierId || items.length === 0) {
       errorMsg = 'Please add products and select supplier / الرجاء إضافة منتجات واختيار المورد';
@@ -465,9 +479,9 @@
           supplier_id: selectedSupplierId,
           user_id: $currentUser?.id || 1,
           date: invoiceDate,
-          subtotal: total - tvaOf(total),
+          subtotal: total - itemsTvaTotal(),
           discount: 0,
-          tax: tvaOf(total),
+          tax: itemsTvaTotal(),
           total: total,
           paid_amount: paidAmount,
           payment_method: paymentMethod,
@@ -477,7 +491,7 @@
             quantity: i.quantity,
             unit_cost: i.unit_cost,
             discount: 0,
-            tax: 0,
+            tax: tvaOfLine(i),
             total: i.total,
             units_per_package: i.units_per_package ?? 0,
             expiry_date: null,
@@ -885,6 +899,19 @@
                         bind:value={item.sale_price}
                         on:keydown={(e) => { digitsOnly(e); handleSaleKeyDown(e, idx); }}
                         class="w-24 px-2 py-1 text-center bg-slate-100 dark:bg-slate-800 border-0 rounded-lg font-mono font-bold text-sky-600 outline-none focus:ring-2 focus:ring-sky-500"
+                      />
+                    </td>
+                    <td class="p-2.5 text-center">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        inputmode="numeric"
+                        placeholder={String(purchaseTva)}
+                        title="Vide = TVA de la facture"
+                        bind:value={item.tva_rate}
+                        on:input={updateTotals}
+                        class="w-14 px-2 py-1 text-center bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg font-mono font-black text-pos-text outline-none"
                       />
                     </td>
                     <td class="p-2.5 text-end font-mono font-black text-pos-text">

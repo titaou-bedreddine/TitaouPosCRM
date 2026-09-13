@@ -22,6 +22,8 @@
   export let purchaseCost: number | null = null;
   // Base-unit sale price (for switching the line back to bottles).
   export let baseSalePrice: number = 0;
+  // Receipt-level TVA — lines without their own override follow it.
+  export let receiptTvaRate: number = 19;
   export let onEdit: () => void = () => {};
   let showCost = false;
 

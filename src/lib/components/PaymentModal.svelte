@@ -30,7 +30,18 @@
     } catch {}
     tvaEditable = true;
   });
-  $: tvaAmount = Math.round((total * Math.max(0, tvaRate)) / (100 + Math.max(0, tvaRate)));
+  // Per-line TVA: lines with their own rate extract at that rate; the rest
+  // at the receipt rate. TTC extraction per line: tax = net × r/(100+r).
+  $: tvaAmount = (() => {
+    const receiptR = Math.max(0, tvaRate);
+    let sum = 0;
+    for (const it of $cartItems) {
+      const r = it.tva_rate ?? receiptR;
+      const net = Math.max(0, it.total_price - it.discount_amount);
+      sum += Math.round((net * Math.max(0, r)) / (100 + Math.max(0, r)));
+    }
+    return sum;
+  })();
   $: total = $cartGrandTotal;
   $: if (isOpen && tenderedAmount === 0 && paymentMethod === 'cash') {
     tenderedAmount = total;
