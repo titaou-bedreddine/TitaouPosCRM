@@ -5,7 +5,7 @@
   import { t, currentLocale } from '../../lib/i18n';
   import { localTodayISO } from '../../lib/utils/date';
   import type { Category, Product, Supplier, Unit } from '../../lib/types';
-  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities } from '../../lib/stores/cart';
+  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates } from '../../lib/stores/cart';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
@@ -801,7 +801,7 @@
         is_refund: i.is_refund || false,
       }));
       clearCart();
-      $cartItems = mapped;
+      $cartItems = mergeCartDuplicates(mapped);
       if (sale.customer_id) $selectedCustomerId = sale.customer_id;
       originSaleId.set(sale.id);
     } catch (e) {
@@ -1712,7 +1712,7 @@
             <p class="text-xs font-medium">{t('cart_empty')}</p>
           </div>
         {:else}
-          {#each $cartItems as item (item.product_id + '_' + (item.sale_unit ?? 'BASE') + (item.is_refund ? '_ref' : ''))}
+          {#each $cartItems as item (item.uid ?? (item.product_id + '_' + (item.sale_unit ?? 'BASE') + (item.is_refund ? '_ref' : '')))}
             <CartItemCard
               {item}
               receiptTvaRate={Number(settings.default_tva_sale) || 19}

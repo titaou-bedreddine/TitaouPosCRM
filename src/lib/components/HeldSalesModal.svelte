@@ -73,6 +73,7 @@
       if ($cartItems.length > 0) {
         await holdCurrentSale();
       }
+      // items came from parseHeldCart — same-key lines already merged.
       $cartItems = items;
       $globalDiscountMode = discountMode;
       $globalDiscountValue = discountValue;

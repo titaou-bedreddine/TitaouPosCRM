@@ -11,7 +11,7 @@
   import { currentUser } from '../../lib/stores/auth';
   import { printHtmlSilently } from '../../lib/utils/printer';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
-  import { originSaleId,  cartItems, clearCart } from '../../lib/stores/cart';
+  import { originSaleId,  cartItems, clearCart, mergeCartDuplicates } from '../../lib/stores/cart';
   import { selectedCustomerId } from '../../lib/stores/customers';
   import {
     ShoppingBag, Search, Printer, Calendar, User as UserIcon,
@@ -216,7 +216,7 @@
         is_refund: i.is_refund || false,
       }));
       clearCart();
-      $cartItems = mapped;
+      $cartItems = mergeCartDuplicates(mapped);
       if (sale.customer_id) $selectedCustomerId = sale.customer_id;
       // Editing in place: the checkout updates this sale (tagged MODIFIED)
       // instead of inserting a duplicate row.

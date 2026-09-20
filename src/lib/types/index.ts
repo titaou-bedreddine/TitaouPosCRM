@@ -86,6 +86,11 @@ export interface ProductInput {
 }
 
 export interface CartItem {
+  // Unique per-line id — the cart list's keyed-each key. Two lines can
+  // legitimately share product + unit + refund state only through a bug;
+  // the uid keeps the list rendering if any ever slips in (a duplicate key
+  // blanks the cart list while the totals stay correct).
+  uid?: string;
   product_id: number;
   sku?: string;
   barcode?: string;

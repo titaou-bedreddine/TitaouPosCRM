@@ -836,9 +836,9 @@
                 total_price: i.total_price,
                 is_refund: i.is_refund || false,
               }));
-              const { clearCart, cartItems, posMode } = await import('./lib/stores/cart');
+              const { clearCart, cartItems, posMode, mergeCartDuplicates } = await import('./lib/stores/cart');
               clearCart();
-              cartItems.set(mapped);
+              cartItems.set(mergeCartDuplicates(mapped));
               posMode.set('sale');
               currentRoute = 'pos';
             } catch (e) {

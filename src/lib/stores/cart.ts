@@ -35,6 +35,31 @@ export function itemKey(item: { product_id: number; sale_unit?: string; is_refun
   return `${item.product_id}_${item.sale_unit ?? 'BASE'}${item.is_refund ? '_ref' : ''}`;
 }
 
+// Unique per-line ids. The cart list is a keyed each on itemKey (product +
+// unit + refund) — two lines sharing that identity blank the whole list in
+// Svelte. Every line gets a uid so the render key can never collide, and
+// mergeCartDuplicates() folds same-identity lines together at every store
+// entry point (add, refund toggles, restores, versement loads).
+let uidCounter = 0;
+
+/** Merge same-key lines and stamp every line with a uid (safe on old saved carts). */
+export function mergeCartDuplicates(items: CartItem[]): CartItem[] {
+  const out: CartItem[] = [];
+  for (const raw of items) {
+    const item: CartItem = raw.uid ? raw : { ...raw, uid: `line_${Date.now().toString(36)}_${uidCounter++}` };
+    const prev = out.find((i) => itemKey(i) === itemKey(item));
+    if (prev) {
+      prev.quantity += item.quantity;
+      const unitNet = Math.max(0, prev.unit_price - prev.discount_amount);
+      prev.total_price = Math.round(prev.quantity * unitNet);
+      prev.base_quantity = lineBaseQuantity(prev);
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
+}
+
 export function startQtyEdit(item: { product_id: number; sale_unit?: string; is_refund?: boolean }) {
   qtyEditTarget.set(itemKey(item));
 }
@@ -93,11 +118,19 @@ export function addToCart(
   setTimeout(() => lastAddedProductId.set(null), 800);
 
   cartItems.update((items) => {
+    // Match on the full line identity (product + refund + unit). The old
+    // product-only findIndex merged the wrong line (e.g. the BASE line when
+    // adding a packaging unit) and appended a second line with the SAME
+    // key — a duplicate keyed-each key that blanked the cart list.
+    const wantedUnit = packaging ? packaging.name : undefined;
     const existingIndex = items.findIndex(
-      (item) => item.product_id === product.id && item.is_refund === asRefund
+      (item) =>
+        item.product_id === product.id &&
+        item.is_refund === asRefund &&
+        item.sale_unit === wantedUnit
     );
 
-    if (existingIndex > -1 && (!packaging || items[existingIndex].sale_unit === packaging.name)) {
+    if (existingIndex > -1) {
       const updated = [...items];
       updated[existingIndex].quantity += quantity;
       const unitNet = Math.max(0, updated[existingIndex].unit_price - updated[existingIndex].discount_amount);
@@ -106,6 +139,7 @@ export function addToCart(
       return updated;
     } else {
       const newItem: CartItem = {
+        uid: `line_${Date.now().toString(36)}_${uidCounter++}`,
         product_id: product.id,
         sku: product.sku,
         barcode: (product.barcodes && product.barcodes[0]) ? product.barcodes[0] : (product.sku || ''),
@@ -214,23 +248,25 @@ export function toggleItemRefund(
   saleUnit?: string
 ) {
   cartItems.update((items) =>
-    items.map((item) => {
-      if (
-        item.product_id === productId &&
-        item.is_refund === currentRefundState &&
-        item.sale_unit === saleUnit
-      ) {
-        return { ...item, is_refund: !currentRefundState };
-      }
-      return item;
-    })
+    mergeCartDuplicates(
+      items.map((item) => {
+        if (
+          item.product_id === productId &&
+          item.is_refund === currentRefundState &&
+          item.sale_unit === saleUnit
+        ) {
+          return { ...item, is_refund: !currentRefundState };
+        }
+        return item;
+      })
+    )
   );
 }
 
 export function toggleAllCartRefund() {
   cartItems.update((items) => {
     const anyNormal = items.some((i) => !i.is_refund);
-    return items.map((i) => ({ ...i, is_refund: anyNormal }));
+    return mergeCartDuplicates(items.map((i) => ({ ...i, is_refund: anyNormal })));
   });
 }
 
@@ -261,7 +297,9 @@ export function setLineUnit(
   line.total_price = Math.round(line.quantity * unitNet);
   line.base_quantity = lineBaseQuantity(line);
   updated[idx] = line;
-  cartItems.set(updated);
+  // The switched line can now share product+unit+refund with another line —
+  // fold them or the keyed-each duplicate key blanks the cart list.
+  cartItems.set(mergeCartDuplicates(updated));
   return true;
 }
 
@@ -319,7 +357,9 @@ export async function restoreActiveCart() {
     if (!payload || payload.trim() === '') return false;
     const parsed = JSON.parse(payload);
     if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) return false;
-    cartItems.set(parsed.items);
+    // Old saved carts can hold duplicate product+unit lines — fold them or
+    // the keyed-each duplicate key blanks the list on restore.
+    cartItems.set(mergeCartDuplicates(parsed.items));
     if (parsed.discountMode === 'percent' || parsed.discountMode === 'amount') {
       globalDiscountMode.set(parsed.discountMode);
       globalDiscountValue.set(Number(parsed.discountValue) || 0);
@@ -380,11 +420,11 @@ export function parseHeldCart(json: string): { items: CartItem[]; discountMode: 
   try {
     const parsed = JSON.parse(json);
     if (Array.isArray(parsed)) {
-      return { items: parsed as CartItem[], discountMode: 'none', discountValue: 0 };
+      return { items: mergeCartDuplicates(parsed as CartItem[]), discountMode: 'none', discountValue: 0 };
     }
     if (parsed && Array.isArray(parsed.items)) {
       const mode = parsed.discountMode === 'percent' || parsed.discountMode === 'amount' ? parsed.discountMode : 'none';
-      return { items: parsed.items as CartItem[], discountMode: mode, discountValue: Number(parsed.discountValue) || 0 };
+      return { items: mergeCartDuplicates(parsed.items as CartItem[]), discountMode: mode, discountValue: Number(parsed.discountValue) || 0 };
     }
     return { items: [], discountMode: 'none', discountValue: 0 };
   } catch {
