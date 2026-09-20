@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
+  import { printHtmlSilently } from '../../lib/utils/printer';
+  import { pickReportFormat } from '../../lib/stores/reportFormat';
   import { Route, Plus, RefreshCw, Trash2, X, Eye, Printer, Edit2, AlertTriangle } from 'lucide-svelte';
 
   let routes: any[] = [];
@@ -75,23 +77,33 @@
   async function printRoute(id: string) {
     const detail = await invoke<any>('cloud_route_detail', { routeId: id });
     const dateStr = String(detail.route.route_date).slice(0, 10);
+    // Every report prints in the format the user picks (A4 / 70mm).
+    const fmt = await pickReportFormat('Feuille de route — ' + dateStr);
+    if (!fmt) return;
+    const isA4 = fmt === 'a4';
     const rows = (detail.stops ?? [])
       .map((st: any, i: number) =>
-        '<tr><td style="padding:4px 8px;border-bottom:1px solid #ccc">' + (i + 1) + '</td>' +
-        '<td style="padding:4px 8px;border-bottom:1px solid #ccc">' + (st.client?.name ?? '—') + '</td>' +
-        '<td style="padding:4px 8px;border-bottom:1px solid #ccc;text-align:right">' +
+        '<tr>' +
+        '<td style="padding:' + (isA4 ? '6px 10px' : '4px 6px') + ';border-bottom:1px solid #ccc">' + (i + 1) + '</td>' +
+        '<td style="padding:' + (isA4 ? '6px 8px' : '4px 6px') + ';border-bottom:1px solid #ccc">' + (st.client?.name ?? '—') + '</td>' +
+        '<td style="padding:' + (isA4 ? '6px 8px' : '4px 6px') + ';text-align:right;border-bottom:1px solid #ccc">' +
         ((st.order?.total_amount ?? 0) / 100).toLocaleString('fr-DZ') + ' DA</td>' +
-        '<td style="padding:4px 8px;border-bottom:1px solid #ccc;text-align:center">' + (st.status ?? '') + '</td></tr>')
+        '<td style="padding:' + (isA4 ? '6px 8px' : '4px 6px') + ';text-align:center;border-bottom:1px solid #ccc">' + (st.status ?? '') + '</td></tr>')
       .join('');
-    const html = '<!doctype html><html><head><meta charset="utf-8">' +
-      '<style>body{font-family:Segoe UI,Arial;font-size:12px}table{width:100%}h2{margin:0 0 4px}</style></head>' +
-      '<body><h2>Feuille de route — ' + dateStr + '</h2>' +
-      '<p>' + (detail.route.seller?.full_name ?? '—') + ' · ' + detail.route.status + '</p>' +
-      '<table><tr><th align="start" style="padding:4px 8px">#</th><th align="start" style="padding:4px 8px">Client</th>' +
-      '<th align="end" style="padding:4px 8px">Total</th><th style="padding:4px 8px">Statut</th></tr>' + rows + '</table></body></html>';
-    import('@tauri-apps/api/core').then(({ invoke }) =>
-      invoke('print_html_direct', { html, title: 'Route ' + dateStr, paper: { widthMm: 80 } })
-        .catch((e: any) => (error = String(e))));
+    const body =
+      '<h2 style="font-size:' + (isA4 ? '18' : '13') + 'px;margin:0 0 4px">Feuille de route — ' + dateStr + '</h2>' +
+      '<p style="font-size:' + (isA4 ? '13px' : '10px') + '">' + (detail.route.seller?.full_name ?? '—') + ' · ' + detail.route.status + (detail.route.name ? ' · ' + detail.route.name : '') + '</p>' +
+      '<table style="width:100%;border-collapse:collapse"><tr>' +
+      '<th align="start" style="padding:6px 8px;border-bottom:2px solid #000">#</th>' +
+      '<th align="start" style="padding:6px 8px;border-bottom:2px solid #000">Client</th>' +
+      '<th align="end" style="padding:6px 8px;border-bottom:2px solid #000">Total</th>' +
+      '<th style="padding:6px 8px;border-bottom:2px solid #000">Statut</th></tr>' + rows + '</table>';
+    const result = await printHtmlSilently(
+      body,
+      'Route ' + dateStr,
+      { widthMm: isA4 ? 210 : 70, heightMm: isA4 ? 297 : undefined }
+    );
+    if (!result.ok) error = result.message;
   }
   function askRemoveRoute(id: string) {
     deleting = id;

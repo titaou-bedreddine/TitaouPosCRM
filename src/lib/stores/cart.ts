@@ -29,11 +29,13 @@ export const originSaleId = writable<number | null>(null);
 // "productId[_ref]". null = not editing.
 export const qtyEditTarget = writable<string | null>(null);
 
-export function itemKey(item: { product_id: number; is_refund?: boolean }): string {
-  return `${item.product_id}${item.is_refund ? '_ref' : ''}`;
+export function itemKey(item: { product_id: number; sale_unit?: string; is_refund?: boolean }): string {
+  // A product can legitimately sit on two lines at once (bottle + packaging
+  // unit) — the key must include the sale unit or those lines collide.
+  return `${item.product_id}_${item.sale_unit ?? 'BASE'}${item.is_refund ? '_ref' : ''}`;
 }
 
-export function startQtyEdit(item: { product_id: number; is_refund?: boolean }) {
+export function startQtyEdit(item: { product_id: number; sale_unit?: string; is_refund?: boolean }) {
   qtyEditTarget.set(itemKey(item));
 }
 
@@ -137,14 +139,22 @@ export function addToCart(
   return true;
 }
 
-export function updateItemQuantity(productId: number, isRefund: boolean, newQty: number) {
+export function updateItemQuantity(
+  productId: number,
+  isRefund: boolean,
+  newQty: number,
+  saleUnit?: string
+) {
   if (newQty <= 0) {
-    removeFromCart(productId, isRefund);
+    removeFromCart(productId, isRefund, saleUnit);
     return;
   }
   if (!isRefund && !get(allowNegativeStock) && get(posMode) === 'sale') {
     const items = get(cartItems);
-    const item = items.find((i) => i.product_id === productId && !i.is_refund);
+    const item = items.find(
+      (i) =>
+        i.product_id === productId && !i.is_refund && i.sale_unit === saleUnit
+    );
     if (item && item.current_stock !== undefined && newQty > item.current_stock) {
       stockWarningModal.set({
         productName: item.name_fr || item.name_ar || item.name_en || 'Product',
@@ -156,20 +166,38 @@ export function updateItemQuantity(productId: number, isRefund: boolean, newQty:
   }
   cartItems.update((items) =>
     items.map((item) => {
-      if (item.product_id === productId && item.is_refund === isRefund) {
+      if (
+        item.product_id === productId &&
+        item.is_refund === isRefund &&
+        item.sale_unit === saleUnit
+      ) {
         const unitNet = Math.max(0, item.unit_price - item.discount_amount);
         const total = Math.round(newQty * unitNet);
-        return { ...item, quantity: newQty, total_price: total };
+        return {
+          ...item,
+          quantity: newQty,
+          total_price: total,
+          base_quantity: lineBaseQuantity({ ...item, quantity: newQty }),
+        };
       }
       return item;
     })
   );
 }
 
-export function applyItemDiscount(productId: number, isRefund: boolean, discountPerUnit: number) {
+export function applyItemDiscount(
+  productId: number,
+  isRefund: boolean,
+  discountPerUnit: number,
+  saleUnit?: string
+) {
   cartItems.update((items) =>
     items.map((item) => {
-      if (item.product_id === productId && item.is_refund === isRefund) {
+      if (
+        item.product_id === productId &&
+        item.is_refund === isRefund &&
+        item.sale_unit === saleUnit
+      ) {
         const disc = Math.min(Math.max(0, discountPerUnit), item.unit_price);
         item.base_quantity = lineBaseQuantity(item);
       const total = Math.round(item.quantity * (item.unit_price - disc));
@@ -180,10 +208,18 @@ export function applyItemDiscount(productId: number, isRefund: boolean, discount
   );
 }
 
-export function toggleItemRefund(productId: number, currentRefundState: boolean) {
+export function toggleItemRefund(
+  productId: number,
+  currentRefundState: boolean,
+  saleUnit?: string
+) {
   cartItems.update((items) =>
     items.map((item) => {
-      if (item.product_id === productId && item.is_refund === currentRefundState) {
+      if (
+        item.product_id === productId &&
+        item.is_refund === currentRefundState &&
+        item.sale_unit === saleUnit
+      ) {
         return { ...item, is_refund: !currentRefundState };
       }
       return item;
@@ -229,9 +265,16 @@ export function setLineUnit(
   return true;
 }
 
-export function removeFromCart(productId: number, isRefund: boolean) {
+export function removeFromCart(productId: number, isRefund: boolean, saleUnit?: string) {
   cartItems.update((items) =>
-    items.filter((item) => !(item.product_id === productId && item.is_refund === isRefund))
+    items.filter(
+      (item) =>
+        !(
+          item.product_id === productId &&
+          item.is_refund === isRefund &&
+          item.sale_unit === saleUnit
+        )
+    )
   );
 }
 

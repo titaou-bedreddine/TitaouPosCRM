@@ -71,34 +71,34 @@
   }
 
   function decrement() {
-    updateItemQuantity(item.product_id, item.is_refund, item.quantity - 1);
+    updateItemQuantity(item.product_id, item.is_refund, item.quantity - 1, item.sale_unit);
   }
 
   function increment() {
-    updateItemQuantity(item.product_id, item.is_refund, item.quantity + 1);
+    updateItemQuantity(item.product_id, item.is_refund, item.quantity + 1, item.sale_unit);
   }
 
   function handleQtyChange(e: Event) {
     const val = parseFloat((e.target as HTMLInputElement).value);
     if (!isNaN(val) && val > 0) {
-      updateItemQuantity(item.product_id, item.is_refund, val);
+      updateItemQuantity(item.product_id, item.is_refund, val, item.sale_unit);
     }
   }
 
   function toggleRefund() {
-    toggleItemRefund(item.product_id, item.is_refund);
+    toggleItemRefund(item.product_id, item.is_refund, item.sale_unit);
   }
 
   function applyDiscount() {
     if (discountInvalid) return;
     // Hard clamp: the per-unit remise can never exceed the unit price.
     const clamped = Math.min(Math.max(0, numericDiscount), maxUnitDiscount);
-    applyItemDiscount(item.product_id, item.is_refund, clamped);
+    applyItemDiscount(item.product_id, item.is_refund, clamped, item.sale_unit);
     showDiscountInput = false;
   }
 
   function clearDiscount() {
-    applyItemDiscount(item.product_id, item.is_refund, 0);
+    applyItemDiscount(item.product_id, item.is_refund, 0, item.sale_unit);
     showDiscountInput = false;
   }
 
@@ -108,7 +108,7 @@
   $: showQtyChips = item.is_scalable === true && !item.is_refund;
   $: qtySuggestions = showQtyChips ? suggestedQuantities(item.product_id) : [];
   function applySuggestion(qty: number) {
-    updateItemQuantity(item.product_id, item.is_refund, qty);
+    updateItemQuantity(item.product_id, item.is_refund, qty, item.sale_unit);
   }
 
   $: isJustAdded = $lastAddedProductId === item.product_id;
@@ -315,7 +315,7 @@
       <!-- Delete Item Button -->
       <button
         type="button"
-        on:click={() => removeFromCart(item.product_id, item.is_refund)}
+        on:click={() => removeFromCart(item.product_id, item.is_refund, item.sale_unit)}
         class="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg cursor-pointer transition"
         title={t('pos_remove_item')}
       >

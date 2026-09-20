@@ -357,13 +357,54 @@ pub fn cloud_record_truck_return(load_id: String, returns: Value) -> Result<(), 
         .map(|_| ())
 }
 
+/// Edit a truck load (header + items, stock-compensated server-side via
+/// update_truck_load). Refused once returns were recorded on the load.
+#[tauri::command]
+pub fn cloud_update_truck_load(
+    load_id: String,
+    seller_id: Option<String>,
+    route_id: Option<String>,
+    route_date: Option<String>,
+    items: Value,
+    name: Option<String>,
+    notes: Option<String>,
+) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc(
+            "update_truck_load",
+            serde_json::json!({
+                "p_load_id": load_id,
+                "p_seller_id": seller_id,
+                "p_route_id": route_id,
+                "p_route_date": route_date,
+                "p_items": items,
+                "p_name": name,
+                "p_notes": notes,
+            }),
+        )
+        .map(|_| ())
+}
+
+/// Delete a truck load: reverses its stock movements, removes items + header.
+#[tauri::command]
+pub fn cloud_delete_truck_load(load_id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc(
+            "delete_truck_load",
+            serde_json::json!({ "p_load_id": load_id }),
+        )
+        .map(|_| ())
+}
+
 /// Existing truck loads (with items) for the Truck Loads list.
 #[tauri::command]
 pub fn cloud_truck_loads() -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "truck_loads",
-        "*, items:truck_load_items(quantity, returned_quantity, product:products(name))",
+        "*, items:truck_load_items(quantity, returned_quantity, product_id, product:products(name))",
         &[("order", "created_at.desc".into())],
     )?;
     Ok(Value::Array(rows))

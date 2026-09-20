@@ -9,6 +9,7 @@
   import { DollarSign, ArrowDownCircle, ArrowUpCircle, Lock, RefreshCw, Plus, CheckCircle, Check, Search, Wallet, TrendingUp, ArrowDownRight, Layers, Banknote, Wallet as WalletIcon, Edit2, Archive, ArchiveRestore, Trash2, AlertTriangle, X } from 'lucide-svelte';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
   import { printHtmlSilently } from '../../lib/utils/printer';
+  import { pickReportFormat } from '../../lib/stores/reportFormat';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
 
   let currentTab: 'current' | 'history' = 'current';
@@ -324,35 +325,40 @@
   }
 
   // End-of-session Z-report, printed right after a successful close.
+  // The user picks the format on every print (A4 / 70mm roll).
   async function printSessionReport(snap: CashSession, counted: number) {
+    const fmt = await pickReportFormat('Rapport de caisse — session #' + snap.id);
+    if (!fmt) return;
+    const isA4 = fmt === 'a4';
     let shopName = 'TitaouPosCRM';
     try {
       const settings = await invoke<Record<string, string>>('get_all_settings');
       shopName = settings['shop_name_fr'] || shopName;
     } catch { /* default */ }
     const diff = counted - snap.expected_cash;
-    const html = [
-      '<div style="width:80mm;font-family:monospace;font-size:11px;padding:4mm;">',
-      '<p style="text-align:center;font-size:15px;font-weight:900;margin:0;">' + shopName + '</p>',
-      '<p style="text-align:center;font-size:11px;font-weight:900;margin:4px 0;">RAPPORT DE CAISSE / تقرير الصندوق</p>',
-      '<hr style="border-top:1px dashed #000;margin:5px 0;" />',
-      '<p>Session #' + snap.id + ' — ' + (snap.user_name || 'Caisse') + '</p>',
-      '<p>Ouvert: ' + (snap.opened_at || '-') + '</p>',
-      '<hr style="border-top:1px dashed #000;margin:5px 0;" />',
-      '<table style="width:100%;font-size:11px;">',
-      '<tr><td>Solde ouverture:</td><td style="text-align:right;">' + snap.opening_amount.toLocaleString() + ' DZD</td></tr>',
-      '<tr><td>Ventes (cash):</td><td style="text-align:right;">' + (snap.total_sales || 0).toLocaleString() + ' DZD</td></tr>',
-      '<tr><td>Sorties (cash):</td><td style="text-align:right;">' + (snap.total_expenses || 0).toLocaleString() + ' DZD</td></tr>',
-      '<tr><td><b>Attendu:</b></td><td style="text-align:right;"><b>' + snap.expected_cash.toLocaleString() + ' DZD</b></td></tr>',
-      '<tr><td><b>Compte:</b></td><td style="text-align:right;"><b>' + counted.toLocaleString() + ' DZD</b></td></tr>',
-      '<tr><td><b>Ecart:</b></td><td style="text-align:right;"><b>' + diff.toLocaleString() + ' DZD</b></td></tr>',
+    const pad = isA4 ? '6px 10px' : '3px 0';
+    const body = [
+      '<p style="text-align:center;font-size:' + (isA4 ? 20 : 15) + 'px;font-weight:900;margin:0;">' + shopName + '</p>',
+      '<p style="text-align:center;font-size:' + (isA4 ? 14 : 11) + 'px;font-weight:900;margin:4px 0;">RAPPORT DE CAISSE / تقرير الصندوق</p>',
+      '<p style="font-size:' + (isA4 ? 12 : 11) + 'px;">Session #' + snap.id + ' — ' + (snap.user_name || 'Caisse') + '</p>',
+      '<p style="font-size:' + (isA4 ? 13 : 11) + 'px;">Ouvert: ' + (snap.opened_at || '-') + '</p>',
+      '<hr style="border-top:1px dashed #000;margin:6px 0;" />',
+      '<table style="width:100%;font-size:' + (isA4 ? 14 : 11) + 'px;border-collapse:collapse;">',
+      '<tr><td style="padding:' + pad + '">Solde ouverture:</td><td style="padding:' + pad + ';text-align:right;">' + snap.opening_amount.toLocaleString() + ' DZD</td></tr>',
+      '<tr><td style="padding:' + pad + '">Ventes (cash):</td><td style="padding:' + pad + ';text-align:right;">' + (snap.total_sales || 0).toLocaleString() + ' DZD</td></tr>',
+      '<tr><td style="padding:' + pad + '">Sorties (cash):</td><td style="padding:' + pad + ';text-align:right;">' + (snap.total_expenses || 0).toLocaleString() + ' DZD</td></tr>',
+      '<tr><td style="padding:' + pad + '"><b>Attendu:</b></td><td style="padding:' + pad + ';text-align:right;"><b>' + snap.expected_cash.toLocaleString() + ' DZD</b></td></tr>',
+      '<tr><td style="padding:' + pad + '"><b>Compte:</b></td><td style="padding:' + pad + ';text-align:right;"><b>' + counted.toLocaleString() + ' DZD</b></td></tr>',
+      '<tr><td style="padding:' + pad + '"><b>Ecart:</b></td><td style="padding:' + pad + ';text-align:right;"><b>' + diff.toLocaleString() + ' DZD</b></td></tr>',
       '</table>',
-      closeNotes ? '<p style="font-size:10px;margin-top:4px;">Notes: ' + closeNotes + '</p>' : '',
-      '<hr style="border-top:1px dashed #000;margin:5px 0;" />',
-      '<p style="text-align:center;font-size:9px;">TitaouPosCRM &bull; ' + new Date().toLocaleString() + '</p>',
-      '</div>',
+      closeNotes ? '<p style="font-size:10px;margin-top:6px;">Notes: ' + closeNotes + '</p>' : '',
+      '<hr style="border-top:1px dashed #000;margin:6px 0;" />',
+      '<p style="text-align:center;font-size:' + (isA4 ? 11 : 9) + 'px;">' + shopName + ' &bull; ' + new Date().toLocaleString() + '</p>',
     ].join('');
-    const r = await printHtmlSilently(html, 'Session Report #' + snap.id, { widthMm: 80 });
+    const r = await printHtmlSilently(body, 'Session Report #' + snap.id, {
+      widthMm: isA4 ? 210 : 70,
+      heightMm: isA4 ? 297 : undefined,
+    });
     if (!r.ok) console.error('Session report print failed:', r.message);
   }
 

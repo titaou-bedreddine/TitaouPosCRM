@@ -255,6 +255,8 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             cloudsync::cloud_cmds::cloud_route_order_items,
             cloudsync::cloud_cmds::cloud_create_truck_load,
             cloudsync::cloud_cmds::cloud_record_truck_return,
+            cloudsync::cloud_cmds::cloud_update_truck_load,
+            cloudsync::cloud_cmds::cloud_delete_truck_load,
             cloudsync::cloud_cmds::cloud_truck_loads,
         ]))
         .run(tauri::generate_context!())

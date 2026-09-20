@@ -1712,7 +1712,7 @@
             <p class="text-xs font-medium">{t('cart_empty')}</p>
           </div>
         {:else}
-          {#each $cartItems as item (item.product_id + (item.is_refund ? '_ref' : ''))}
+          {#each $cartItems as item (item.product_id + '_' + (item.sale_unit ?? 'BASE') + (item.is_refund ? '_ref' : ''))}
             <CartItemCard
               {item}
               receiptTvaRate={Number(settings.default_tva_sale) || 19}

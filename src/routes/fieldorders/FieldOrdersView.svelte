@@ -97,9 +97,18 @@
     selected = o;
     lines = [];
     try {
-      lines = await invoke<any[]>('cloud_field_order_lines', { crmId: o.crm_id });
+      // Fetch the lines from the CLOUD (order_items with the real CRM
+      // product_id) — the local mirror only stores the local product id,
+      // so editing from it sent "unknown product <NULL>" to the RPC.
+      const detail = await invoke<any>('cloud_field_order_detail', { orderId: o.crm_id });
+      lines = detail?.lines ?? [];
+      if (detail?.order) selected = { ...o, notes: detail.order.notes ?? o.notes };
     } catch {
-      lines = [];
+      try {
+        lines = await invoke<any[]>('cloud_field_order_lines', { crmId: o.crm_id });
+      } catch {
+        lines = [];
+      }
     }
   }
 
@@ -108,6 +117,40 @@
     const timer = setInterval(load, 20000);
     return () => clearInterval(timer);
   });
+
+  // ── Filters: quick dates, status, payment, search ───────────────────────
+  type QuickDate = 'all' | 'today' | 'yesterday' | 'thisWeek' | 'thisMonth';
+  let fQuick: QuickDate = 'all';
+  let fStatus: string | null = null;
+  let fPayment: string | null = null;
+  let fSearch = '';
+
+  $: filtered = (() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let from: Date | null = null;
+    let to: Date | null = null;
+    if (fQuick === 'today') { from = today; to = today; }
+    else if (fQuick === 'yesterday') { const y = new Date(today); y.setDate(y.getDate() - 1); from = y; to = y; }
+    else if (fQuick === 'thisWeek') { const m = new Date(today); m.setDate(m.getDate() - ((today.getDay() + 6) % 7)); from = m; to = today; }
+    else if (fQuick === 'thisMonth') { from = new Date(now.getFullYear(), now.getMonth(), 1); to = today; }
+    return orders.filter((o) => {
+      if (fStatus && o.status !== fStatus) return false;
+      if (fPayment && o.payment_status !== fPayment) return false;
+      if (fSearch.trim()) {
+        const q = fSearch.trim().toLowerCase();
+        const hay = `${o.client_name ?? ''} ${o.member_name ?? ''} ${o.crm_id ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (from) {
+        const day = new Date(o.created_at);
+        const day0 = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+        if (day0 < from) return false;
+        if (to && day0 > to) return false;
+      }
+      return true;
+    });
+  })();
 
   $: fmt = (v: number) => new Intl.NumberFormat('fr-DZ').format(v) + ' DA';
   $: due = (o: any) => Math.max(0, (o.total_amount ?? 0) - (o.amount_paid ?? 0));
@@ -134,14 +177,45 @@
     <p class="text-[11px] font-bold text-rose-600 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl px-3 py-2">❌ {error}</p>
   {/if}
 
-  {#if !loading && orders.length === 0 && !error}
-    <div class="text-center py-16 text-pos-muted">
-      <Truck class="w-12 h-12 mx-auto mb-3 opacity-30" />
-      <p class="text-sm font-bold">{t('fo_empty')}</p>
+  <!-- Filters: quick dates · status · payment · search -->
+  {#if orders.length > 0}
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="flex gap-1 flex-wrap">
+        {#each [['all', 'Toutes'], ['today', "Aujourd'hui"], ['yesterday', 'Hier'], ['thisWeek', 'Semaine'], ['thisMonth', 'Mois']] as [qd, label] (label)}
+          <button type="button" on:click={() => (fQuick = qd as any)}
+            class="px-2.5 py-1 text-[10px] font-black rounded-full cursor-pointer transition {fQuick === qd ? 'bg-sky-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-pos-muted hover:text-pos-text'}">
+            {label}
+          </button>
+        {/each}
+      </div>
+      <select bind:value={fStatus}
+        class="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-[10px] font-black text-pos-text outline-none cursor-pointer">
+        <option value={null}>Statut: tous</option>
+        <option value="validated">validated</option>
+        <option value="loaded">loaded</option>
+        <option value="delivered">delivered</option>
+        <option value="cancelled">cancelled</option>
+      </select>
+      <select bind:value={fPayment}
+        class="px-2.5 py-1 text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-pos-text outline-none cursor-pointer">
+        <option value={null}>Paiement: tous</option>
+        <option value="paid">paid</option>
+        <option value="partial">partial</option>
+        <option value="unpaid">unpaid</option>
+      </select>
+      <input type="text" bind:value={fSearch} placeholder="Client / membre…"
+        class="px-3 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-[10px] font-bold text-pos-text outline-none w-44" />
     </div>
   {/if}
 
-  {#if orders.length > 0}
+  {#if !loading && filtered.length === 0 && !error}
+    <div class="text-center py-16 text-pos-muted">
+      <Truck class="w-12 h-12 mx-auto mb-3 opacity-30" />
+      <p class="text-sm font-bold">{orders.length === 0 ? t('fo_empty') : '—'}</p>
+    </div>
+  {/if}
+
+  {#if filtered.length > 0}
     <div class="overflow-x-auto rounded-2xl border border-pos-border bg-white dark:bg-slate-900">
       <table class="w-full text-xs">
         <thead>
@@ -157,7 +231,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each orders as o (o.crm_id)}
+          {#each filtered as o (o.crm_id)}
             <tr class="border-t border-pos-border hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer" on:click={() => openOrder(o)}>
               <td class="p-3 font-bold text-pos-text">{o.client_name}</td>
               <td class="p-3 text-pos-muted">{o.member_name}</td>
@@ -239,7 +313,7 @@
                   <td class="p-2 text-end font-mono">{ln.unit_price}</td>
                   <td class="p-2 text-end">
                     {#if editMode}
-                      <input type="number" step="0.001" min="0"
+                      <input type="number" step="1" min="0"
                         bind:value={editQty[ln.product_id]}
                         class="w-20 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs font-mono text-pos-text outline-none text-end" />
                     {:else}

@@ -2,7 +2,9 @@
   import { onMount } from 'svelte';
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
-  import { Truck, Plus, RefreshCw, Printer, Package, X, Undo2, Eye } from 'lucide-svelte';
+  import { printHtmlSilently } from '../../lib/utils/printer';
+  import { pickReportFormat } from '../../lib/stores/reportFormat';
+  import { Truck, Plus, RefreshCw, Printer, Package, X, Undo2, Eye, Pencil, Trash2, AlertTriangle } from 'lucide-svelte';
 
   let loads: any[] = [];
   let staff: any[] = [];
@@ -96,7 +98,55 @@
     }
   }
 
-  async function createLoad() {
+  // When set, the form edits this load instead of creating a new one.
+  let editing: any = null;
+
+  function openCreate() {
+    editing = null;
+    loadName = '';
+    sellerId = '';
+    routeId = '';
+    items = [];
+    showForm = true;
+  }
+
+  function startEdit(l: any) {
+    editing = l;
+    loadName = l.name ?? '';
+    sellerId = l.seller_id ?? '';
+    routeId = l.route_id ?? '';
+    routeDate = String(l.route_date).slice(0, 10);
+    items = (l.items ?? []).map((it: any) => ({
+      product_id: it.product_id as string,
+      product_name: it.product?.name ?? '—',
+      quantity: Number(it.quantity ?? 0),
+      unit_price: 0,
+    }));
+    showForm = true;
+  }
+
+  // Edit/delete are refused server-side once returns exist; hide them here.
+  $: loadEditable = (l: any) => l.status === 'loaded' && !(l.items ?? []).some((it: any) => (it.returned_quantity ?? 0) > 0);
+
+  let deletingLoad: any = null;
+
+  async function deleteLoad() {
+    if (!deletingLoad) return;
+    busy = true;
+    error = '';
+    try {
+      await invoke('cloud_delete_truck_load', { loadId: deletingLoad.id });
+      deletingLoad = null;
+      await load();
+      msg = '✅';
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function saveLoad() {
     busy = true;
     error = '';
     msg = '';
@@ -104,14 +154,27 @@
       const payload = items
         .filter((i) => i.quantity > 0)
         .map((i) => ({ product_id: i.product_id, quantity: i.quantity }));
-      await invoke('cloud_create_truck_load', {
-        sellerId,
-        routeId: routeId || null,
-        routeDate,
-        items: payload,
-        name: loadName || null,
-      });
+      if (editing) {
+        await invoke('cloud_update_truck_load', {
+          loadId: editing.id,
+          sellerId: sellerId || null,
+          routeId: routeId || null,
+          routeDate,
+          items: payload,
+          name: loadName || null,
+          notes: null,
+        });
+      } else {
+        await invoke('cloud_create_truck_load', {
+          sellerId,
+          routeId: routeId || null,
+          routeDate,
+          items: payload,
+          name: loadName || null,
+        });
+      }
       showForm = false;
+      editing = null;
       items = [];
       routeId = '';
       await load();
@@ -160,27 +223,36 @@
     }
   }
 
-  function printSheet(l: any) {
+  async function printSheet(l: any) {
+    // Every report prints in the format the user picks (A4 / 70mm).
+    const fmt = await pickReportFormat(t('tl_title'));
+    if (!fmt) return;
+    const isA4 = fmt === 'a4';
+    const cellPad = isA4 ? '6px 10px' : '4px 6px';
     const rows = (l.items ?? [])
       .map(
         (it: any) =>
-          `<tr><td style="padding:4px 8px;border-bottom:1px solid #ccc">${it.product?.name ?? '—'}</td>
-           <td style="padding:4px 8px;border-bottom:1px solid #ccc;text-align:right">${it.quantity}</td>
-           <td style="padding:4px 8px;border-bottom:1px solid #ccc;text-align:right">${it.returned_quantity ?? 0}</td></tr>`
+          `<tr><td style="padding:${cellPad};border-bottom:1px solid #ccc">${it.product?.name ?? '—'}</td>
+           <td style="padding:${cellPad};text-align:right;border-bottom:1px solid #ccc">${it.quantity}</td>
+           <td style="padding:${cellPad};text-align:right;border-bottom:1px solid #ccc">${it.returned_quantity ?? 0}</td></tr>`
       )
       .join('');
-    const html = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Segoe UI,Arial;font-size:12px}h2{margin:0 0 4px}table{width:100%}</style></head>
-      <body><h2>${t('tl_title')}</h2>
-      <p>${t('tl_seller')}: ${l.seller?.full_name ?? '—'} · ${String(l.route_date).slice(0, 10)} · ${l.status}</p>
-      <table><tr><th align="start" style="padding:4px 8px">#</th><th align="end" style="padding:4px 8px">${t('tl_qty')}</th><th align="end" style="padding:4px 8px">${t('tl_returned')}</th></tr>${rows}</table></body></html>`;
-    import('@tauri-apps/api/core')
-      .then(({ invoke }) =>
-        invoke('print_html_direct', {
-          html,
-          title: `${t('tl_title')} ${String(l.route_date).slice(0, 10)}`,
-          paper: { widthMm: 80 },
-        }).catch((e: any) => (error = String(e)))
-      );
+    const body = `
+      <h2 style="font-size:${isA4 ? 18 : 13}px;margin:0 0 4px">${t('tl_title')}</h2>
+      <p style="font-size:${isA4 ? '12px' : '10px'}">${t('tl_seller')}: ${l.seller?.full_name ?? '—'} · ${String(l.route_date).slice(0, 10)} · ${l.status}${l.name ? ' · ' + l.name : ''}</p>
+      <table style="width:100%;border-collapse:collapse">
+        <tr>
+          <th align="start" style="padding:6px 8px;border-bottom:2px solid #000">#</th>
+          <th align="start" style="padding:6px 8px;border-bottom:2px solid #000">Produit</th>
+          <th align="end" style="padding:6px 8px;border-bottom:2px solid #000">${t('tl_qty')}</th>
+          <th align="end" style="padding:6px 8px;border-bottom:2px solid #000">${t('tl_returned')}</th>
+        </tr>${rows}</table>`;
+    const result = await printHtmlSilently(
+      body,
+      `${t('tl_title')} ${String(l.route_date).slice(0, 10)}`,
+      { widthMm: isA4 ? 210 : 70, heightMm: isA4 ? 297 : undefined }
+    );
+    if (!result.ok) error = result.message;
   }
 
   onMount(load);
@@ -201,7 +273,7 @@
         class="p-2 text-pos-muted hover:text-pos-text rounded-xl cursor-pointer">
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
       </button>
-      <button type="button" on:click={() => ((showForm = true), (items = []), (routeId = ''))}
+      <button type="button" on:click={openCreate}
         class="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer">
         <Plus class="w-3.5 h-3.5" />{t('tl_new')}
       </button>
@@ -229,9 +301,19 @@
               <button type="button" class="p-1.5 text-pos-muted hover:text-pos-text rounded-lg cursor-pointer" on:click={() => printSheet(l)} title={t('tl_print')}>
                 <Printer class="w-3.5 h-3.5" />
               </button>
+              {#if loadEditable(l)}
+                <button type="button" class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" on:click={() => startEdit(l)} title="Modifier">
+                  <Pencil class="w-3.5 h-3.5" />
+                </button>
+              {/if}
               {#if l.status !== 'closed'}
                 <button type="button" class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" on:click={() => openReturns(l)} title={t('tl_returns')}>
                   <Undo2 class="w-3.5 h-3.5" />
+                </button>
+              {/if}
+              {#if loadEditable(l)}
+                <button type="button" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer" on:click={() => (deletingLoad = l)} title="Supprimer">
+                  <Trash2 class="w-3.5 h-3.5" />
                 </button>
               {/if}
             </div>
@@ -255,12 +337,12 @@
   {/if}
 </div>
 
-<!-- New load modal -->
+<!-- New / edit load modal -->
 {#if showForm}
   <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (showForm = false)} role="presentation">
     <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-xl max-h-[85vh] flex flex-col" on:click|stopPropagation>
       <div class="p-4 border-b border-pos-border flex items-center justify-between">
-        <h3 class="text-sm font-black text-pos-text flex items-center gap-2"><Truck class="w-4 h-4 text-sky-500" />{t('tl_new')}</h3>
+        <h3 class="text-sm font-black text-pos-text flex items-center gap-2"><Truck class="w-4 h-4 text-sky-500" />{editing ? 'Modifier le chargement' : t('tl_new')}</h3>
         <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (showForm = false)}><X class="w-4 h-4" /></button>
       </div>
       <div class="p-4 overflow-y-auto space-y-3">
@@ -314,19 +396,37 @@
             <div class="flex items-center gap-2 mb-1.5">
               <Package class="w-3.5 h-3.5 text-pos-muted shrink-0" />
               <span class="text-xs font-bold text-pos-text flex-1 truncate">{it.product_name}</span>
-              <input type="number" step="0.001" min="0" bind:value={it.quantity}
+              <input type="number" step="1" min="0" bind:value={it.quantity}
                 class="w-24 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
             </div>
           {/each}
         </div>
 
         <div class="flex justify-end gap-2 pt-2">
-          <button type="button" on:click={() => (showForm = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">{t('cloud_disconnect') ? '✕' : ''}</button>
-          <button type="button" on:click={createLoad} disabled={busy || !sellerId || items.length === 0}
+          <button type="button" on:click={() => (showForm = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
+          <button type="button" on:click={saveLoad} disabled={busy || !sellerId || items.length === 0}
             class="flex items-center gap-1.5 px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
             <Truck class="w-3.5 h-3.5" />{t('tl_save')}
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete load confirm -->
+{#if deletingLoad}
+  <div class="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" on:click={() => (deletingLoad = null)} role="presentation">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-rose-300 dark:border-rose-800 w-full max-w-xs p-5 space-y-3" on:click|stopPropagation>
+      <div class="flex items-center gap-2 text-rose-600">
+        <AlertTriangle class="w-5 h-5" />
+        <h3 class="text-sm font-black">Supprimer le chargement ?</h3>
+      </div>
+      <p class="text-[11px] text-pos-muted">{deletingLoad.name || deletingLoad.seller?.full_name || '—'} — la marchandise revient au stock automatiquement.</p>
+      <div class="flex justify-end gap-2">
+        <button type="button" on:click={() => (deletingLoad = null)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">Annuler</button>
+        <button type="button" on:click={deleteLoad} disabled={busy}
+          class="px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">Supprimer</button>
       </div>
     </div>
   </div>
@@ -342,7 +442,7 @@
           <div class="flex items-center gap-2">
             <span class="text-xs font-bold text-pos-text flex-1 truncate">{it.product?.name ?? '—'}</span>
             <span class="text-[10px] text-pos-muted font-mono">/ {it.quantity}</span>
-            <input type="number" step="0.001" min="0" max={it.quantity}
+            <input type="number" step="1" min="0" max={it.quantity}
               bind:value={returnQty[it.product?.name ?? String(it.quantity)]}
               class="w-24 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
           </div>

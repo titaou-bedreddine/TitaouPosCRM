@@ -32,12 +32,13 @@
   import { networkEvents, networkStatus } from './lib/stores/network';
 
     import { stockWarningModal } from './lib/stores/cart';
+    import { reportFormatPicker, settleReportFormat } from './lib/stores/reportFormat';
 
   // Icons
   import {
     LayoutDashboard, ShoppingCart, Receipt, DollarSign, UsersRound, FileWarning,
     Package, TrendingDown, Users, Settings, LogOut,
-    Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle, Percent, Route
+    Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle, Percent, Route, FileText
   } from 'lucide-svelte';
 
   let currentRoute = 'pos';
@@ -1023,6 +1024,42 @@
             class="w-full py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-black rounded-xl cursor-pointer shadow-md transition active:scale-95 text-center"
           >
             Compris / حسناً / Understand
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Report print format picker (A4 / 70mm) — used by every report print -->
+  {#if $reportFormatPicker}
+    <div class="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-xs flex items-center justify-center p-4"
+      on:keydown={(e) => { if (e.key === 'Escape') settleReportFormat(null); }}>
+      <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl p-6 max-w-sm w-full space-y-4 animate-in zoom-in-95">
+        <div class="flex items-center gap-3 text-sky-600">
+          <div class="w-10 h-10 rounded-2xl bg-sky-100 dark:bg-sky-950/60 flex items-center justify-center shrink-0">
+            <FileText class="w-5 h-5 text-sky-600" />
+          </div>
+          <div>
+            <h3 class="font-black text-sm text-pos-text">Format d'impression</h3>
+            <p class="text-[11px] text-pos-muted">{$reportFormatPicker.title}</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            on:click={() => settleReportFormat('a4')}
+            class="py-4 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900 border-2 border-sky-500 rounded-2xl cursor-pointer transition active:scale-95 text-center"
+          >
+            <span class="block font-black text-sm text-pos-text">A4</span>
+            <span class="text-[10px] text-pos-muted font-bold block mt-0.5">210 × 297 mm</span>
+          </button>
+          <button
+            type="button"
+            on:click={() => settleReportFormat('70mm')}
+            class="py-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-pos-border rounded-2xl cursor-pointer transition active:scale-95 text-center"
+          >
+            <span class="font-black text-sm text-pos-text block">70mm</span>
+            <span class="text-[10px] text-pos-muted block">Rouleau thermique</span>
           </button>
         </div>
       </div>
