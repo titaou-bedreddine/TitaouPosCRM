@@ -864,32 +864,75 @@ pub fn cloud_field_order_detail(order_id: String) -> Result<Value, String> {
     Ok(serde_json::json!({ "order": order, "lines": lines }))
 }
 
+/// After the server side settles, drop the order's local mirror rows — the
+/// pull never removes deleted rows, so without this a deleted order stays in
+/// the Field Orders list forever and every later edit/delete on it answers
+/// "order not found" from the server.
+fn prune_field_order_mirror(db: &State<'_, DbState>, order_id: &str) {
+    let conn = db.conn.lock().unwrap();
+    let _ = conn.execute(
+        "DELETE FROM crm_order_items WHERE crm_order_id = ?1",
+        rusqlite::params![order_id],
+    );
+    let _ = conn.execute(
+        "DELETE FROM crm_orders WHERE crm_id = ?1",
+        rusqlite::params![order_id],
+    );
+}
+
 /// Edit an order's lines/notes: p_items [{product_id, quantity, unit_price,
 /// line_total?}] — stock + balance compensated server-side.
 #[tauri::command]
 pub fn cloud_field_order_edit(
+    db: State<'_, DbState>,
     order_id: String,
     items: Value,
     notes: Option<String>,
 ) -> Result<(), String> {
     let client = cloud::ensure_session()?;
-    client
-        .rpc("update_order_items", serde_json::json!({
-            "p_order_id": order_id,
-            "p_items": items,
-            "p_notes": notes,
-        }))
-        .map(|_| ())
+    let result = client.rpc("update_order_items", serde_json::json!({
+        "p_order_id": order_id,
+        "p_items": items,
+        "p_notes": notes,
+    }));
+    match result {
+        Ok(_) => Ok(()),
+        Err(msg) => {
+            // "order not found" = the order is already gone on the CRM (e.g.
+            // deleted from the admin app) — the mirror row is a stale ghost;
+            // prune it so the list stops offering a dead order.
+            if msg.contains("order not found") {
+                prune_field_order_mirror(&db, &order_id);
+            }
+            Err(msg)
+        }
+    }
 }
 
 /// Delete an order: reverses its stock movements and remaining due, then
-/// removes the order (payments detach).
+/// removes the order (payments detach). The local mirror row is dropped too
+/// — the pull only upserts and never propagates deletions.
 #[tauri::command]
-pub fn cloud_field_order_delete(order_id: String) -> Result<(), String> {
+pub fn cloud_field_order_delete(
+    db: State<'_, DbState>,
+    order_id: String,
+) -> Result<(), String> {
     let client = cloud::ensure_session()?;
-    client
-        .rpc("delete_order", serde_json::json!({ "p_order_id": order_id }))
-        .map(|_| ())
+    match client.rpc("delete_order", serde_json::json!({ "p_order_id": order_id })) {
+        Ok(_) => {
+            prune_field_order_mirror(&db, &order_id);
+            Ok(())
+        }
+        Err(msg) => {
+            // 'order not found' = already deleted elsewhere (the RPC is
+            // correct); prune the stale mirror row and treat it as done.
+            if msg.contains("order not found") {
+                prune_field_order_mirror(&db, &order_id);
+                return Ok(());
+            }
+            Err(msg)
+        }
+    }
 }
 
 // ── Route detail / edit / weekday plan ─────────────────────────────────────
