@@ -73,6 +73,13 @@
   let selectedPaymentMode: 'cash' | 'tpe' | 'credit' | 'versement' = 'cash';
   let autoPrintEnabled = true;
   let suppressNextPrint = false;
+
+  // Receipt-level TVA rate, loaded from settings at mount. The cart's
+  // CartItemCard takes it as a prop — it must be a DECLARED component
+  // variable: an undeclared reference here threw a ReferenceError on every
+  // cart-line render and blanked the whole list while totals kept updating.
+  let receiptTvaRate: number = 19;
+
   let autoDrawerEnabled = true;
   let isFastCheckingOut = false;
 
@@ -1715,7 +1722,7 @@
           {#each $cartItems as item (item.uid ?? (item.product_id + '_' + (item.sale_unit ?? 'BASE') + (item.is_refund ? '_ref' : '')))}
             <CartItemCard
               {item}
-              receiptTvaRate={Number(settings.default_tva_sale) || 19}
+              receiptTvaRate={receiptTvaRate}
               baseSalePrice={products.find((pp) => pp.id === item.product_id)?.sale_price ?? 0}
               purchaseCost={item.purchase_price ?? products.find((pp) => pp.id === item.product_id)?.purchase_price ?? null}
               onEdit={() => {

@@ -16,6 +16,20 @@
   let isSubmitting = false;
   let staleWarn = false;
 
+  // Focus + select the bound input on mount (Svelte action).
+  function autofocusSelect(el: HTMLInputElement) {
+    el.focus();
+    el.select();
+  }
+
+  // Enter anywhere in the modal triggers the primary action.
+  function modalKey(e: KeyboardEvent, action: () => void) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      action();
+    }
+  }
+
   $: if (isOpen) {
     reason = '';
     if (!$activeSession) {
