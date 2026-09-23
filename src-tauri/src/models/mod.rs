@@ -90,6 +90,11 @@ pub struct Product {
     pub pinned: bool,
     #[serde(default)]
     pub pin_order: i64,
+    /// Unloading (déchargement) fee in DZD per sale unit: when the seller
+    /// hands the goods off the truck to the shop, he takes this per unit.
+    /// 0 = option disabled for the product. POS-local field.
+    #[serde(default)]
+    pub unloading_fee: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -108,6 +113,11 @@ pub struct ProductInput {
     pub min_stock: f64,
     pub image_path: Option<String>,
     pub expiry_date: Option<String>,
+    /// Unloading (déchargement) fee in DZD per sale unit — the amount the
+    /// driver takes per unit sold when he unloads the goods at the shop.
+    /// 0 = option disabled. POS-local (not synced to the CRM).
+    #[serde(default)]
+    pub unloading_fee: i64,
     #[serde(default)]
     pub is_scalable: bool,
     #[serde(default)]

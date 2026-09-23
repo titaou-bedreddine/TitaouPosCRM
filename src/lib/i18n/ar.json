@@ -686,5 +686,13 @@
   "routes_create": "إنشاء التوصيلة",
   "routes_empty": "لا توجد توصيلات بعد.",
   "routes_stops": "محطات",
-  "routes_name": "اسم التوصيلة"
+  "routes_name": "اسم التوصيلة",
+  "pem_unloading_fee": "مبلغ تنزيل البضاعة (دج / وحدة)",
+  "pos_unloading_title": "مبلغ التنزيل",
+  "pos_unloading_fee_per_unit": "المبلغ لكل وحدة (دج)",
+  "pos_unloading_total": "مجموع التنزيل",
+  "pos_unloading_skip": "بدون تنزيل",
+  "pos_unloading_apply": "تطبيق",
+  "pos_unloading_line": "تنزيل",
+  "pos_unloading_net": "الصافي"
 }

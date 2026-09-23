@@ -58,6 +58,10 @@ export interface Product {
   /** Pinned products float to the top of the POS grid and stock page. */
   pinned?: boolean;
   pin_order?: number;
+  /** Unloading (déchargement) fee in DZD per sale unit — the amount the
+   *  driver takes per unit when he unloads the goods at the shop.
+   *  0 = option disabled. */
+  unloading_fee?: number;
 }
 
 export interface ProductInput {
@@ -83,6 +87,7 @@ export interface ProductInput {
   scale_sync_status?: string;
   is_bundle: boolean;
   barcodes: string[];
+  unloading_fee?: number;
 }
 
 export interface CartItem {
@@ -119,6 +124,11 @@ export interface CartItem {
   sale_unit?: string;
   units_per_package?: number;
   base_quantity?: number;
+  // Unloading (déchargement) fee for this line, DZD per sale unit — set via
+  // the add-to-cart popup when the product has the option enabled. The fee
+  // total (per-unit × quantity) is recorded as an expense at checkout and
+  // shown as a deduction in the cart footer.
+  unloading_fee_per_unit?: number;
   // Per-line TVA override (TTC extraction). null = follow the receipt rate.
   tva_rate?: number | null;
 }

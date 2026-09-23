@@ -686,5 +686,13 @@
   "routes_create": "Créer la tournée",
   "routes_empty": "Aucune tournée.",
   "routes_stops": "arrêts",
-  "routes_name": "Nom de la tournée"
+  "routes_name": "Nom de la tournée",
+  "pem_unloading_fee": "Frais de déchargement (DZD / unité)",
+  "pos_unloading_title": "Frais de déchargement",
+  "pos_unloading_fee_per_unit": "Montant par unité (DZD)",
+  "pos_unloading_total": "Total déchargement",
+  "pos_unloading_skip": "Sans déchargement",
+  "pos_unloading_apply": "Appliquer",
+  "pos_unloading_line": "Déchargement",
+  "pos_unloading_net": "Net à déposer"
 }

@@ -137,6 +137,7 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             commands::update_expense,
             commands::list_expenses,
             commands::delete_expense,
+            commands::get_unloading_expense_category_id,
             commands::list_employees,
             commands::save_employee,
             commands::find_employee_by_rfid,

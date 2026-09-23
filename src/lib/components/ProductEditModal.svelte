@@ -44,6 +44,8 @@
   let isWebcamOpen = false;
   let expiryDate = '';
   let isBundle = false;
+  // Unloading (déchargement) fee per sale unit, DZD — 0 disables the option.
+  let unloadingFee = 0;
 
   // Scale Integration
   let isScalable = false;
@@ -387,6 +389,7 @@
       scale_sync_status: scaleSyncStatus,
       is_bundle: isBundle,
       barcodes: bCodes,
+      unloading_fee: Math.max(0, Math.round(Number(unloadingFee) || 0)),
     };
   }
 
@@ -506,6 +509,7 @@
       imagePath = product.image_path || '';
       expiryDate = product.expiry_date || '';
       isBundle = product.is_bundle || false;
+      unloadingFee = product.unloading_fee || 0;
       isScalable = product.is_scalable || false;
       scaleCode = product.scale_code || '';
       scalePlu = product.scale_plu || (product.id || 1);
@@ -766,6 +770,7 @@
         scale_sync_status: scaleSyncStatus,
         is_bundle: isBundle,
         barcodes: barcodeTokens,
+        unloading_fee: Math.max(0, Math.round(Number(unloadingFee) || 0)),
       };
 
       const savedId = await invoke<number>('save_product', {
@@ -1139,6 +1144,28 @@
                 <span>Sale price ({salePrice} DZD) cannot be lower than purchase cost ({purchasePrice} DZD) / لا يمكن أن يكون سعر البيع أقل من سعر الشراء!</span>
               </div>
             {/if}
+
+            <!-- Unloading fee option: per sale unit, taken by the driver
+                 when he unloads the goods at the shop (expense at checkout). -->
+            <div class="flex items-end gap-3">
+              <div class="flex-1">
+                <label class="block text-xs font-bold text-pos-muted mb-1">
+                  {t('pem_unloading_fee')}
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  bind:value={unloadingFee}
+                  on:wheel={noWheelScroll}
+                  placeholder="0 = disabled"
+                  class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-mono font-black text-amber-600 outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+              <p class="text-[9px] text-pos-muted font-bold flex-1 leading-relaxed">
+                Déchargement : montant pris par le livreur/chauffeur par unité vendue (ex. 300/palette). 0 = option désactivée / مبلغ تنزيل البضاعة لكل وحدة.
+              </p>
+            </div>
           </div>
 
           <!-- STOCK GROUP: linked current + new + total -->

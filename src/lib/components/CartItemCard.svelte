@@ -15,7 +15,7 @@
     itemKey,
     stopQtyEdit,
   } from '../stores/cart';
-  import { Minus, Plus, Trash2, Undo2, Percent, Package, Eye, Edit2 } from 'lucide-svelte';
+  import { Minus, Plus, Trash2, Undo2, Percent, Package, Eye, Edit2, Truck } from 'lucide-svelte';
 
   export let item: CartItem;
   // Eye: reveal this item's purchase cost inline; Pen: open its editor.
@@ -25,6 +25,8 @@
   // Receipt-level TVA — lines without their own override follow it.
   export let receiptTvaRate: number = 19;
   export let onEdit: () => void = () => {};
+  // Open the per-unit unloading-fee dialog for this line.
+  export let onEditFee: () => void = () => {};
   let showCost = false;
 
   let showDiscountInput = false;
@@ -177,6 +179,18 @@
         <span class="font-bold text-pos-text">{item.unit_price.toLocaleString()} DZD</span>
         {#if item.discount_amount > 0}
           <span class="text-purple-600 font-bold">(-{item.discount_amount} DZD)</span>
+        {/if}
+        {#if (item.unloading_fee_per_unit ?? 0) > 0}
+          <!-- Déchargement: driver's per-unit take on this line -->
+          <button
+            type="button"
+            on:click={onEditFee}
+            title={t('pos_unloading_title')}
+            class="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400 font-bold hover:underline cursor-pointer"
+          >
+            <Truck class="w-2.5 h-2.5" />
+            <span>+{(item.unloading_fee_per_unit ?? 0)}/u × {item.quantity} = {((item.unloading_fee_per_unit ?? 0) * item.quantity).toLocaleString()} DZD</span>
+          </button>
         {/if}
       </div>
       {#if hasUnits}

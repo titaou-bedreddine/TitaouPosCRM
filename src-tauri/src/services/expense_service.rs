@@ -78,6 +78,26 @@ pub fn add_expense(
     Ok(expense_number)
 }
 
+/// Resolve (or seed) the 'Déchargement' expense category used by the
+/// auto-recorded unloading fees at checkout. Returns its id.
+pub fn unloading_expense_category_id(db: &DbState) -> Result<i64, String> {
+    let conn = db.conn.lock().unwrap();
+    conn.execute_batch(
+        "INSERT OR IGNORE INTO expense_categories (id, name_ar, name_fr, name_en, description, is_active)
+         VALUES (8, 'تنزيل البضاعة', 'Déchargement', 'Unloading Fees',
+                 'Frais de déchargement des marchandises (chauffeur/livreur)', 1);",
+    )
+    .map_err(|e| e.to_string())?;
+    let id: i64 = conn
+        .query_row(
+            "SELECT id FROM expense_categories WHERE name_en = 'Unloading Fees' OR name_fr = 'Déchargement' LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 pub fn list_expenses(db: &DbState) -> Result<Vec<Expense>, String> {
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn

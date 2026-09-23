@@ -546,7 +546,7 @@ pub fn resolve_scale_scan(
                     purchase_price, sale_price, min_sale_price, tax_rate, current_stock, min_stock,
                     NULL, NULL, is_scalable, scale_code, scale_plu, scale_barcode_type,
                     scale_department_id, scale_sync_status, is_bundle, is_active, NULL,
-                    COALESCE(pinned, 0), COALESCE(pin_order, 0)
+                    COALESCE(pinned, 0), COALESCE(pin_order, 0), COALESCE(unloading_fee, 0)
              FROM products
              WHERE is_scalable = 1 AND (scale_code = ?1 OR CAST(scale_plu AS TEXT) = ?1 OR sku = ?1)
              LIMIT 1",
@@ -585,6 +585,7 @@ pub fn resolve_scale_scan(
                 total_sold: None,
                 pinned: row.get::<_, i64>(26)? == 1,
                 pin_order: row.get(27)?,
+                unloading_fee: row.get(28)?,
             })
         })
         .ok()?;

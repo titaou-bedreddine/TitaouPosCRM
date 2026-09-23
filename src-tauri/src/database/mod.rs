@@ -142,6 +142,11 @@ impl DbState {
         // their family; pin_order is the manual arrangement among pinned.
         let _ = conn.execute("ALTER TABLE products ADD COLUMN pinned INTEGER DEFAULT 0;", []);
         let _ = conn.execute("ALTER TABLE products ADD COLUMN pin_order INTEGER DEFAULT 0;", []);
+        // Unloading (déchargement) fee per sale unit, DZD. When the seller
+        // hands the goods off the truck to the shop he takes this per unit;
+        // it is recorded as an expense at checkout. POS-local column — the
+        // CRM pull only UPDATEs its own columns, so this survives syncs.
+        let _ = conn.execute("ALTER TABLE products ADD COLUMN unloading_fee INTEGER DEFAULT 0;", []);
         let _ = conn.execute("ALTER TABLE cash_sessions ADD COLUMN is_archived INTEGER DEFAULT 0;", []);
 
         // LAN multi-terminal: every financial record is stamped with the
@@ -230,7 +235,8 @@ impl DbState {
             (4, 'صيانة وإصلاح', 'Maintenance & Réparation', 'Maintenance', 'Entretien matériel', 1),
             (5, 'مستلزمات وتغليف', 'Fournitures & Emballage', 'Supplies & Packaging', 'Sacs et emballage', 1),
             (6, 'مصاريف عامة متنوعة', 'Divers / Général', 'General Expenses', 'Dépenses diverses', 1),
-            (7, 'سلف للموظفين', 'Avances Salaires', 'Salary Advances', 'Avances sur salaire', 1);
+            (7, 'سلف للموظفين', 'Avances Salaires', 'Salary Advances', 'Avances sur salaire', 1),
+            (8, 'تنزيل البضاعة', 'Déchargement', 'Unloading Fees', 'Frais de déchargement des marchandises (chauffeur/livreur)', 1);
         ");
 
         // Pinning for suppliers/customers (same behavior as products).

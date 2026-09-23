@@ -4,8 +4,9 @@
   import { invoke } from '@tauri-apps/api/core';
   import { t, currentLocale } from '../../lib/i18n';
   import { localTodayISO } from '../../lib/utils/date';
-  import type { Category, Product, Supplier, Unit } from '../../lib/types';
-  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates } from '../../lib/stores/cart';
+  import type { Category, CartItem, Product, Supplier, Unit } from '../../lib/types';
+  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates, unloadingFeesTotal, setLineUnloadingFee } from '../../lib/stores/cart';
+  import UnloadingFeeModal from '../../lib/components/UnloadingFeeModal.svelte';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
@@ -509,7 +510,7 @@
           if (product) {
             const weight = scan.weight > 0 ? scan.weight : 1;
             const item = { ...product, sale_price: scan.unit_price || product.sale_price };
-            addToCart(item, weight, $isRefundMode);
+            requestAddToCart(item, weight);
             searchQuery = '';
             return;
           }
@@ -549,7 +550,68 @@
       purchasePriceTarget = product;
       return;
     }
-    addToCart(product, 1, $isRefundMode);
+    requestAddToCart(product, 1);
+  }
+
+  // ── Unloading-fee flow (déchargement) ────────────────────────────────────
+  // A product with the option enabled pops a small dialog when its line is
+  // FIRST added to the cart: the driver's per-unit unloading fee (300/palette
+  // …), editable per sale. Quantity merges keep the line's fee; the fee
+  // total re-computes with the quantity. Skip adds a fee-less line.
+  let isUnloadingFeeOpen = false;
+  let pendingFeeTarget: { product: Product; quantity: number } | null = null;
+  let feeEditLine: CartItem | null = null;
+  let unloadingFeeInput = 0;
+
+  function requestAddToCart(product: Product, quantity = 1) {
+    const fee = (product as any).unloading_fee ?? 0;
+    if (fee > 0 && !$isRefundMode && $posMode === 'sale') {
+      const lineExists = $cartItems.some(
+        (i) =>
+          i.product_id === product.id &&
+          i.sale_unit === undefined &&
+          i.is_refund === $isRefundMode
+      );
+      if (lineExists) {
+        // Line already in the cart: merge quantities and keep its fee.
+        addToCart(product, quantity, $isRefundMode);
+        return;
+      }
+      pendingFeeTarget = { product, quantity };
+      unloadingFeeInput = fee;
+      isUnloadingFeeOpen = true;
+      return;
+    }
+    addToCart(product, quantity, $isRefundMode);
+  }
+
+  function confirmUnloadingFee(feePerUnit: number) {
+    const target = pendingFeeTarget;
+    isUnloadingFeeOpen = false;
+    pendingFeeTarget = null;
+    if (!target) return;
+    addToCart(target.product, target.quantity, $isRefundMode, undefined, feePerUnit);
+    searchQuery = '';
+  }
+
+  function skipUnloadingFee() {
+    const target = pendingFeeTarget;
+    isUnloadingFeeOpen = false;
+    pendingFeeTarget = null;
+    if (target) addToCart(target.product, target.quantity, $isRefundMode, undefined, undefined);
+  }
+
+  function editLineUnloadingFee(item: CartItem) {
+    feeEditLine = item;
+    unloadingFeeInput = item.unloading_fee_per_unit ?? 0;
+    isUnloadingFeeOpen = true;
+  }
+
+  function confirmFeeEdit(fee: number) {
+    const line = feeEditLine;
+    isUnloadingFeeOpen = false;
+    feeEditLine = null;
+    if (line) setLineUnloadingFee(line, fee);
   }
 
   function handlePurchasePriceConfirm(price: number, salePriceEntered: number, qty = 1) {
@@ -615,7 +677,7 @@
         });
         const created = list.find(p => p.barcodes?.includes(pendingBarcode));
         if (created) {
-          addToCart(created, 1, $isRefundMode);
+          requestAddToCart(created, 1);
         }
       } catch (e) {
         console.warn('Auto add created product error:', e);
@@ -1008,6 +1070,32 @@
         await invoke('create_sale', { input: saleInput });
       }
 
+      // Unloading fees (déchargement): the driver's per-unit take leaves the
+      // drawer as an EXPENSE tied to the cash session — the sale itself stays
+      // at the goods total, the fee comes out of the collected cash.
+      const feeTotal = get(unloadingFeesTotal);
+      if (feeTotal > 0) {
+        try {
+          const feeCategoryId = await invoke<number>('get_unloading_expense_category_id');
+          const feeDetail = $cartItems
+            .filter((i) => (i.unloading_fee_per_unit ?? 0) > 0)
+            .map((i) => `${i.name_fr || i.name_ar} ×${i.quantity} = ${Math.round((i.unloading_fee_per_unit ?? 0) * i.quantity)} DA`)
+            .join('; ');
+          await invoke('add_expense', {
+            categoryId: feeCategoryId,
+            amount: Math.round(feeTotal),
+            paymentMethod: 'cash',
+            sessionId: $activeSession?.id ?? null,
+            userId: $currentUser?.id || 1,
+            recipient: null,
+            receiptReference: saleNumber,
+            notes: `Frais de déchargement (POS): ${feeDetail || feeTotal + ' DA'}`,
+          });
+        } catch (feeErr) {
+          console.warn('Unloading-fee expense failed:', feeErr);
+        }
+      }
+
       // Offline receipt QR (local data URL; no network needed).
       const receiptQrDataUrl = await entityQrDataUrl(
         `SALE:${saleNumber}`,
@@ -1214,7 +1302,7 @@
       // catalog to exactly one product, add it straight to the cart.
       if (searchQuery.trim() && products.length === 1) {
         e.preventDefault();
-        addToCart(products[0], 1, $isRefundMode);
+        addProductToCart(products[0]);
         searchQuery = '';
         loadProducts();
         return;
@@ -1729,6 +1817,7 @@
                 const live = products.find((pp) => pp.id === item.product_id);
                 if (live) handleOpenEdit(live);
               }}
+              onEditFee={() => editLineUnloadingFee(item)}
             />
           {/each}
         {/if}
@@ -1787,6 +1876,21 @@
               {/if}
             </p>
           {/if}
+          {#if $unloadingFeesTotal !== 0 && $posMode === 'sale'}
+            <!-- Unloading fees (déchargement): the driver's take — recorded
+                 as an expense at checkout, never part of the goods total. -->
+            <div class="flex items-center justify-between pt-1 border-t border-amber-200/60 dark:border-amber-800/40 mt-1">
+              <span class="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                <Truck class="w-3 h-3" /> {t('pos_unloading_line')}
+              </span>
+              <span class="text-[11px] font-bold text-pos-muted">
+                <span class="font-mono text-amber-600 dark:text-amber-400">−{Math.abs($unloadingFeesTotal).toLocaleString()} DZD</span>
+                <span class="mx-1">→</span>
+                {t('pos_unloading_net')}:
+                <span class="font-mono font-black text-pos-text">{($cartGrandTotal - $unloadingFeesTotal).toLocaleString()} DZD</span>
+              </span>
+            </div>
+          {/if}
           {#if $posMode === 'purchase' && estSaleTotal > 0}
             <!-- Purchase mode: estimated sale value of this buy -->
             <p class="text-[10px] font-bold text-pos-muted text-end flex items-center justify-end gap-1">
@@ -1822,6 +1926,29 @@
   <CashDrawerModal
     isOpen={isCashDrawerOpen}
     onClose={() => (isCashDrawerOpen = false)}
+  />
+
+  <!-- Unloading fee (déchargement): per-unit driver fee, asked when a
+       product with the option enabled is first added to the cart. -->
+  <UnloadingFeeModal
+    isOpen={isUnloadingFeeOpen}
+    productName={pendingFeeTarget
+      ? (pendingFeeTarget.product.name_fr || pendingFeeTarget.product.name_ar || pendingFeeTarget.product.name_en || '')
+      : (feeEditLine?.name_fr || feeEditLine?.name_ar || '')}
+    quantity={pendingFeeTarget?.quantity ?? feeEditLine?.quantity ?? 1}
+    defaultFee={unloadingFeeInput}
+    isEdit={!!feeEditLine}
+    onConfirm={(fee) => {
+      if (feeEditLine) confirmFeeEdit(fee);
+      else confirmUnloadingFee(fee);
+    }}
+    onSkip={skipUnloadingFee}
+    onClose={() => {
+      // Closing the dialog = skip (add without the fee) in add mode.
+      if (pendingFeeTarget) { skipUnloadingFee(); return; }
+      isUnloadingFeeOpen = false;
+      feeEditLine = null;
+    }}
   />
 
   <CategoryManagerModal
@@ -1878,7 +2005,7 @@
     }}
     onEditProductWithBarcode={handleEditProductWithBarcode}
     onLinkedToProduct={(p) => {
-      addToCart(p, 1, $isRefundMode);
+      addProductToCart(p);
       loadProducts();
     }}
   />

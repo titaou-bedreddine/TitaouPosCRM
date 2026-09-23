@@ -92,7 +92,8 @@ export function addToCart(
   product: Product,
   quantity = 1,
   asRefund = false,
-  packaging?: PackagingDef
+  packaging?: PackagingDef,
+  unloadingFeePerUnit?: number
 ): boolean {
   const upp = packaging ? packaging.units_per_package : 1;
   const baseQty = quantity * upp;
@@ -160,6 +161,9 @@ export function addToCart(
         purchase_price: product.purchase_price,
         current_stock: product.current_stock,
         is_scalable: (product as any).is_scalable,
+        // Unloading fee (déchargement) per sale unit — set by the popup when
+        // the product has the option enabled; 0/absent = no fee.
+        unloading_fee_per_unit: unloadingFeePerUnit,
       };
       
       const order = get(cartItemOrder);
@@ -567,3 +571,34 @@ export const cartGrandTotal = derived(
   ([$items, $discount, $step]) =>
     applySaleRounding(sumCartLines($items) - $discount, $step)
 );
+
+// ---------------------------------------------------------------------------
+// Unloading fees (déchargement): per-line fee × quantity, deducted for the
+// shop's view of the cash — recorded as an EXPENSE at checkout, never part
+// of the sale's goods total. A refund line contributes NEGATIVE (the fee
+// comes back).
+// ---------------------------------------------------------------------------
+
+export function lineUnloadingTotal(item: { unloading_fee_per_unit?: number; quantity: number; is_refund?: boolean }): number {
+  const fee = item.unloading_fee_per_unit ?? 0;
+  if (!fee) return 0;
+  const total = Math.round(fee * item.quantity);
+  return item.is_refund ? -total : total;
+}
+
+export const unloadingFeesTotal = derived(cartItems, ($items) =>
+  $items.reduce((sum, item) => sum + lineUnloadingTotal(item), 0)
+);
+
+/** Unloading fee total for ONE line (signed: refunds give the fee back). */
+export function itemUnloadingTotal(item: CartItem): number {
+  return lineUnloadingTotal(item);
+}
+
+/** Change one line's per-unit unloading fee (the line's edit button). */
+export function setLineUnloadingFee(item: CartItem, feePerUnit: number) {
+  const fee = Math.max(0, Math.round(Number(feePerUnit) || 0));
+  cartItems.update((items) =>
+    items.map((i) => (i.uid === item.uid ? { ...i, unloading_fee_per_unit: fee } : i))
+  );
+}

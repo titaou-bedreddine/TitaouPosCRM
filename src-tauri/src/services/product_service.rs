@@ -17,7 +17,8 @@ pub fn search_products(
                 p.current_stock, p.min_stock, p.max_stock, p.image_path, p.expiry_date,
                 COALESCE(p.is_scalable, 0), p.scale_code, p.scale_plu, COALESCE(p.scale_barcode_type, 97),
                 COALESCE(p.scale_department_id, 1), COALESCE(p.scale_sync_status, 'pending'),
-                p.is_bundle, p.is_active, COALESCE(p.pinned, 0), COALESCE(p.pin_order, 0)
+                p.is_bundle, p.is_active, COALESCE(p.pinned, 0), COALESCE(p.pin_order, 0),
+                COALESCE(p.unloading_fee, 0)
          FROM products p
          LEFT JOIN categories c ON p.category_id = c.id
          LEFT JOIN units u ON p.unit_id = u.id
@@ -89,6 +90,7 @@ pub fn search_products(
                 total_sold: None,
                 pinned: row.get::<_, i64>(26)? == 1,
                 pin_order: row.get(27)?,
+                unloading_fee: row.get(28)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -249,8 +251,8 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
                 current_stock = ?11, min_stock = ?12, image_path = ?13,
                 expiry_date = ?14, is_scalable = ?15, scale_code = ?16,
                 scale_plu = ?17, scale_barcode_type = ?18, scale_department_id = ?19,
-                scale_sync_status = ?20, is_bundle = ?21
-             WHERE id = ?22",
+                scale_sync_status = ?20, is_bundle = ?21, unloading_fee = ?22
+             WHERE id = ?23",
             rusqlite::params![
                 input.sku,
                 input.name_ar,
@@ -273,6 +275,7 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
                 input.scale_department_id,
                 input.scale_sync_status.unwrap_or_else(|| "pending".to_string()),
                 input.is_bundle,
+                input.unloading_fee,
                 pid
             ],
         )
@@ -292,8 +295,8 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
                 purchase_price, sale_price, min_sale_price, tax_rate,
                 current_stock, min_stock, image_path, expiry_date,
                 is_scalable, scale_code, scale_plu, scale_barcode_type,
-                scale_department_id, scale_sync_status, is_bundle, is_active
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1)",
+                scale_department_id, scale_sync_status, is_bundle, is_active, unloading_fee
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, ?22)",
             rusqlite::params![
                 input.sku,
                 input.name_ar,
@@ -303,8 +306,6 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
                 input.unit_id,
                 input.purchase_price,
                 input.sale_price,
-                input.min_sale_price,
-                input.tax_rate,
                 input.current_stock,
                 input.min_stock,
                 input.image_path,

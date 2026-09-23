@@ -686,5 +686,13 @@
   "routes_create": "Create route",
   "routes_empty": "No routes yet.",
   "routes_stops": "stops",
-  "routes_name": "Route name"
+  "routes_name": "Route name",
+  "pem_unloading_fee": "Unloading Fee (DZD / unit)",
+  "pos_unloading_title": "Unloading Fee",
+  "pos_unloading_fee_per_unit": "Fee per unit (DZD)",
+  "pos_unloading_total": "Fee total",
+  "pos_unloading_skip": "Without unloading",
+  "pos_unloading_apply": "Apply",
+  "pos_unloading_line": "Déchargement",
+  "pos_unloading_net": "Net for driver handover"
 }

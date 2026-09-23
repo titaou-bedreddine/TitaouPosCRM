@@ -521,6 +521,11 @@ pub fn delete_expense(db: State<'_, DbState>, expense_id: i64) -> Result<(), Str
     expense_service::delete_expense(&db, expense_id)
 }
 
+#[tauri::command]
+pub fn get_unloading_expense_category_id(db: State<'_, DbState>) -> Result<i64, String> {
+    expense_service::unloading_expense_category_id(&db)
+}
+
 // Employees & Payroll
 #[tauri::command]
 pub fn list_employees(db: State<'_, DbState>) -> Result<Vec<Employee>, String> {
