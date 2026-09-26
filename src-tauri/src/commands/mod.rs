@@ -613,6 +613,153 @@ pub fn print_escpos_raw(payload: String, printer: Option<String>) -> Result<(), 
     crate::printing::escpos::print_raw(&payload, printer.as_deref())
 }
 
+/// Native A4 multi-page document printing layer (GDI + headless rasterization).
+#[tauri::command]
+pub fn print_a4_document(request: crate::printing::a4_gdi::A4PrintRequest) -> Result<crate::printing::a4_gdi::A4PrintResult, String> {
+    let outcome = crate::printing::a4_gdi::print_a4_job(&request);
+    if outcome.ok {
+        println!("[A4-print] ok: {}", outcome.message);
+    } else {
+        eprintln!("[A4-print] FAILED: {}", outcome.message);
+    }
+    Ok(outcome)
+}
+
+/// Print an A4 test sheet directly to the specified printer or system default.
+#[tauri::command]
+pub fn test_a4_printer(printer: Option<String>) -> Result<crate::printing::a4_gdi::A4PrintResult, String> {
+    let now = chrono::Local::now();
+    let date_str = now.format("%Y-%m-%d").to_string();
+    let time_str = now.format("%H:%M:%S").to_string();
+    let printer_label = printer.clone().unwrap_or_else(|| "Default System Printer".into());
+
+    let test_html = format!(r#"<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    @page {{ size: 210mm 297mm; margin: 0; }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; }}
+    body {{ background: #ffffff; width: 210mm; margin: 0; padding: 0; }}
+    .a4-page {{
+      width: 210mm;
+      height: 297mm;
+      padding: 20mm;
+      position: relative;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }}
+    .border-box {{
+      border: 2px solid #0284c7;
+      border-radius: 12px;
+      padding: 24px;
+      background: #f8fafc;
+    }}
+    .header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+    }}
+    .title {{ font-size: 26px; font-weight: 900; color: #0f172a; text-transform: uppercase; letter-spacing: 1px; }}
+    .badge {{ background: #0284c7; color: #ffffff; font-weight: 800; font-size: 12px; padding: 6px 14px; border-radius: 9999px; text-transform: uppercase; }}
+    .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }}
+    .field {{ background: #ffffff; padding: 14px; border-radius: 8px; border: 1px solid #cbd5e1; }}
+    .field-label {{ font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }}
+    .field-value {{ font-size: 15px; font-weight: 800; color: #0f172a; }}
+    .success-banner {{
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 20px 0;
+      color: #166534;
+      font-size: 14px;
+      font-weight: 700;
+      text-align: center;
+    }}
+    .footer {{
+      border-top: 1px solid #e2e8f0;
+      padding-top: 12px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #94a3b8;
+      font-weight: 600;
+    }}
+  </style>
+</head>
+<body>
+  <div class="a4-page">
+    <div>
+      <div class="border-box">
+        <div class="header">
+          <div>
+            <div class="title">PRINT TEST &bull; TEST D'IMPRESSION A4</div>
+            <div style="font-size: 13px; color: #64748b; margin-top: 4px; font-weight: 600;">TitaouPosCRM Centralized A4 Printing Layer</div>
+          </div>
+          <div class="badge">A4 Native GDI</div>
+        </div>
+
+        <div class="success-banner">
+          &check; If this page printed correctly, your A4 printer configuration is working.
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <div class="field-label">Selected A4 Printer</div>
+            <div class="field-value">{}</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Paper Format</div>
+            <div class="field-value">210mm &times; 297mm (Standard A4)</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Date</div>
+            <div class="field-value">{}</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Time</div>
+            <div class="field-value">{}</div>
+          </div>
+        </div>
+
+        <div style="font-size: 12px; color: #475569; line-height: 1.6; margin-top: 16px;">
+          This test document confirms:
+          <ul style="margin-left: 20px; margin-top: 8px;">
+            <li>Direct Tauri/Rust to Operating System Printer communication</li>
+            <li>Exact A4 form validation in printer DEVMODE</li>
+            <li>Multi-page raster engine readiness</li>
+            <li>Zero reliance on browser print dialogs (window.print)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>TitaouPosCRM &bull; Titaou Bedreddine</span>
+      <span>Page 1 / 1</span>
+      <span>System Printer Driver Test</span>
+    </div>
+  </div>
+</body>
+</html>"#, printer_label, date_str, time_str);
+
+    let req = crate::printing::a4_gdi::A4PrintRequest {
+        html: test_html,
+        title: "A4 Printer Test Page".into(),
+        printer,
+        dpi: Some(300),
+    };
+
+    Ok(crate::printing::a4_gdi::print_a4_job(&req))
+}
+
+
 /// Next free employee code (EMP-NN) — accounts for soft-deleted rows.
 #[tauri::command]
 pub fn next_employee_code(db: State<'_, DbState>) -> Result<String, String> {
@@ -1424,9 +1571,31 @@ pub fn get_autostart() -> Result<bool, String> {
 
 static PRINTERS_CACHE: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
 
-/// List installed printer names so Settings can offer a choice.
+/// List installed system printers fast via native spooler EnumPrintersW.
+#[tauri::command]
+pub fn get_system_printers() -> Result<Vec<String>, String> {
+    let list = crate::printing::a4_gdi::get_system_printers_list()?;
+    if !list.is_empty() {
+        if let Ok(mut guard) = PRINTERS_CACHE.lock() {
+            *guard = Some(list.clone());
+        }
+        return Ok(list);
+    }
+    // Fallback to list_printers logic
+    list_printers()
+}
+
+/// List installed printer names so Settings can offer a choice (backward compatible).
 #[tauri::command]
 pub fn list_printers() -> Result<Vec<String>, String> {
+    if let Ok(list) = crate::printing::a4_gdi::get_system_printers_list() {
+        if !list.is_empty() {
+            if let Ok(mut guard) = PRINTERS_CACHE.lock() {
+                *guard = Some(list.clone());
+            }
+            return Ok(list);
+        }
+    }
     if let Ok(guard) = PRINTERS_CACHE.lock() {
         if let Some(cached) = guard.as_ref() {
             return Ok(cached.clone());
@@ -1459,6 +1628,7 @@ pub fn list_printers() -> Result<Vec<String>, String> {
         Ok(Vec::new())
     }
 }
+
 
 /// Every packaging definition (for stock decomposition + cart unit pickers).
 #[tauri::command]

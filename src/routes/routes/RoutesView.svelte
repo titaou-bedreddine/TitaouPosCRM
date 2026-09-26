@@ -3,6 +3,8 @@
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
   import { printHtmlSilently } from '../../lib/utils/printer';
+  import { printService } from '../../lib/services/printService';
+  import type { PrintableDocument, PrintableItem } from '../../lib/printing/printableDocument';
   import { pickReportFormat } from '../../lib/stores/reportFormat';
   import { Route, Plus, RefreshCw, Trash2, X, Eye, Printer, Edit2, AlertTriangle } from 'lucide-svelte';
 
@@ -75,35 +77,43 @@
   }
 
   async function printRoute(id: string) {
-    const detail = await invoke<any>('cloud_route_detail', { routeId: id });
-    const dateStr = String(detail.route.route_date).slice(0, 10);
-    // Every report prints in the format the user picks (A4 / 70mm).
-    const fmt = await pickReportFormat('Feuille de route — ' + dateStr);
-    if (!fmt) return;
-    const isA4 = fmt === 'a4';
-    const rows = (detail.stops ?? [])
-      .map((st: any, i: number) =>
-        '<tr>' +
-        '<td style="padding:' + (isA4 ? '6px 10px' : '4px 6px') + ';border-bottom:1px solid #ccc">' + (i + 1) + '</td>' +
-        '<td style="padding:' + (isA4 ? '6px 8px' : '4px 6px') + ';border-bottom:1px solid #ccc">' + (st.client?.name ?? '—') + '</td>' +
-        '<td style="padding:' + (isA4 ? '6px 8px' : '4px 6px') + ';text-align:right;border-bottom:1px solid #ccc">' +
-        ((st.order?.total_amount ?? 0) / 100).toLocaleString('fr-DZ') + ' DA</td>' +
-        '<td style="padding:' + (isA4 ? '6px 8px' : '4px 6px') + ';text-align:center;border-bottom:1px solid #ccc">' + (st.status ?? '') + '</td></tr>')
-      .join('');
-    const body =
-      '<h2 style="font-size:' + (isA4 ? '18' : '13') + 'px;margin:0 0 4px">Feuille de route — ' + dateStr + '</h2>' +
-      '<p style="font-size:' + (isA4 ? '13px' : '10px') + '">' + (detail.route.seller?.full_name ?? '—') + ' · ' + detail.route.status + (detail.route.name ? ' · ' + detail.route.name : '') + '</p>' +
-      '<table style="width:100%;border-collapse:collapse"><tr>' +
-      '<th align="start" style="padding:6px 8px;border-bottom:2px solid #000">#</th>' +
-      '<th align="start" style="padding:6px 8px;border-bottom:2px solid #000">Client</th>' +
-      '<th align="end" style="padding:6px 8px;border-bottom:2px solid #000">Total</th>' +
-      '<th style="padding:6px 8px;border-bottom:2px solid #000">Statut</th></tr>' + rows + '</table>';
-    const result = await printHtmlSilently(
-      body,
-      'Route ' + dateStr,
-      { widthMm: isA4 ? 210 : 70, heightMm: isA4 ? 297 : undefined }
-    );
-    if (!result.ok) error = result.message;
+    try {
+      const detail = await invoke<any>('cloud_route_detail', { routeId: id });
+      const dateStr = String(detail.route?.route_date || new Date().toISOString()).slice(0, 10);
+      const items: PrintableItem[] = (detail.stops ?? []).map((st: any, i: number) => ({
+        name: `Stop #${i + 1}: ${st.client?.name ?? 'Client'}`,
+        quantity: 1,
+        unitPrice: (st.order?.total_amount ?? 0) / 100,
+        totalPrice: (st.order?.total_amount ?? 0) / 100,
+        notes: `Statut: ${st.status ?? 'En attente'}`,
+      }));
+
+      const totalAmount = items.reduce((sum, it) => sum + it.totalPrice, 0);
+
+      const doc: PrintableDocument = {
+        id: detail.route?.id,
+        documentNumber: `ROUTE-${detail.route?.id}`,
+        documentType: 'stock_operation',
+        title: 'FEUILLE DE ROUTE DE LIVRAISON',
+        date: dateStr,
+        party: detail.route?.seller ? {
+          name: detail.route.seller.full_name || 'Chauffeur / Vendeur',
+          type: 'employee',
+        } : undefined,
+        items,
+        subtotal: totalAmount,
+        discountTotal: 0,
+        taxTotal: 0,
+        grandTotal: totalAmount,
+        notes: `Statut: ${detail.route?.status || ''}${detail.route?.name ? ' • ' + detail.route.name : ''}`,
+        footerNote: 'Document de livraison et d’itinéraire logistique.',
+      };
+
+      const result = await printService.printDocument(doc);
+      if (!result.ok && result.mode !== 'disabled') error = result.message;
+    } catch (e: any) {
+      error = e?.message || String(e);
+    }
   }
   function askRemoveRoute(id: string) {
     deleting = id;

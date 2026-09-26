@@ -11,6 +11,7 @@
   import type { Purchase, Supplier, Product } from '../../lib/types';
   import { currentUser } from '../../lib/stores/auth';
   import { printHtmlSilently } from '../../lib/utils/printer';
+  import { printService } from '../../lib/services/printService';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
   import ProductEditModal from '../../lib/components/ProductEditModal.svelte';
   import type { Category, Unit } from '../../lib/types';
@@ -167,47 +168,12 @@
     try {
       isPrintingPurchase = true;
       const items = await invoke<any[]>('get_purchase_items', { purchaseId: pur.id });
-      const settings = await invoke<Record<string, string>>('get_all_settings');
-      const shopName = settings['shop_name_fr'] || 'TitaouPosCRM';
-      const rows = items.map((it) => `
-        <tr>
-          <td style="padding:3px 4px;border-bottom:1px dashed #000;">${it.product_name || it.product_name_ar || '#' + it.product_id}</td>
-          <td style="text-align:center;padding:3px 4px;border-bottom:1px dashed #000;">${it.quantity}</td>
-          <td style="text-align:right;padding:3px 4px;border-bottom:1px dashed #000;">${it.unit_cost.toLocaleString()}</td>
-          <td style="text-align:right;padding:3px 4px;border-bottom:1px dashed #000;">${it.total.toLocaleString()}</td>
-        </tr>`).join('');
-      const html = `
-        <div style="width:80mm;font-family:monospace;font-size:11px;padding:4mm;">
-          <p style="text-align:center;font-weight:900;font-size:15px;margin:0;">${shopName}</p>
-          <p style="text-align:center;font-size:10px;margin:2px 0;">BON D'ACHAT / سند شراء</p>
-          <hr style="border-top:1px dashed #000;" />
-          <div style="display:flex;justify-content:space-between;font-size:10px;">
-            <span>N° <strong>${pur.invoice_number}</strong></span>
-            <span>${pur.date}</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:10px;">
-            <span>Fournisseur: <strong>${pur.supplier_name || '-'}</strong></span>
-          </div>
-          <hr style="border-top:1px dashed #000;" />
-          <table style="width:100%;border-collapse:collapse;font-size:10px;">
-            <thead>
-              <tr><th style="text-align:left;">Article</th><th style="text-align:center;">Qté</th><th style="text-align:right;">P.U</th><th style="text-align:right;">Total</th></tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-          <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:900;margin-top:6px;">
-            <span>TOTAL:</span><span>${pur.total.toLocaleString()} DZD</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:10px;">
-            <span>Payé:</span><span>${pur.paid_amount.toLocaleString()} DZD</span>
-          </div>
-          <p style="text-align:center;font-size:8px;margin-top:8px;">TitaouPosCRM • Titaou Bedreddine</p>
-        </div>
-      `;
-      const { printHtmlSilently } = await import('../../lib/utils/printer');
-      printHtmlSilently(html, 'Purchase ' + pur.invoice_number);
+      const res = await printService.printPurchase(pur, items);
+      if (!res.ok && res.mode !== 'disabled') {
+        alert('Impression achat: ' + res.message);
+      }
     } catch (e: any) {
-      alert('Print failed: ' + (e.message || e));
+      alert('Erreur d\'impression: ' + (e.message || e));
     } finally {
       isPrintingPurchase = false;
     }

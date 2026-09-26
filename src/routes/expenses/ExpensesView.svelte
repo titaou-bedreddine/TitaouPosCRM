@@ -9,6 +9,7 @@
   import { activeSession } from '../../lib/stores/session';
   import { printHtmlSilently } from '../../lib/utils/printer';
   import { entityQrPayload } from '../../lib/utils/printer';
+  import { printService } from '../../lib/services/printService';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import {
@@ -184,48 +185,18 @@
 
   async function printExpenseVoucher(exp: Expense) {
     try {
-      const settings = await invoke<Record<string, string>>('get_all_settings');
-      const shopName = settings['shop_name_fr'] || 'TitaouPosCRM';
-      const shopPhone = settings['shop_phone'] || '0553444057';
-      const shopAddress = settings['shop_address'] || 'Alger Centre';
-
-      const html = `
-        <div style="width: 72mm; font-family: monospace; font-size: 10px; text-align: center; margin: 0 auto; padding: 2mm;">
-          <p style="font-size: 14px; font-weight: 900; margin: 0; text-transform: uppercase;">${shopName}</p>
-          <p style="font-size: 8px; margin: 2px 0;">${shopAddress} • Tél: ${shopPhone}</p>
-          <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-          <p style="font-size: 11px; font-weight: 900; background: #000; color: #fff; padding: 2px 0; margin: 2px 0;">BON DE DÉCAISSEMENT / سند صرف</p>
-          <div style="display: flex; justify-content: space-between; font-size: 9px; font-weight: bold; margin-top: 4px;">
-            <span>BON #${exp.expense_number}</span>
-            <span>${exp.date}</span>
-          </div>
-          <div style="display: flex; justify-content: space-between; font-size: 8px;">
-            <span>Bénéficiaire: ${exp.recipient || 'Divers'}</span>
-            <span>Catégorie: ${exp.category_name || 'Général'}</span>
-          </div>
-          <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-          <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 900;">
-            <span>MONTANT SORTI:</span>
-            <span>${exp.amount.toLocaleString()} DZD</span>
-          </div>
-          <div style="display: flex; justify-content: space-between; font-size: 9px;">
-            <span>Mode de règlement:</span>
-            <span style="font-weight: bold; text-transform: uppercase;">${exp.payment_method}</span>
-          </div>
-          ${exp.notes ? `
-            <div style="text-align: left; font-size: 8px; margin-top: 4px;">
-              <span>Motif: ${exp.notes}</span>
-            </div>
-          ` : ''}
-          <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-          <div style="display: flex; justify-content: space-between; font-size: 8px; margin-top: 8px;">
-            <span>Signature Caissier</span>
-            <span>Signature Bénéficiaire</span>
-          </div>
-        </div>
-      `;
-      const r = await printHtmlSilently(html, 'Voucher #' + exp.expense_number, { widthMm: 72 });
-      if (!r.ok) alert('Print failed: ' + r.message);
+      const r = await printService.printPayment({
+        receiptNumber: exp.expense_number || `EXP-${exp.id}`,
+        date: exp.date,
+        title: 'BON DE DÉCAISSEMENT / سند صرف',
+        partyName: exp.recipient || 'Divers',
+        amount: exp.amount,
+        paymentMethod: exp.payment_method,
+        notes: [exp.category_name ? `Catégorie: ${exp.category_name}` : '', exp.notes ? `Motif: ${exp.notes}` : ''].filter(Boolean).join(' • '),
+      });
+      if (!r.ok && r.mode !== 'disabled') {
+        alert('Print result: ' + r.message);
+      }
     } catch (e: any) {
       alert('Error printing voucher: ' + (e.message || e));
     }

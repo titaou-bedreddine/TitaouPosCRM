@@ -6,6 +6,7 @@
   import { activeSession } from '../stores/session';
   import { QrCode, Printer, FileText, X, Check, DollarSign, ShieldAlert, Eraser } from 'lucide-svelte';
   import { printHtmlSilently } from '../utils/printer';
+  import { printService } from '../services/printService';
 
   export let isOpen = false;
   export let customer: Customer | null = null;
@@ -61,20 +62,21 @@
         }
       });
       if (autoPrint) {
-        const voucherHtml = `
-          <div style="text-align:center; font-family:monospace; font-size:10px; width:72mm; margin:0 auto; padding:2mm;">
-            <p style="font-size:14px; font-weight:900;">PAYMENT RECEIPT / وصل دفع</p>
-            <hr style="border-top:1px dashed #000; margin:4px 0;" />
-            <p>Client: <strong>${customer.name}</strong></p>
-            <p>Amount: <strong>${paymentAmount.toLocaleString()} DZD</strong></p>
-            <p>Method: <strong>${paymentMethod.toUpperCase()}</strong></p>
-            ${reference ? `<p>Ref: ${reference}</p>` : ''}
-            ${notes ? `<p>Notes: ${notes}</p>` : ''}
-            <p style="font-size:8px; margin-top:6px;">TitaouPosCRM • Titaou Bedreddine</p>
-          </div>
-        `;
-        const r = await printHtmlSilently(voucherHtml, 'Debt Payment Receipt', { widthMm: 72 });
-        if (!r.ok) console.error('Voucher print failed:', r.message);
+        void printService.printPayment({
+          receiptNumber: `PAY-CUST-${customer.id}-${Date.now().toString().slice(-4)}`,
+          date: new Date().toISOString().slice(0, 10),
+          title: 'REÇU DE RÈGLEMENT CLIENT',
+          partyName: customer.name,
+          partyType: 'customer',
+          amount: paymentAmount,
+          paymentMethod: paymentMethod.toUpperCase(),
+          notes: notes || reference,
+          remainingBalance: Math.max(0, customer.balance - paymentAmount),
+        }).then((res) => {
+          if (!res.ok && res.mode !== 'disabled') {
+            console.warn('Voucher print failed:', res.message);
+          }
+        });
       }
       onPaymentRecorded();
       onClose();
@@ -82,6 +84,19 @@
       errorMsg = typeof err === 'string' ? err : err.message || 'Payment recording failed';
     } finally {
       isSubmitting = false;
+    }
+  }
+
+  async function handlePrintSummary() {
+    if (!customer) return;
+    try {
+      const debts: any[] = (await invoke('get_customer_debts', { customerId: customer.id }).catch(() => [])) as any[];
+      const res = await printService.printCustomerDebtRecap(customer, debts);
+      if (!res.ok && res.mode !== 'disabled') {
+        console.warn('Debt summary print failed:', res.message);
+      }
+    } catch (e) {
+      console.error('Print summary failed:', e);
     }
   }
 
@@ -134,11 +149,11 @@
         </div>
 
         <div class="flex items-center gap-2">
-          <button class="px-3 py-1.5 bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+          <button on:click={handlePrintSummary} class="px-3 py-1.5 bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer">
             <FileText class="w-3.5 h-3.5" />
             <span>Recap Invoice</span>
           </button>
-          <button class="px-3 py-1.5 bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+          <button on:click={handlePrintSummary} class="px-3 py-1.5 bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer">
             <Printer class="w-3.5 h-3.5" />
             <span>Print Summary</span>
           </button>

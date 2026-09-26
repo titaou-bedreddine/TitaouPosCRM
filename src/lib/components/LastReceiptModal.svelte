@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { printHtmlSilently, entityQrDataUrl } from '../utils/printer';
   import { buildUnifiedReceipt } from '../printing/unifiedReceipt';
+  import { printService } from '../services/printService';
   import type { Sale } from '../types';
   import { Printer, X, RefreshCw, RotateCcw, Loader2, FileText, User, Clock, Banknote, Package, Pencil } from 'lucide-svelte';
 
@@ -46,39 +47,12 @@
     isReprinting = true;
     printMsg = '';
     try {
-      const settings = await invoke<Record<string, string>>('get_all_settings');
-      const s = payload.sale;
-      // Same receipt number as the original — a reprint never creates a new
-      // sale row or receipt number.
-      const qr = await entityQrDataUrl(`SALE:${s.sale_number}`, 240).catch(() => undefined);
-      const built = buildUnifiedReceipt({
-        saleNumber: s.sale_number,
-        saleDate: s.created_at,
-        cashierName: s.user_name || 'Admin',
-        terminalName: s.terminal_name || undefined,
-        customerName: s.customer_name || undefined,
-        items: (payload.items || []).map((it: any) => ({
-          name: it.name_fr || it.name_ar || 'Article',
-          quantity: it.quantity,
-          unitPrice: it.unit_price,
-          totalPrice: it.total_price,
-          discountPerUnit: it.discount_amount || 0,
-          isRefund: !!it.is_refund,
-        })),
-        subtotal: s.subtotal ?? s.total_amount,
-        discount: s.discount_amount ?? 0,
-        grandTotal: s.total_amount,
-        amountPaid: s.paid_amount,
-        change: s.change_amount,
-        paymentMethod: (s.payment_method || 'cash').toUpperCase(),
-        settings,
-        qrDataUrl: qr,
+      const res = await printService.printSale(payload.sale, payload.items, {
         copyLabel: 'REPRINT / نسخة',
       });
-      const result = await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
-      printMsg = result.ok
-        ? '✅ Reprint sent to printer / تمت إعادة الطباعة'
-        : '❌ ' + result.message;
+      printMsg = res.ok
+        ? '✅ Sent to printer / تمت إعادة الطباعة'
+        : '❌ ' + res.message;
     } catch (e: any) {
       printMsg = '❌ ' + (typeof e === 'string' ? e : e?.message || 'Reprint failed');
     } finally {

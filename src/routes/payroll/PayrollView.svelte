@@ -9,6 +9,7 @@
     Check, X, Printer, UserCheck, CreditCard, Clock, QrCode
   } from 'lucide-svelte';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
+  import { printService } from '../../lib/services/printService';
   import { Pencil, Trash2 } from 'lucide-svelte';
   import { activeSession } from '../../lib/stores/session';
   import { currentUser } from '../../lib/stores/auth';
@@ -413,38 +414,21 @@
     const absenceDeduction = daysAbsent * dailyRate;
     const netSalary = Math.max(0, emp.base_salary - advances - absenceDeduction);
 
-    const slipHtml = `
-      <div style="width: 72mm; font-family: monospace; font-size: 10px; margin: 0 auto; padding: 2mm; text-align: center;">
-        <h3 style="font-size: 13px; font-weight: 900; margin: 0; text-transform: uppercase;">BULLETIN DE PAIE / كشف راتب</h3>
-        <p style="font-size: 8px; margin: 2px 0;">TitaouPosCRM Retail System</p>
-        <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-        <div style="text-align: left; font-size: 9px; line-height: 1.4;">
-          <div style="display: flex; justify-content: space-between;"><span>Employé:</span><strong>${emp.full_name}</strong></div>
-          <div style="display: flex; justify-content: space-between;"><span>Matricule:</span><span>#${emp.employee_code}</span></div>
-          <div style="display: flex; justify-content: space-between;"><span>Poste:</span><span>${emp.job_title}</span></div>
-          <div style="display: flex; justify-content: space-between;"><span>Période:</span><span>${getEmployeePayPeriod(emp).label}</span></div>
-        </div>
-        <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-        <div style="text-align: left; font-size: 9px; line-height: 1.4;">
-          <div style="display: flex; justify-content: space-between;"><span>Salaire de Base:</span><span>${emp.base_salary.toLocaleString()} DZD</span></div>
-          ${advances > 0 ? `<div style="display: flex; justify-content: space-between; color: #b91c1c;"><span>- Avances accordées:</span><span>-${advances.toLocaleString()} DZD</span></div>` : ''}
-          ${daysAbsent > 0 ? `<div style="display: flex; justify-content: space-between; color: #b91c1c;"><span>- Absences (${daysAbsent} j):</span><span>-${absenceDeduction.toLocaleString()} DZD</span></div>` : ''}
-        </div>
-        <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-        <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 900;">
-          <span>NET À PAYER (الصافي للدفع):</span>
-          <span>${netSalary.toLocaleString()} DZD</span>
-        </div>
-        <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-        <div style="margin-top: 10px; display: flex; justify-content: space-between; font-size: 7px;">
-          <span>Signature Employeur</span>
-          <span>Émargement Salarié</span>
-        </div>
-        <p style="font-size: 7px; color: #666; margin-top: 15px;">TitaouPosCRM • Dev: Titaou Bedreddine (0553444057)</p>
-      </div>
-    `;
-    const r = await printHtmlSilently(slipHtml, `Payroll-${emp.employee_code}`, { widthMm: 72 });
-    if (!r.ok) showError('Print failed: ' + r.message);
+    try {
+      const r = await printService.printPayment({
+        receiptNumber: `PAYROLL-${emp.employee_code}`,
+        date: new Date().toISOString().slice(0, 10),
+        title: 'BULLETIN DE PAIE / كشف راتب',
+        partyName: `${emp.full_name} (${emp.job_title || 'Employé'})`,
+        partyType: 'employee',
+        amount: netSalary,
+        paymentMethod: 'ESPECES',
+        notes: `Salaire Base: ${emp.base_salary.toLocaleString()} DZD • Avances: ${advances.toLocaleString()} DZD • Absences (${daysAbsent} j): -${absenceDeduction.toLocaleString()} DZD`,
+      });
+      if (!r.ok && r.mode !== 'disabled') showError('Print failed: ' + r.message);
+    } catch (e: any) {
+      showError('Print error: ' + (e?.message || e));
+    }
   }
 </script>
 

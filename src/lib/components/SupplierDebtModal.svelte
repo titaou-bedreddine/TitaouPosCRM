@@ -5,6 +5,7 @@
   import { activeSession } from '../stores/session';
   import { X, Check, DollarSign, Printer, Truck, ShieldAlert, Eraser } from 'lucide-svelte';
   import { printHtmlSilently } from '../utils/printer';
+  import { printService } from '../services/printService';
 
   export let isOpen = false;
   export let supplier: Supplier | null = null;
@@ -59,20 +60,21 @@
         }
       });
       if (autoPrint) {
-        const voucherHtml = `
-          <div style="text-align:center; font-family:monospace; font-size:10px; width:72mm; margin:0 auto; padding:2mm;">
-            <p style="font-size:14px; font-weight:900;">SUPPLIER PAYMENT / وصل دفع مورد</p>
-            <hr style="border-top:1px dashed #000; margin:4px 0;" />
-            <p>Fournisseur: <strong>${supplier.name}</strong></p>
-            <p>Amount: <strong>${paymentAmount.toLocaleString()} DZD</strong></p>
-            <p>Method: <strong>${paymentMethod.toUpperCase()}</strong></p>
-            ${reference ? `<p>Ref: ${reference}</p>` : ''}
-            ${notes ? `<p>Notes: ${notes}</p>` : ''}
-            <p style="font-size:8px; margin-top:6px;">TitaouPosCRM • Titaou Bedreddine</p>
-          </div>
-        `;
-        const r = await printHtmlSilently(voucherHtml, 'Supplier Payment Receipt', { widthMm: 72 });
-        if (!r.ok) console.error('Voucher print failed:', r.message);
+        void printService.printPayment({
+          receiptNumber: `PAY-SUP-${supplier.id}-${Date.now().toString().slice(-4)}`,
+          date: new Date().toISOString().slice(0, 10),
+          title: 'REÇU DE RÈGLEMENT FOURNISSEUR',
+          partyName: supplier.name,
+          partyType: 'supplier',
+          amount: paymentAmount,
+          paymentMethod: paymentMethod.toUpperCase(),
+          notes: notes || reference,
+          remainingBalance: Math.max(0, supplier.balance - paymentAmount),
+        }).then((res) => {
+          if (!res.ok && res.mode !== 'disabled') {
+            console.warn('Voucher print failed:', res.message);
+          }
+        });
       }
       onPaymentRecorded();
       onClose();

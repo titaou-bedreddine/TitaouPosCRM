@@ -7,6 +7,8 @@
   import { currentUser } from '../../lib/stores/auth';
   import { printLabelSilently, printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
+  import { printService } from '../../lib/services/printService';
+  import { buildA4DocumentHtml } from '../../lib/printing/a4Template';
   import CloudSyncTab from '../../lib/components/CloudSyncTab.svelte';
   import { themeSkin, setThemeSkin, THEME_SKINS } from '../../lib/stores/theme';
   import {
@@ -60,6 +62,28 @@
     open_drawer_on_sale: 'true',
     drawer_com_port: '1',
     invoice_printer_name: '',
+    thermal_printer: '',
+    printing_mode: 'thermal',
+    a4_printer: '',
+    a4_show_logo: true,
+    a4_show_store_name: true,
+    a4_show_address: true,
+    a4_show_phone: true,
+    a4_show_email: true,
+    a4_show_tax_number: true,
+    a4_show_customer: true,
+    a4_show_supplier: true,
+    a4_show_sku: true,
+    a4_show_barcode: false,
+    a4_show_quantity: true,
+    a4_show_unit_price: true,
+    a4_show_discount: true,
+    a4_show_tax: true,
+    a4_show_payment: true,
+    a4_show_amount_paid: true,
+    a4_show_remaining: true,
+    a4_show_notes: true,
+    a4_show_footer: true,
     drawer_baud_rate: '9600',
     scale_enabled: 'true',
     scale_model: 'ACLAS LH51 / LS M3 / TS',
@@ -431,6 +455,25 @@
     'notify_session_deleted',
     'notify_session_archived',
     'notify_debt_cleared',
+    'a4_show_logo',
+    'a4_show_store_name',
+    'a4_show_address',
+    'a4_show_phone',
+    'a4_show_email',
+    'a4_show_tax_number',
+    'a4_show_customer',
+    'a4_show_supplier',
+    'a4_show_sku',
+    'a4_show_barcode',
+    'a4_show_quantity',
+    'a4_show_unit_price',
+    'a4_show_discount',
+    'a4_show_tax',
+    'a4_show_payment',
+    'a4_show_amount_paid',
+    'a4_show_remaining',
+    'a4_show_notes',
+    'a4_show_footer',
   ]);
 
   interface QuietWindow {
@@ -1224,34 +1267,72 @@
     return isNaN(n) ? dflt : n;
   }
 
-  // Unified receipt test print: the SAME builder the POS uses, printed via
-  // the native silent pipeline with the configured paper width.
+  // Thermal receipt test print: routes via printService
   let testPrintMsg = '';
   async function testPrintReceipt() {
     testPrintMsg = '';
-    const qr = await entityQrDataUrl('SALE:TEST-0001', 240).catch(() => undefined);
-    const built = buildUnifiedReceipt({
-      saleNumber: 'TEST-0001',
-      saleDate: new Date().toLocaleString('fr-FR'),
-      cashierName: $currentUser?.display_name || 'Admin',
-      customerName: 'Client Comptoir',
-      paymentMethod: 'ESPÈCES',
-      items: [
-        { name: 'Eau Minérale 1.5L', quantity: 2, unitPrice: 120, totalPrice: 240 },
-        { name: 'Lait UHT Entier 1L', quantity: 1, unitPrice: 150, totalPrice: 150 },
-        { name: 'Café Moulu 250g', quantity: 1, unitPrice: 200, totalPrice: 200 },
-      ],
-      subtotal: 590,
-      discount: 0,
-      grandTotal: 590,
-      amountPaid: 600,
-      change: 10,
-      settings: settings as Record<string, string>,
-      qrDataUrl: qr,
-    });
-    const r = await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
-    testPrintMsg = r.ok ? '✅ Test receipt sent to the printer (silent).' : '❌ ' + r.message;
+    try {
+      const target = (settings.thermal_printer as string) || (settings.invoice_printer_name as string) || undefined;
+      const r = await printService.testThermalPrinter(target);
+      testPrintMsg = r.ok ? '✅ Test receipt sent to the thermal printer.' : '❌ ' + r.message;
+    } catch (e: any) {
+      testPrintMsg = '❌ ' + (e.message || String(e));
+    }
   }
+
+  let testA4Msg = '';
+  let isTestingA4 = false;
+  async function testPrintA4() {
+    testA4Msg = '';
+    isTestingA4 = true;
+    try {
+      const res = await printService.testA4Printer(settings.a4_printer || undefined);
+      testA4Msg = res.ok ? `✅ ${res.message}` : `❌ ${res.message}`;
+    } catch (e: any) {
+      testA4Msg = `❌ Erreur: ${e.message || e}`;
+    } finally {
+      isTestingA4 = false;
+    }
+  }
+
+  let a4PreviewHtml = '';
+  $: if (currentTab === 'invoices' && settings.printing_mode === 'a4') {
+    const sampleDoc = {
+      documentNumber: 'FACT-2026-0001',
+      documentType: 'sale_invoice' as const,
+      title: 'FACTURE DE VENTE',
+      date: new Date().toLocaleDateString('fr-FR'),
+      time: new Date().toLocaleTimeString('fr-FR'),
+      cashierName: $currentUser?.display_name || 'Caissier Principal',
+      party: {
+        name: 'Établissement Benali & Frères',
+        type: 'customer' as const,
+        phone: '0550 12 34 56',
+        address: '14 Rue Didouche Mourad, Alger',
+        taxNumber: 'NIF: 099816001234567 • RC: 16/00-123456',
+        currentBalance: 15400,
+      },
+      items: [
+        { sku: 'ART-001', barcode: '6131234567890', name: 'Huile de Tournesol 5L Elio', quantity: 3, unit: 'Bouteille', unitPrice: 650, totalPrice: 1950 },
+        { sku: 'ART-002', barcode: '6131234567891', name: 'Farine Extra Panifiable 10kg Sim', quantity: 2, unit: 'Sac', unitPrice: 480, totalPrice: 960 },
+        { sku: 'ART-003', barcode: '6131234567892', name: 'Sucre Blanc Cristallisé 1kg Cevital', quantity: 5, unit: 'Paquet', unitPrice: 95, totalPrice: 475 },
+        { sku: 'ART-004', barcode: '6131234567893', name: 'Café Pur Arabica Moulu 250g Bonal', quantity: 4, unit: 'Boîte', unitPrice: 280, totalPrice: 1120 },
+      ],
+      subtotal: 4505,
+      discountTotal: 105,
+      taxTotal: 0,
+      grandTotal: 4400,
+      payment: {
+        method: 'ESPÈCES',
+        amountPaid: 4400,
+        totalDue: 4400,
+        remainingDue: 0,
+      },
+      notes: 'Marchandise vendue conforme. Paiement comptant effectué.',
+    };
+    a4PreviewHtml = buildA4DocumentHtml(sampleDoc, settings);
+  }
+
 
   // ----- Built-in 40×20 mm thermal presets (Vertical Price / Shelf Price) -----
   // PERF: only compute label previews while the barcodes tab is VISIBLE.
@@ -1595,179 +1676,354 @@
     <!-- 2. INVOICES & PRINTING TAB -->
     <div class:hidden={currentTab !== 'invoices'}>
       <div class="max-w-5xl space-y-6">
-        <!-- Invoice / Receipt Printer Selection -->
-        <div class="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-pos-border flex items-center justify-between gap-4">
-          <div class="min-w-0">
-            <h4 class="text-xs font-black text-pos-text">Receipt Printer — the ONE selector (طابعة الوصولات)</h4>
-            <p class="text-[11px] text-pos-muted">Prints receipts, invoices and vouchers via the native Windows print API. Empty = system default printer.</p>
+        <!-- GLOBAL PRINTING MODE SELECTOR -->
+        <div class="p-5 bg-white dark:bg-slate-900 rounded-2xl border-2 border-sky-500/30 shadow-xs space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
+                <Printer class="w-4 h-4 text-sky-500" />
+                <span>Global Printing Mode / وضع الطباعة العام</span>
+              </h3>
+              <p class="text-xs text-pos-muted mt-0.5">Controls all automatic and manual printing throughout the entire POS</p>
+            </div>
+            <span class="text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider {settings.printing_mode === 'disabled' ? 'bg-slate-100 text-slate-600 dark:bg-slate-800' : settings.printing_mode === 'a4' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950/60' : 'bg-sky-100 text-sky-700 dark:bg-sky-950/60'}">
+              {settings.printing_mode === 'disabled' ? 'Disabled' : settings.printing_mode === 'a4' ? 'A4 Document' : 'USB Thermal'}
+            </span>
           </div>
-          <select
-            bind:value={settings.invoice_printer_name}
-            class="px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer max-w-[220px]"
-          >
-            <option value="">Default Windows Printer</option>
-            {#each printerList as pr}
-              <option value={pr}>{pr}</option>
-            {/each}
-          </select>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label class="flex items-start gap-3 p-3.5 rounded-xl border-2 cursor-pointer transition {settings.printing_mode === 'disabled' ? 'border-rose-500 bg-rose-50/40 dark:bg-rose-950/20' : 'border-pos-border bg-slate-50 dark:bg-slate-800/40 hover:border-slate-300'}">
+              <input type="radio" bind:group={settings.printing_mode} value="disabled" on:change={autoSaveSettings} class="mt-1 text-rose-600 focus:ring-rose-500" />
+              <div>
+                <div class="text-xs font-black text-pos-text">Disabled (معطل)</div>
+                <div class="text-[11px] text-pos-muted mt-0.5">Transactions are recorded to SQLite normally, but nothing is sent to printers.</div>
+              </div>
+            </label>
+
+            <label class="flex items-start gap-3 p-3.5 rounded-xl border-2 cursor-pointer transition {settings.printing_mode === 'thermal' ? 'border-sky-500 bg-sky-50/40 dark:bg-sky-950/20' : 'border-pos-border bg-slate-50 dark:bg-slate-800/40 hover:border-slate-300'}">
+              <input type="radio" bind:group={settings.printing_mode} value="thermal" on:change={autoSaveSettings} class="mt-1 text-sky-600 focus:ring-sky-500" />
+              <div>
+                <div class="text-xs font-black text-pos-text">USB Thermal Receipt (طابعة حرارية)</div>
+                <div class="text-[11px] text-pos-muted mt-0.5">Prints standard 80mm/58mm thermal receipts using the existing USB thermal spooler.</div>
+              </div>
+            </label>
+
+            <label class="flex items-start gap-3 p-3.5 rounded-xl border-2 cursor-pointer transition {settings.printing_mode === 'a4' ? 'border-purple-500 bg-purple-50/40 dark:bg-purple-950/20' : 'border-pos-border bg-slate-50 dark:bg-slate-800/40 hover:border-slate-300'}">
+              <input type="radio" bind:group={settings.printing_mode} value="a4" on:change={autoSaveSettings} class="mt-1 text-purple-600 focus:ring-purple-500" />
+              <div>
+                <div class="text-xs font-black text-pos-text">A4 System Printer (طابعة A4 العادية)</div>
+                <div class="text-[11px] text-pos-muted mt-0.5">Prints professional multi-page 210×297mm business invoices directly via system printer.</div>
+              </div>
+            </label>
+          </div>
         </div>
 
-        <div class="flex items-center justify-between">
+        <!-- PRINTER HARDWARE CONFIGURATION -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- USB Thermal Printer Selection -->
+          <div class="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-pos-border flex flex-col justify-between gap-3">
+            <div>
+              <div class="flex items-center justify-between">
+                <h4 class="text-xs font-black text-pos-text flex items-center gap-1.5">
+                  <Printer class="w-4 h-4 text-sky-500" />
+                  <span>USB Thermal Printer (طابعة الوصولات USB)</span>
+                </h4>
+                {#if settings.printing_mode === 'thermal'}
+                  <span class="text-[10px] font-bold text-sky-600 bg-sky-100 dark:bg-sky-950/80 px-2 py-0.5 rounded-full">ACTIVE</span>
+                {/if}
+              </div>
+              <p class="text-[11px] text-pos-muted mt-1">Existing native USB thermal printer pipeline (ESC/POS & GDI).</p>
+            </div>
+            <div class="space-y-2">
+              <select
+                bind:value={settings.invoice_printer_name}
+                on:change={() => { settings.thermal_printer = settings.invoice_printer_name; autoSaveSettings(); }}
+                class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer"
+              >
+                <option value="">Default Windows Printer</option>
+                {#each printerList as pr}
+                  <option value={pr}>{pr}</option>
+                {/each}
+              </select>
+              <button
+                type="button"
+                on:click={testPrintReceipt}
+                class="w-full px-3 py-2 bg-slate-200/80 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-pos-text font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition"
+              >
+                <Printer class="w-3.5 h-3.5 text-sky-500" />
+                <span>Test USB Thermal Print (تجربة طابعة الوصولات)</span>
+              </button>
+            </div>
+            {#if testPrintMsg}
+              <div class="p-2 rounded-xl text-[11px] font-bold {testPrintMsg.startsWith('✅') ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300' : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-300'}">
+                {testPrintMsg}
+              </div>
+            {/if}
+          </div>
+
+          <!-- A4 System Printer Selection -->
+          <div class="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-pos-border flex flex-col justify-between gap-3">
+            <div>
+              <div class="flex items-center justify-between">
+                <h4 class="text-xs font-black text-pos-text flex items-center gap-1.5">
+                  <FileText class="w-4 h-4 text-purple-500" />
+                  <span>A4 System Printer (طابعة A4 النظام)</span>
+                </h4>
+                {#if settings.printing_mode === 'a4'}
+                  <span class="text-[10px] font-bold text-purple-600 bg-purple-100 dark:bg-purple-950/80 px-2 py-0.5 rounded-full">ACTIVE</span>
+                {/if}
+              </div>
+              <p class="text-[11px] text-pos-muted mt-1">Operating system printer for standard A4 sheets (HP LaserJet, Brother, Canon, etc.).</p>
+            </div>
+            <div class="space-y-2">
+              <select
+                bind:value={settings.a4_printer}
+                on:change={autoSaveSettings}
+                class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer"
+              >
+                <option value="">Default Windows Printer</option>
+                {#each printerList as pr}
+                  <option value={pr}>{pr}</option>
+                {/each}
+              </select>
+              <button
+                type="button"
+                on:click={testPrintA4}
+                disabled={isTestingA4}
+                class="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition shadow-xs disabled:opacity-50"
+              >
+                <Printer class="w-3.5 h-3.5" />
+                <span>{isTestingA4 ? 'Printing A4 Test...' : 'Test A4 Print (تجربة طابعة A4)'}</span>
+              </button>
+            </div>
+            {#if testA4Msg}
+              <div class="p-2 rounded-xl text-[11px] font-bold {testA4Msg.startsWith('✅') ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300' : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-300'}">
+                {testA4Msg}
+              </div>
+            {/if}
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between pt-2">
           <div>
-            <h2 class="text-base font-black text-pos-text">Thermal Receipts & Invoice Printing / إعدادات طباعة الوصولات</h2>
-            <p class="text-xs text-pos-muted">Configure printer hardware, receipt layout, font sizes, bold weights, and what fields to show</p>
+            <h2 class="text-base font-black text-pos-text">Document Layout & Content / تنسيق ومحتوى الوثائق</h2>
+            <p class="text-xs text-pos-muted">Configure fields, sizing, and header/footer notes for both A4 and Thermal prints</p>
           </div>
-          <div class="flex items-center gap-2">
-            <button on:click={testPrintReceipt} class="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-pos-text font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs transition">
-              <Printer class="w-4 h-4 text-sky-500" />
-              <span>Test Print Receipt</span>
-            </button>
-            <button on:click={saveAllSettings} class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5">
-              <Check class="w-4 h-4" />
-              <span>Save Print Settings</span>
-            </button>
-          </div>
+          <button on:click={saveAllSettings} class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5">
+            <Check class="w-4 h-4" />
+            <span>Save All Print Settings</span>
+          </button>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <!-- Left 2 Cols: Form Controls -->
           <div class="lg:col-span-2 space-y-4">
-            <!-- Hardware / Paper / Font Family -->
+            
+            <!-- A4 Document Content Toggles -->
+            <div class="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-3">
+              <h3 class="font-black text-xs text-pos-text flex items-center gap-1.5">
+                <FileText class="w-4 h-4 text-purple-500" />
+                <span>A4 Document Content / محتوى وثائق A4</span>
+              </h3>
+              <div class="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_logo} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Store Logo</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_store_name} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Store Name</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_address} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Store Address</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_phone} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Store Phone</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_email} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Email / Website</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_tax_number} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>RC / NIF / NIS Info</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_customer} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Customer Info</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_supplier} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Supplier Info</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_sku} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Product SKU / Ref</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_barcode} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Product Barcode</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_quantity} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Quantity</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_unit_price} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Unit Price</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_discount} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Discount</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_tax} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Tax / TVA</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_payment} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Payment Method</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_amount_paid} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Amount Paid</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_remaining} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Remaining Due (Dette)</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_notes} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Notes & Comments</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+                  <input type="checkbox" bind:checked={settings.a4_show_footer} on:change={autoSaveSettings} class="rounded text-purple-600" />
+                  <span>Policy & Footer</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Thermal Receipt Hardware & Fields -->
             <div class="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-3">
               <h3 class="font-black text-xs text-pos-text flex items-center gap-1.5">
                 <Printer class="w-4 h-4 text-sky-500" />
-                <span>Printer & Page Sizing (إعدادات الطابعة والورق)</span>
+                <span>Thermal Receipt Format & Fields (إعدادات الوصل الحراري)</span>
               </h3>
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label class="block text-xs font-bold text-pos-muted mb-1">Paper Roll Width</label>
-                  <select bind:value={settings.receipt_paper_width} class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs text-pos-text font-bold">
+                  <select bind:value={settings.receipt_paper_width} on:change={autoSaveSettings} class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs text-pos-text font-bold">
                     <option value="80mm">80 mm (Standard POS)</option>
                     <option value="58mm">58 mm (Compact Mini)</option>
-                    <option value="A4">A4 Full Sheet Invoice</option>
                   </select>
                 </div>
-
                 <div>
                   <label class="block text-xs font-bold text-pos-muted mb-1">Receipt Font Family</label>
-                  <select bind:value={settings.receipt_font_family} class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs text-pos-text font-bold">
+                  <select bind:value={settings.receipt_font_family} on:change={autoSaveSettings} class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs text-pos-text font-bold">
                     <option value="monospace">Monospace (Terminal)</option>
                     <option value="sans-serif">Sans-Serif (Modern)</option>
                     <option value="Courier New">Courier New</option>
                     <option value="serif">Serif (Traditional)</option>
                   </select>
                 </div>
-              </div>
-            </div>
-
-            <!-- Greeting and Policy Notes -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label class="block text-xs font-bold text-pos-muted mb-1">Receipt Header Greeting (Arabe / Français)</label>
-                <input type="text" bind:value={settings.receipt_header} placeholder="مرحباً بكم في سوبرماركت تيتاو" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-              </div>
-
-              <div>
-                <label class="block text-xs font-bold text-pos-muted mb-1">Receipt Footer Note / Return Policy</label>
-                <input type="text" bind:value={settings.receipt_footer} placeholder="Les articles retournés doivent être présentés sous 48h" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-              </div>
-            </div>
-
-            <!-- ONE unified receipt template (v0.5.17): the old
-                 standard/professional selector is gone — the professional
-                 graphic template is THE receipt, and every toggle below
-                 applies to it everywhere. -->
-            <div class="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-3">
-              <h3 class="font-black text-xs text-pos-text flex items-center gap-1.5">
-                <FileText class="w-4 h-4 text-sky-500" />
-                <span>Receipt Content (محتوى الوصل)</span>
-              </h3>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label class="block text-xs font-bold text-pos-muted mb-1">Thank-you Message (footer)</label>
+                  <label class="block text-xs font-bold text-pos-muted mb-1">Receipt Header Greeting</label>
+                  <input type="text" bind:value={settings.receipt_header} on:change={autoSaveSettings} placeholder="مرحباً بكم" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-pos-muted mb-1">Receipt Thank-you Message</label>
                   <input type="text" bind:value={settings.receipt_thank_you} on:change={autoSaveSettings} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
                 </div>
-                <div>
-                  <label class="block text-xs font-bold text-pos-muted mb-1">Shop Website (receipt header)</label>
-                  <input type="text" bind:value={settings.shop_website} on:change={autoSaveSettings} placeholder="www.titaoupos.dz" class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-                </div>
-                <div>
-                  <label class="block text-xs font-bold text-pos-muted mb-1">TVA défaut vente / Default sale VAT (%)</label>
-                  <input type="number" min="0" max="100" bind:value={settings.default_tva_sale} on:change={autoSaveSettings} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-                </div>
-                <div>
-                  <label class="block text-xs font-bold text-pos-muted mb-1">TVA défaut achat / Default purchase VAT (%)</label>
-                  <input type="number" min="0" max="100" bind:value={settings.default_tva_purchase} on:change={autoSaveSettings} class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-                </div>
               </div>
-              <p class="text-[10px] text-pos-muted">Printed silently through the Windows print API (GDI) — never a browser dialog. The live preview on the right is exactly what prints.</p>
-            </div>
 
-            <!-- Section Content Visibility Toggles -->
-            <div class="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-3">
-              <h3 class="font-black text-xs text-pos-text flex items-center gap-1.5">
-                <Eye class="w-4 h-4 text-sky-500" />
-                <span>Fields to Show on Receipt (العناصر المراد إظهارها)</span>
-              </h3>
-              <div class="grid grid-cols-2 md:grid-cols-3 gap-2.5">
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_shop_name} class="rounded text-sky-600" />
-                  <span>Shop Name & Header</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_address} class="rounded text-sky-600" />
-                  <span>Store Address</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_phone} class="rounded text-sky-600" />
-                  <span>Phone Number</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_rc_nif} class="rounded text-sky-600" />
-                  <span>RC & NIF Info</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_cashier} class="rounded text-sky-600" />
-                  <span>Cashier Name</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_date} class="rounded text-sky-600" />
-                  <span>Date & Timestamp</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_footer} class="rounded text-sky-600" />
-                  <span>Footer Note / Policy</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_qr} class="rounded text-sky-600" />
-                  <span>QR Code Verification</span>
-                </label>
-
-                <label class="flex items-center gap-2 text-xs font-bold text-pos-text cursor-pointer p-2 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
-                  <input type="checkbox" bind:checked={settings.receipt_show_barcode} class="rounded text-sky-600" />
-                  <span>Invoice Barcode (professional preset)</span>
-                </label>
+              <!-- Thermal Toggles -->
+              <div class="pt-2 border-t border-pos-border">
+                <span class="text-[11px] font-bold text-pos-muted block mb-2">Fields to Show on Thermal Receipt:</span>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_shop_name} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>Shop Name</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_address} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>Store Address</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_phone} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>Phone</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_rc_nif} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>RC & NIF</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_cashier} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>Cashier</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_date} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>Date & Time</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_qr} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>QR Code</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_barcode} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>Barcode</span>
+                  </label>
+                  <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer p-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border">
+                    <input type="checkbox" bind:checked={settings.receipt_show_footer} on:change={autoSaveSettings} class="rounded text-sky-600" />
+                    <span>Footer Note</span>
+                  </label>
+                </div>
               </div>
             </div>
 
           </div>
 
-          <!-- Right Col: LIVE unified receipt preview — the exact HTML the
-               printer receives (same builder as POS auto-print). -->
-          <div class="bg-slate-100 dark:bg-slate-900/60 p-4 rounded-2xl flex flex-col items-center justify-start border border-pos-border space-y-2">
-            <span class="text-[10px] font-black text-pos-muted uppercase tracking-wider">Live Receipt Preview ({settings.receipt_paper_width || '80mm'})</span>
-            <div class="bg-white shadow-md overflow-hidden">
-              {@html unifiedPreviewBuilt?.html || ''}
+          <!-- Right Col: DYNAMIC LIVE PREVIEW (A4 or Thermal Receipt) -->
+          <div class="bg-slate-100 dark:bg-slate-900/60 p-4 rounded-2xl flex flex-col items-center justify-start border border-pos-border space-y-2 sticky top-4">
+            <div class="w-full flex items-center justify-between pb-1 border-b border-pos-border">
+              <span class="text-[10px] font-black text-pos-muted uppercase tracking-wider">
+                {#if settings.printing_mode === 'a4'}
+                  Live A4 Document Preview (210×297mm)
+                {:else if settings.printing_mode === 'thermal'}
+                  Live Receipt Preview ({settings.receipt_paper_width || '80mm'})
+                {:else}
+                  Printing Disabled
+                {/if}
+              </span>
+              <span class="text-[9px] font-bold px-2 py-0.5 rounded-full {settings.printing_mode === 'a4' ? 'bg-purple-100 text-purple-700' : settings.printing_mode === 'thermal' ? 'bg-sky-100 text-sky-700' : 'bg-slate-200 text-slate-600'}">
+                {settings.printing_mode}
+              </span>
             </div>
+
+            {#if settings.printing_mode === 'a4'}
+              <!-- Scaled A4 preview container -->
+              <div class="w-full bg-slate-300 dark:bg-slate-800 p-2 rounded-xl flex justify-center overflow-hidden">
+                <div class="bg-white shadow-lg origin-top overflow-hidden border border-slate-300" style="width: 210mm; transform: scale(0.38); transform-origin: top center; margin-bottom: -150mm;">
+                  {@html a4PreviewHtml || ''}
+                </div>
+              </div>
+              <p class="text-[10px] text-pos-muted text-center">Simulated scaled preview of the real 210×297mm A4 layout generated for the system printer.</p>
+            {:else if settings.printing_mode === 'thermal'}
+              <div class="bg-white shadow-md overflow-hidden max-h-[550px] overflow-y-auto w-full max-w-[320px] rounded-lg border border-slate-200">
+                {@html unifiedPreviewBuilt?.html || ''}
+              </div>
+              <p class="text-[10px] text-pos-muted text-center">Exact thermal output spooled silently to your USB printer.</p>
+            {:else}
+              <div class="py-16 text-center text-pos-muted space-y-2">
+                <Printer class="w-8 h-8 mx-auto opacity-30 text-rose-500" />
+                <div class="text-xs font-bold text-pos-text">Printing is Currently Disabled</div>
+                <p class="text-[11px] max-w-[220px] mx-auto">No documents or receipts will be sent to printers during transactions.</p>
+              </div>
+            {/if}
           </div>
         </div>
+
 
         {#if testPrintMsg}
           <div class="p-2.5 rounded-xl text-[11px] font-bold {testPrintMsg.startsWith('✅') ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300' : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-300'}">

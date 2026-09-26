@@ -9,6 +9,7 @@
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
+  import { printService } from '../../lib/services/printService';
 
   let stats: DashboardStats | null = null;
   let fromDate = localTodayISO();
@@ -162,30 +163,19 @@
   async function printExpenseDetail() {
     if (!expenseDetail) return;
     try {
-      const settings = await invoke<Record<string, string>>('get_all_settings');
-      const shopName = settings['shop_name_fr'] || 'TitaouPosCRM';
-      const shopPhone = settings['shop_phone'] || '0553444057';
-      const shopAddress = settings['shop_address'] || 'Alger Centre';
       const exp = expenseDetail;
-      const html = `<div style="width: 72mm; font-family: monospace; font-size: 10px; text-align: center; margin: 0 auto; padding: 2mm;">
-        <p style="font-size: 14px; font-weight: 900; margin: 0; text-transform: uppercase;">${shopName}</p>
-        <p style="font-size: 8px; margin: 2px 0;">${shopAddress} • Tél: ${shopPhone}</p>
-        <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-        <p style="font-size: 11px; font-weight: 900; background: #000; color: #fff; padding: 2px 0; margin: 2px 0;">BON DE DÉCAISSEMENT / سند صرف</p>
-        <div style="display: flex; justify-content: space-between; font-size: 9px; font-weight: bold; margin-top: 4px;">
-          <span>BON #${exp.expense_number}</span><span>${exp.date}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 8px;">
-          <span>Bénéficiaire: ${exp.recipient || 'Divers'}</span><span>${exp.category_name || 'Général'}</span>
-        </div>
-        <hr style="border-top: 1px dashed #000; margin: 4px 0;" />
-        <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 900;">
-          <span>MONTANT:</span><span>${exp.amount.toLocaleString()} DZD</span>
-        </div>
-        <p style="font-size: 7px; color: #666; margin-top: 8px;">TitaouPosCRM • ${new Date().toLocaleString()}</p>
-      </div>`;
-      const r = await printHtmlSilently(html, 'Voucher #' + exp.expense_number, { widthMm: 72 });
-      if (!r.ok) console.error('Voucher print failed:', r.message);
+      const res = await printService.printPayment({
+        receiptNumber: exp.expense_number || `EXP-${exp.id}`,
+        date: exp.date,
+        title: 'BON DE DÉCAISSEMENT / سند صرف',
+        partyName: exp.recipient || 'Divers',
+        amount: exp.amount,
+        paymentMethod: exp.payment_method || 'ESPECES',
+        notes: [exp.category_name ? `Catégorie: ${exp.category_name}` : '', exp.notes ? `Motif: ${exp.notes}` : ''].filter(Boolean).join(' • '),
+      });
+      if (!res.ok && res.mode !== 'disabled') {
+        console.warn('Voucher print failed:', res.message);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -273,39 +263,18 @@
     if (isPrintingVersement) return;
     isPrintingVersement = true;
     try {
-      const [items, appSettings] = await Promise.all([
-        invoke<any[]>('get_sale_items', { saleId: sale.id }),
-        invoke<Record<string, string>>('get_all_settings').catch(() => ({} as Record<string, string>)),
-      ]);
-      const qrDataUrl = await entityQrDataUrl(`SALE:${sale.sale_number}`, 100).catch(
-        () => undefined
+      const items = await invoke<any[]>('get_sale_items', { saleId: sale.id });
+      const res = await printService.printSale(
+        {
+          ...sale,
+          payment_mode: 'versement',
+        },
+        items,
+        { isCredit: true }
       );
-      const built = buildUnifiedReceipt({
-        qrDataUrl,
-        settings: appSettings,
-        saleNumber: sale.sale_number,
-        saleDate: sale.created_at,
-        cashierName: sale.cashier_name || 'Caisse',
-        customerName: sale.customer_name || 'Client Comptoir',
-        items: items.map((i) => ({
-          name: i.name_fr || i.name_ar || `#${i.product_id}`,
-          quantity: i.quantity,
-          unitPrice: i.unit_price,
-          totalPrice: i.total_price,
-          discountPerUnit: i.discount_amount || 0,
-          isRefund: i.is_refund || false,
-        })),
-        subtotal: sale.total_amount,
-        discount: 0,
-        grandTotal: sale.total_amount,
-        amountPaid: sale.paid_amount,
-        change: 0,
-        paymentMethod: 'versement',
-        isCredit: true,
-        versementPaid: sale.paid_amount,
-        versementRemaining: Math.max(0, sale.total_amount - sale.paid_amount),
-      });
-      await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
+      if (!res.ok && res.mode !== 'disabled') {
+        console.warn('Versement print failed:', res.message);
+      }
     } catch (e) {
       console.error('Versement print failed:', e);
     } finally {

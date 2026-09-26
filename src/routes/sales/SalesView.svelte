@@ -10,6 +10,7 @@
   import type { Sale, User } from '../../lib/types';
   import { currentUser } from '../../lib/stores/auth';
   import { printHtmlSilently } from '../../lib/utils/printer';
+  import { printService } from '../../lib/services/printService';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
   import { originSaleId,  cartItems, clearCart, mergeCartDuplicates } from '../../lib/stores/cart';
   import { selectedCustomerId } from '../../lib/stores/customers';
@@ -135,44 +136,32 @@
   }
 
   async function printReceipt(s: Sale) {
-    // ONE unified receipt preset system: reprint from history uses the same
-    // settings + template choice as POS auto-print (v0.5.16).
     try {
-      const settings = await invoke<Record<string, string>>('get_all_settings');
       const items = await invoke<any[]>('get_sale_items', { saleId: s.id });
-      const { buildUnifiedReceipt } = await import('../../lib/printing/unifiedReceipt');
-      const { entityQrDataUrl } = await import('../../lib/utils/printer');
-
-      const qr = await entityQrDataUrl(`SALE:${s.sale_number}`, 240).catch(() => undefined);
-
-      const built = buildUnifiedReceipt({
-        saleNumber: s.sale_number,
-        saleDate: s.created_at,
-        cashierName: s.user_name || 'Admin',
-        terminalName: s.terminal_name || undefined,
-        customerName: s.customer_name || undefined,
-        items: items.map((it: any) => ({
-          name: it.name_fr || it.name_ar || it.name,
-          quantity: it.quantity,
-          unitPrice: it.unit_price,
-          totalPrice: it.total_price,
-          discountPerUnit: it.discount_amount || 0,
-          isRefund: !!it.is_refunded,
-        })),
+      const saleData = {
+        id: s.id,
+        sale_number: s.sale_number,
+        sale_date: s.created_at,
+        cashier_name: s.user_name || 'Admin',
+        terminal_name: s.terminal_name,
+        customer_name: s.customer_name,
+        payment_mode: s.payment_method || 'cash',
         subtotal: (s as any).subtotal ?? s.total_amount,
-        discount: (s as any).discount_amount ?? 0,
-        grandTotal: s.total_amount,
-        amountPaid: s.paid_amount,
-        change: s.change_amount,
-        paymentMethod: (s.payment_method || 'cash').toUpperCase(),
-        settings,
-        qrDataUrl: qr,
+        discount_amount: (s as any).discount_amount ?? 0,
+        total_amount: s.total_amount,
+        paid_amount: s.paid_amount,
+        change_amount: s.change_amount,
+        remaining_amount: (s as any).remaining_amount ?? 0,
+      };
+
+      const res = await printService.printSale(saleData, items, {
         copyLabel: 'REPRINT / نسخة',
       });
-      const r = await printHtmlSilently(built.html, built.title, { widthMm: built.paperWidthMm });
-      if (!r.ok) alert('Print failed: ' + r.message);
+      if (!res.ok && res.mode !== 'disabled') {
+        alert('Impression: ' + res.message);
+      }
     } catch (e: any) {
-      alert('Error printing receipt: ' + (e.message || e));
+      alert('Erreur d\'impression: ' + (e.message || e));
     }
   }
 

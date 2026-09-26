@@ -12,6 +12,7 @@
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildProfessionalReceiptHtml } from '../../lib/printing/professionalReceipt';
   import { buildUnifiedReceipt, printReceiptSmart } from '../../lib/printing/unifiedReceipt';
+  import { printService } from '../../lib/services/printService';
   import { normalizeBarcode } from '../../lib/utils/barcode';
   import { networkStatus } from '../../lib/stores/network';
   import { invalidations } from '../../lib/stores/invalidations';
@@ -1124,85 +1125,32 @@
           isRefund: i.is_refund || false,
         }));
 
-        // ONE unified receipt preset system (v0.5.16): every sale kind and
-        // every print location builds from the same settings + template
-        // choice — no more a hardcoded format per page.
+        // Centralized Printing System (v1.0.0): routes dynamically to
+        // Disabled, USB Thermal, or Native A4 based on global Settings.
         const effectiveMethod = mode === 'versement' ? 'VERSEMENT (تسبقة)' : mode === 'credit' ? 'CREDIT (دين)' : selectedPaymentMode.toUpperCase();
-        if (mode === 'credit') {
-          // Store copy + client copy, one page each — break on the FIRST
-          // receipt's own node (an empty separator div printed a blank page).
-          const storeCopy = buildUnifiedReceipt({
-            saleNumber, saleDate, cashierName: cashier, terminalName,
-            customerName: customerName || 'Client Crédit',
-            items: receiptItems,
-            subtotal: $cartSubtotal,
-            discount: $globalDiscountAmount,
-            grandTotal: $cartGrandTotal,
-            amountPaid: paid,
-            change,
-            paymentMethod: effectiveMethod,
-            settings: appSettings,
-            qrDataUrl: receiptQrDataUrl,
-            isCredit: true,
-            copyLabel: 'COPIE MAGASIN / STORE COPY',
-          });
-          const clientCopy = buildUnifiedReceipt({
-            saleNumber, saleDate, cashierName: cashier, terminalName,
-            customerName: customerName || 'Client Crédit',
-            items: receiptItems,
-            subtotal: $cartSubtotal,
-            discount: $globalDiscountAmount,
-            grandTotal: $cartGrandTotal,
-            amountPaid: paid,
-            change,
-            paymentMethod: effectiveMethod,
-            settings: appSettings,
-            qrDataUrl: receiptQrDataUrl,
-            isCredit: true,
-            copyLabel: 'COPIE CLIENT / CUSTOMER COPY',
-          });
-          // Smart print: native raster → ESC/POS RAW fallback.
-          void printHtmlSilently(
-            `<div style="page-break-after:always;break-after:page;">${storeCopy.html}</div>` + clientCopy.html,
-            'Credit Receipts',
-            { widthMm: storeCopy.paperWidthMm }
-          ).then((r) => { if (!r.ok) console.warn('credit receipts print:', r.message); });
-        } else {
-          const receipt = buildUnifiedReceipt({
-            saleNumber, saleDate, cashierName: cashier, terminalName,
-            customerName: customerName || undefined,
-            items: receiptItems,
-            subtotal: $cartSubtotal,
-            discount: $globalDiscountAmount,
-            grandTotal: $cartGrandTotal,
-            amountPaid: mode === 'direct' ? $cartGrandTotal : paid,
-            change,
-            paymentMethod: effectiveMethod,
-            settings: appSettings,
-            qrDataUrl: receiptQrDataUrl,
-            copyLabel: mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
-            versementPaid: mode === 'versement' ? paid : undefined,
-            versementRemaining: mode === 'versement' ? reste : undefined,
-          });
-          // Smart print: native raster first; when the machine has NO
-          // browser at all, fall back to ESC/POS RAW text automatically.
-          printReceiptSmart({
-            saleNumber, saleDate, cashierName: cashier, terminalName,
-            customerName: customerName || undefined,
-            items: receiptItems,
-            subtotal: $cartSubtotal,
-            discount: $globalDiscountAmount,
-            grandTotal: $cartGrandTotal,
-            amountPaid: mode === 'direct' ? $cartGrandTotal : paid,
-            change,
-            paymentMethod: effectiveMethod,
-            settings: appSettings,
-            qrDataUrl: receiptQrDataUrl,
-            copyLabel: mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
-            versementPaid: mode === 'versement' ? paid : undefined,
-            versementRemaining: mode === 'versement' ? reste : undefined,
-          }).then((r) => { if (!r.ok) console.warn('receipt print failed:', r.message); });
-        }
+        const saleDocData = {
+          sale_number: saleNumber,
+          sale_date: saleDate,
+          cashier_name: cashier,
+          terminal_name: terminalName,
+          customer_name: customerName || (mode === 'credit' ? 'Client Crédit' : undefined),
+          payment_mode: mode === 'credit' ? 'credit' : mode === 'versement' ? 'versement' : selectedPaymentMode,
+          subtotal: $cartSubtotal,
+          discount_amount: $globalDiscountAmount,
+          total_amount: $cartGrandTotal,
+          paid_amount: mode === 'direct' ? $cartGrandTotal : paid,
+          change_amount: change,
+          remaining_amount: mode === 'versement' ? reste : (mode === 'credit' ? ($cartGrandTotal - paid) : 0),
+        };
+
+        void printService.printSale(saleDocData, receiptItems, {
+          isCredit: mode === 'credit',
+          copyLabel: mode === 'credit' ? 'COPIE MAGASIN / STORE COPY' : mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
+        }).then((res) => {
+          if (!res.ok && res.mode !== 'disabled') {
+            console.warn('[POS] Print notice:', res.message);
+          }
+        });
       }
 
       // Auto-kick cash drawer

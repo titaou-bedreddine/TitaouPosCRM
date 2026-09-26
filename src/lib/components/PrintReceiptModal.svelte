@@ -4,6 +4,7 @@
   import { currentUser } from '../stores/auth';
   import { networkStatus } from '../stores/network';
   import { entityQrDataUrl, printHtmlSilently, type SilentPrintResult } from '../utils/printer';
+  import { printService } from '../services/printService';
   import { buildUnifiedReceipt } from '../printing/unifiedReceipt';
   import { Printer, X, Loader2, CheckCircle2, AlertTriangle } from 'lucide-svelte';
 
@@ -60,10 +61,24 @@
   async function triggerPrint() {
     isPrinting = true;
     printResult = null;
-    printResult = await printHtmlSilently(built.html, built.title, {
-      widthMm: built.paperWidthMm,
-    });
-    isPrinting = false;
+    try {
+      const saleObj = {
+        sale_number: effectiveInvoiceNumber,
+        customer_name: customerName,
+        payment_mode: paymentMethod.toLowerCase(),
+        subtotal: $cartSubtotal,
+        discount_amount: $globalDiscountAmount,
+        grand_total: $cartGrandTotal,
+        paid_amount: $cartGrandTotal,
+        change_amount: 0,
+      };
+      const res = await printService.printSale(saleObj, $cartItems);
+      printResult = { ok: res.ok, message: res.message || '' };
+    } catch (e: any) {
+      printResult = { ok: false, message: e.message || String(e) };
+    } finally {
+      isPrinting = false;
+    }
   }
 </script>
 

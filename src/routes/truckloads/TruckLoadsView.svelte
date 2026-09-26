@@ -3,6 +3,8 @@
   import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
   import { printHtmlSilently } from '../../lib/utils/printer';
+  import { printService } from '../../lib/services/printService';
+  import type { PrintableDocument, PrintableItem } from '../../lib/printing/printableDocument';
   import { pickReportFormat } from '../../lib/stores/reportFormat';
   import { Truck, Plus, RefreshCw, Printer, Package, X, Undo2, Eye, Pencil, Trash2, AlertTriangle } from 'lucide-svelte';
 
@@ -224,35 +226,37 @@
   }
 
   async function printSheet(l: any) {
-    // Every report prints in the format the user picks (A4 / 70mm).
-    const fmt = await pickReportFormat(t('tl_title'));
-    if (!fmt) return;
-    const isA4 = fmt === 'a4';
-    const cellPad = isA4 ? '6px 10px' : '4px 6px';
-    const rows = (l.items ?? [])
-      .map(
-        (it: any) =>
-          `<tr><td style="padding:${cellPad};border-bottom:1px solid #ccc">${it.product?.name ?? '—'}</td>
-           <td style="padding:${cellPad};text-align:right;border-bottom:1px solid #ccc">${it.quantity}</td>
-           <td style="padding:${cellPad};text-align:right;border-bottom:1px solid #ccc">${it.returned_quantity ?? 0}</td></tr>`
-      )
-      .join('');
-    const body = `
-      <h2 style="font-size:${isA4 ? 18 : 13}px;margin:0 0 4px">${t('tl_title')}</h2>
-      <p style="font-size:${isA4 ? '12px' : '10px'}">${t('tl_seller')}: ${l.seller?.full_name ?? '—'} · ${String(l.route_date).slice(0, 10)} · ${l.status}${l.name ? ' · ' + l.name : ''}</p>
-      <table style="width:100%;border-collapse:collapse">
-        <tr>
-          <th align="start" style="padding:6px 8px;border-bottom:2px solid #000">#</th>
-          <th align="start" style="padding:6px 8px;border-bottom:2px solid #000">Produit</th>
-          <th align="end" style="padding:6px 8px;border-bottom:2px solid #000">${t('tl_qty')}</th>
-          <th align="end" style="padding:6px 8px;border-bottom:2px solid #000">${t('tl_returned')}</th>
-        </tr>${rows}</table>`;
-    const result = await printHtmlSilently(
-      body,
-      `${t('tl_title')} ${String(l.route_date).slice(0, 10)}`,
-      { widthMm: isA4 ? 210 : 70, heightMm: isA4 ? 297 : undefined }
-    );
-    if (!result.ok) error = result.message;
+    const items: PrintableItem[] = (l.items ?? []).map((it: any) => ({
+      name: it.product?.name ?? 'Article',
+      quantity: Number(it.quantity ?? 0),
+      unitPrice: 0,
+      totalPrice: 0,
+      notes: it.returned_quantity ? `Retourné: ${it.returned_quantity}` : undefined,
+    }));
+
+    const doc: PrintableDocument = {
+      id: l.id,
+      documentNumber: `LOAD-${l.id}`,
+      documentType: 'stock_operation',
+      title: 'BON DE CHARGEMENT CAMION',
+      date: String(l.route_date || new Date().toISOString()).slice(0, 10),
+      party: l.seller ? {
+        name: l.seller.full_name || 'Vendeur / Chauffeur',
+        type: 'employee',
+      } : undefined,
+      items,
+      subtotal: 0,
+      discountTotal: 0,
+      taxTotal: 0,
+      grandTotal: 0,
+      notes: `Statut: ${l.status || 'loaded'}${l.name ? ' • ' + l.name : ''}`,
+      footerNote: 'Bon de chargement et de distribution mobile.',
+    };
+
+    const result = await printService.printDocument(doc);
+    if (!result.ok && result.mode !== 'disabled') {
+      error = result.message;
+    }
   }
 
   onMount(load);

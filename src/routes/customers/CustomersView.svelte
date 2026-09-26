@@ -4,6 +4,7 @@
   import { normalizeBarcode } from '../../lib/utils/barcode';
   import type { Customer } from '../../lib/types';
   import { printHtmlSilently, entityQrPayload, entityQrDataUrl } from '../../lib/utils/printer';
+  import { printService } from '../../lib/services/printService';
   import { refreshCustomers } from '../../lib/stores/customers';
   import { currentUser } from '../../lib/stores/auth';
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
@@ -229,38 +230,15 @@
   }
 
   async function printCustomerDebtRecap(c: Customer) {
-    // Offline-first: the QR is generated locally (no api.qrserver.com).
-    const qrUrl = await entityQrDataUrl(entityQrPayload('CUST', c.qr_code || 'CUST-' + c.id), 200);
-
-    const html = `
-      <div class="text-center pb-2 border-b-dashed">
-        <h2 class="font-black text-sm uppercase">TitaouPosCRM Superette</h2>
-        <p class="text-xxs">Rue Principale, Alger • Tél: 0553444057</p>
-        <p class="font-black text-xs mt-1 bg-black text-white px-1">RECAPITULATIF DE DETTE / كشف حساب دين</p>
-        <p class="text-xxs mt-0.5">${new Date().toLocaleString()}</p>
-      </div>
-
-      <div class="py-2 border-b-dashed text-xxs space-y-1">
-        <div class="flex justify-between"><span>Client:</span><strong>${c.name}</strong></div>
-        <div class="flex justify-between"><span>Téléphone:</span><strong>${c.phone || 'N/A'}</strong></div>
-        ${c.rc ? `<div class="flex justify-between"><span>RC:</span><strong>${c.rc}</strong></div>` : ''}
-        ${c.nif ? `<div class="flex justify-between"><span>NIF:</span><strong>${c.nif}</strong></div>` : ''}
-      </div>
-
-      <div class="py-3 border-b-dashed text-center">
-        <p class="text-xs text-gray-600 font-bold">SOLDE ACTUEL DU (دين مستحق):</p>
-        <p class="text-2xl font-black font-mono text-black mt-1">${c.balance.toLocaleString()} DZD</p>
-      </div>
-
-      <div class="text-center pt-2">
-        <img src="${qrUrl}" alt="QR" class="qr-box" />
-        <p class="text-xxs text-gray-500 mt-1">Code Client: #CUST-${c.id}</p>
-        <p class="text-[8px] text-gray-400 mt-1">TitaouPosCRM • Created by Titaou Bedreddine 0553444057</p>
-      </div>
-    `;
-
-    const r = await printHtmlSilently(html, `Recap Dette - ${c.name}`, { widthMm: 80 });
-    if (!r.ok) console.error('Recap print failed:', r.message);
+    try {
+      const debts: any[] = (await invoke('get_customer_debts', { customerId: c.id }).catch(() => [])) as any[];
+      const r = await printService.printCustomerDebtRecap(c, debts);
+      if (!r.ok && r.mode !== 'disabled') {
+        console.warn('Customer debt recap print result:', r.message);
+      }
+    } catch (e: any) {
+      console.error('Customer debt recap print failed:', e);
+    }
   }
 </script>
 
