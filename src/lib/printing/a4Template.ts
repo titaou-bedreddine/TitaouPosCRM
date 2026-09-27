@@ -91,6 +91,12 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
 
   const totalPages = pages.length;
 
+  // Compact mode: a single page with few lines must NOT waste the lower half
+  // of the A4 sheet — the page div grows to its content height and the GDI
+  // printer trims the remaining whitespace, so totals + footer follow the
+  // content directly (never vertically stretched to fill the sheet).
+  const compact = totalPages === 1 && items.length <= 8;
+
   // Render HTML for each page
   const renderedPages = pages.map((pageItems, pageIdx) => {
     const isFirstPage = pageIdx === 0;
@@ -275,7 +281,7 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
     `;
 
     return `
-      <div class="a4-page">
+      <div class="a4-page${compact ? ' compact' : ''}">
         <div class="page-content">
           ${headerHtml}
           ${tableHtml}
@@ -329,6 +335,20 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
       flex: 1;
       display: flex;
       flex-direction: column;
+    }
+    /* Compact single-page documents: height follows the content, the footer
+       sits right below it, and the native printer trims the leftover white —
+       the sheet still feeds full-size, the printed content does not. */
+    .a4-page.compact {
+      height: auto;
+      max-height: none;
+      justify-content: flex-start;
+    }
+    .a4-page.compact .page-content {
+      flex: 0 0 auto;
+    }
+    .a4-page.compact .page-footer {
+      margin-top: 16px;
     }
     /* Header */
     .header-section {

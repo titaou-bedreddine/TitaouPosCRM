@@ -262,6 +262,17 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             cloudsync::cloud_cmds::cloud_update_truck_load,
             cloudsync::cloud_cmds::cloud_delete_truck_load,
             cloudsync::cloud_cmds::cloud_truck_loads,
+            // Direct Sale back-office (trucks + trips) — local-only like all cloud commands
+            cloudsync::cloud_cmds::cloud_list_trucks,
+            cloudsync::cloud_cmds::cloud_save_truck,
+            cloudsync::cloud_cmds::cloud_start_truck_trip,
+            cloudsync::cloud_cmds::cloud_open_truck_reconciliation,
+            cloudsync::cloud_cmds::cloud_close_truck_trip,
+            cloudsync::cloud_cmds::cloud_add_truck_trip_expense,
+            cloudsync::cloud_cmds::cloud_stats_truck_trips,
+            cloudsync::cloud_cmds::cloud_trip_orders,
+            cloudsync::cloud_cmds::cloud_trip_settlement,
+            commands::deposit_truck_settlement,
         ]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

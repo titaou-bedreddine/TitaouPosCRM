@@ -377,6 +377,93 @@ pub fn add_cash_movement(db: &DbState, session_id: i64, user_id: i64, movement_t
     Ok(())
 }
 
+/// Deposit a closed truck trip's cash into the register (invariant 10):
+/// idempotent per trip — the movement carries the unique reference
+/// `truck_settlement:<load_id>`; a retry returns the existing movement and
+/// the partial unique index uq_cash_mov_settlement is the race backstop.
+pub fn deposit_truck_settlement(
+    db: &DbState,
+    session_id: i64,
+    user_id: i64,
+    load_id: &str,
+    amount: i64,
+    reason: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let reference_id = format!("truck_settlement:{}", load_id);
+    let mut conn = db.conn.lock().unwrap();
+
+    // (1) Existing deposit? Return it — never a second movement.
+    if let Ok(existing) = conn.query_row(
+        "SELECT id FROM cash_movements WHERE reference_type = 'truck_settlement' AND reference_id = ?1 LIMIT 1",
+        [&reference_id],
+        |r| r.get::<_, i64>(0),
+    ) {
+        return Ok(serde_json::json!({ "already_deposited": true, "movement_id": existing }));
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let insert = tx.execute(
+        "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, reference_type, reference_id, terminal_name)
+         VALUES (?1, ?2, 'cash_in', ?3, ?4, 'truck_settlement', ?5, ?6)",
+        rusqlite::params![
+            session_id,
+            user_id,
+            amount.abs(),
+            reason.unwrap_or_else(|| format!("Truck trip settlement {}", load_id)),
+            reference_id,
+            crate::network::current_stamp_terminal()
+        ],
+    );
+    if let Err(rusqlite::Error::SqliteFailure(e, _)) = &insert {
+        if e.code == rusqlite::ErrorCode::ConstraintViolation {
+            // (4) Concurrent duplicate lost the race — return the winner;
+            // any OTHER constraint problem re-raises the original error.
+            drop(tx);
+            match conn.query_row(
+                "SELECT id FROM cash_movements WHERE reference_type = 'truck_settlement' AND reference_id = ?1 LIMIT 1",
+                [&reference_id],
+                |r| r.get::<_, i64>(0),
+            ) {
+                Ok(existing) => {
+                    return Ok(serde_json::json!({ "already_deposited": true, "movement_id": existing }))
+                }
+                Err(_) => return Err(insert.unwrap_err().to_string()),
+            }
+        }
+    }
+    insert.map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "UPDATE cash_sessions SET expected_cash = expected_cash + ?1 WHERE id = ?2",
+        rusqlite::params![amount.abs(), session_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let movement_id = tx.last_insert_rowid();
+    tx.commit().map_err(|e| e.to_string())?;
+    drop(conn);
+
+    // Telegram alert (fire-and-forget), same cash_in style as the drawer.
+    {
+        let lang = crate::services::notifier_service::ui_language(db);
+        let actor = crate::services::notifier_service::actor_label(db, Some(user_id));
+        crate::services::notifier_service::notify_if_enabled(
+            db,
+            "notify_cash_in",
+            crate::services::notifier_service::tr(
+                &lang,
+                (
+                    format!("💰 *Truck settlement deposited*\nAmount: *{} DZD*\nTrip: {}\n👤 By: {}", amount.abs(), load_id, actor),
+                    format!("💰 *إيداع مالية التوني*\nالمبلغ: *{} دج*\nالتوني: {}\n👤 بواسطة: {}", amount.abs(), load_id, actor),
+                    format!("💰 *Dépôt de tournée camion*\nMontant : *{} DZD*\nTournée : {}\n👤 Par : {}", amount.abs(), load_id, actor),
+                ),
+            ),
+        );
+    }
+
+    Ok(serde_json::json!({ "already_deposited": false, "movement_id": movement_id }))
+}
+
 pub fn close_session(db: &DbState, session_id: i64, actual_cash: i64, notes: Option<String>) -> Result<(), String> {
     let conn = db.conn.lock().unwrap();
     

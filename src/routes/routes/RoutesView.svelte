@@ -204,7 +204,7 @@
         <Route class="w-5 h-5 text-sky-500" />
         {t('routes_title')}
       </h1>
-      <p class="text-xs text-pos-muted">TitaouCRM</p>
+      <p class="text-xs text-pos-muted">Titaou CRM</p>
     </div>
     <div class="flex gap-2">
       <button type="button" on:click={load} disabled={loading}

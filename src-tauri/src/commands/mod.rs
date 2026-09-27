@@ -331,9 +331,25 @@ pub fn list_sales(
     start_date: Option<String>,
     end_date: Option<String>,
     user_id: Option<i64>,
+    channel: Option<String>,
     limit: i64,
 ) -> Result<Vec<Sale>, String> {
-    sales_service::list_sales(&db, start_date, end_date, user_id, limit)
+    sales_service::list_sales(&db, start_date, end_date, user_id, channel, limit)
+}
+
+/// Deposit a closed truck trip's cash into the register (idempotent per trip).
+#[tauri::command]
+pub fn deposit_truck_settlement(
+    db: State<'_, DbState>,
+    session_id: i64,
+    user_id: i64,
+    load_id: String,
+    amount: i64,
+    reason: Option<String>,
+) -> Result<serde_json::Value, String> {
+    crate::services::cash_service::deposit_truck_settlement(
+        &db, session_id, user_id, &load_id, amount, reason,
+    )
 }
 
 #[tauri::command]

@@ -262,6 +262,11 @@ pub struct CreateSaleInput {
     /// so stock is NOT decremented at sale time.
     #[serde(default)]
     pub skip_stock: bool,
+    /// Sale channel: 'pos' (counter, default) or 'direct_truck'. DB-level
+    /// invariant via trigger — never treated as interchangeable with the CRM
+    /// orders.source.
+    #[serde(default)]
+    pub channel: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -297,6 +302,9 @@ pub struct Sale {
     /// LAN: PC name of the terminal that recorded this sale.
     #[serde(default)]
     pub terminal_name: Option<String>,
+    /// Sale channel: 'pos' (counter, default) or 'direct_truck'.
+    #[serde(default)]
+    pub channel: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

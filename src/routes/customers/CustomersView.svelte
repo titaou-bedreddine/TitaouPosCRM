@@ -62,7 +62,7 @@
 
   // Full customer card: shop header, details, debts and QR.
   async function printCustomerCard(c: Customer) {
-    let shopName = 'TitaouPosCRM';
+    let shopName = 'Titaou POS';
     let shopPhone = '';
     let shopAddress = '';
     try {
@@ -89,7 +89,7 @@
     parts.push('<p style="font-size:10px;font-family:monospace;">' + code + '</p>');
     parts.push('<hr style="border-top:1px dashed #000;margin:5px 0;" />');
     parts.push('<p style="font-size:13px;font-weight:900;margin:2px 0;">DETTES: ' + balance + ' DZD</p>');
-    parts.push('<p style="font-size:9px;margin-top:6px;">TitaouPosCRM &bull; ' + shopName + '</p>');
+    parts.push('<p style="font-size:9px;margin-top:6px;">Titaou POS &bull; ' + shopName + '</p>');
     parts.push('</div>');
     const r = await printHtmlSilently(parts.join('\n'), 'Client Card ' + c.name, { widthMm: 80 });
     if (!r.ok) console.error('Client card print failed:', r.message);

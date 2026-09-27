@@ -20,14 +20,15 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
     };
 
     tx.execute(
-        "INSERT INTO sales (sale_number, session_id, user_id, customer_id, subtotal, discount_amount, discount_percentage, discount_reason, tax_amount, total_amount, paid_amount, change_amount, payment_status, status, notes, created_at, terminal_name)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'completed', ?14, datetime('now','localtime'), ?15)",
+        "INSERT INTO sales (sale_number, session_id, user_id, customer_id, subtotal, discount_amount, discount_percentage, discount_reason, tax_amount, total_amount, paid_amount, change_amount, payment_status, status, notes, created_at, terminal_name, channel)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'completed', ?14, datetime('now','localtime'), ?15, COALESCE(?16, 'pos'))",
         rusqlite::params![
             sale_number, input.session_id, input.user_id, input.customer_id,
             input.subtotal, input.discount_amount, input.discount_percentage,
             input.discount_reason, input.tax_amount, input.total_amount,
             input.paid_amount, input.change_amount, payment_status, input.notes,
-            crate::network::current_stamp_terminal()
+            crate::network::current_stamp_terminal(),
+            input.channel
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -308,6 +309,7 @@ pub fn list_sales(
     start_date: Option<String>,
     end_date: Option<String>,
     user_id: Option<i64>,
+    channel: Option<String>,
     limit: i64,
 ) -> Result<Vec<Sale>, String> {
     let conn = db.conn.lock().unwrap();
@@ -319,7 +321,8 @@ pub fn list_sales(
                 (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as lines_sold,
                 (SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si WHERE si.sale_id = s.id) as units_sold,
                 CASE WHEN s.notes LIKE '%MODIFIED%' THEN 1 ELSE 0 END as is_edited,
-                COALESCE(s.terminal_name, '') as terminal_name
+                COALESCE(s.terminal_name, '') as terminal_name,
+                COALESCE(s.channel, 'pos') as channel
          FROM sales s
          LEFT JOIN users u ON s.user_id = u.id
          LEFT JOIN customers c ON s.customer_id = c.id
@@ -340,6 +343,12 @@ pub fn list_sales(
 
     if let Some(uid) = user_id {
         sql.push_str(&format!(" AND s.user_id = {}", uid));
+    }
+
+    if let Some(ref ch) = channel {
+        if !ch.is_empty() && ch != "all" {
+            sql.push_str(&format!(" AND COALESCE(s.channel, 'pos') = '{}'", ch));
+        }
     }
 
     sql.push_str(&format!(" ORDER BY s.id DESC LIMIT {}", limit));
@@ -374,6 +383,7 @@ pub fn list_sales(
                     let t: String = row.get(20)?;
                     if t.is_empty() { None } else { Some(t) }
                 },
+                channel: Some(row.get(21)?),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -410,7 +420,8 @@ fn get_sale_by_query(
                         s.total_amount, s.paid_amount, s.change_amount, s.payment_status, s.status, s.created_at,
                         (SELECT sp.payment_method FROM sale_payments sp WHERE sp.sale_id = s.id ORDER BY sp.amount DESC LIMIT 1),
                         0, 0, CASE WHEN s.notes LIKE '%MODIFIED%' THEN 1 ELSE 0 END,
-                        COALESCE(s.terminal_name, '')
+                        COALESCE(s.terminal_name, ''),
+                        COALESCE(s.channel, 'pos')
                  FROM sales s
                  LEFT JOIN users u ON s.user_id = u.id
                  LEFT JOIN customers c ON s.customer_id = c.id
@@ -447,6 +458,7 @@ fn get_sale_by_query(
                         let t: String = row.get(20)?;
                         if t.is_empty() { None } else { Some(t) }
                     },
+                    channel: Some(row.get(21)?),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -680,6 +692,7 @@ mod tests {
         drop(conn);
 
         CreateSaleInput {
+            channel: None,
             session_id,
             user_id: 1,
             customer_id: None,
@@ -916,6 +929,7 @@ mod checkout_fk_tests {
 
     fn sale_input(session_id: i64, user_id: i64, customer_id: Option<i64>) -> CreateSaleInput {
         CreateSaleInput {
+            channel: None,
             session_id,
             user_id,
             customer_id,

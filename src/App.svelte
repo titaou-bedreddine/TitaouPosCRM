@@ -23,6 +23,7 @@
   import FieldOrdersView from './routes/fieldorders/FieldOrdersView.svelte';
   import TeamView from './routes/team/TeamView.svelte';
   import TruckLoadsView from './routes/truckloads/TruckLoadsView.svelte';
+  import TrucksView from './routes/trucks/TrucksView.svelte';
   import DeletionRequestsView from './routes/deletionrequests/DeletionRequestsView.svelte';
   import PromotionsView from './routes/promotions/PromotionsView.svelte';
   import RoutesView from './routes/routes/RoutesView.svelte';
@@ -427,10 +428,10 @@
       <div class="p-3.5 border-b border-pos-border/60">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl overflow-hidden shadow-md shrink-0 bg-white flex items-center justify-center border border-pos-border/50">
-            <img src="/logo.png" alt="TitaouPosCRM" class="w-full h-full object-contain p-0.5" />
+            <img src="/logo.png" alt="Titaou POS" class="w-full h-full object-contain p-0.5" />
           </div>
           <div class="min-w-0">
-            <h1 class="font-black text-sm tracking-tight text-pos-text">TitaouPosCRM</h1>
+            <h1 class="font-black text-sm tracking-tight text-pos-text">Titaou POS</h1>
             <p class="text-[9px] text-sky-600 font-bold truncate">Titaou Bedreddine 0553444057</p>
             <p class="text-[8px] text-pos-muted font-mono">{sidebarVersion ? 'v' + sidebarVersion : ''}</p>
           </div>
@@ -503,6 +504,14 @@
         >
           <FileSpreadsheet class="w-4 h-4 text-amber-500" />
           <span>{t('nav_truckloads', $currentLocale)}</span>
+        </button>
+        <button
+          type="button"
+          on:click={() => currentRoute = 'trucks'}
+          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'trucks' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
+        >
+          <Truck class="w-4 h-4 text-sky-500" />
+          <span>{t('nav_trucks', $currentLocale)}</span>
         </button>
         <button
           type="button"
@@ -800,6 +809,8 @@
           <RoutesView />
         {:else if currentRoute === 'truckloads'}
           <TruckLoadsView />
+        {:else if currentRoute === 'trucks'}
+          <TrucksView />
         {:else if currentRoute === 'deletionrequests'}
           <DeletionRequestsView />
         {:else if currentRoute === 'promotions'}
@@ -871,7 +882,7 @@
         <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
           <h3 class="font-black text-sm text-pos-text">Contact the Developer (المطور)</h3>
           <p class="text-xs text-pos-muted">
-            Titaou Bedreddine — TitaouPosCRM developer. Reach out for support, features or licensing.
+            Titaou Bedreddine — Titaou POS developer. Reach out for support, features or licensing.
           </p>
           <div class="grid grid-cols-2 gap-2">
             <button

@@ -28,6 +28,7 @@
   let endDate = localTodayISO();
   let selectedCashier: number | null = null;
   let selectedStatus: string = 'all';
+  let selectedChannel: string = 'all';
   let searchQuery = '';
   // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
   $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
@@ -63,6 +64,7 @@
         startDate: startDate || null,
         endDate: endDate || null,
         userId: selectedCashier ? Number(selectedCashier) : null,
+        channel: selectedChannel === 'all' ? null : selectedChannel,
         limit: 200,
       });
     } catch (e) {
@@ -365,6 +367,15 @@
         <option value="tpe">TPE Card (بطاقة)</option>
         <option value="credit">Credit Only (دين)</option>
         <option value="refunded">Refunded (مسترجع)</option>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('trucks_channel_filter')}</label>
+      <select bind:value={selectedChannel} on:change={loadSales} class="w-full px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-bold text-pos-text outline-none">
+        <option value="all">{t('all')}</option>
+        <option value="pos">POS</option>
+        <option value="direct_truck">{t('trucks_direct')}</option>
       </select>
     </div>
 

@@ -177,6 +177,36 @@ fn rasterize_a4_pages(html: &str, px_w: i32, px_h: i32, dpi: u32, page_count: us
     Ok(pages)
 }
 
+/// Trim trailing all-white rows from a BGRA top-down buffer. Single-page
+/// (compact) documents keep their natural height — the printable content is
+/// drawn top-anchored and NEVER vertically stretched to fill the sheet.
+/// Returns the (possibly truncated) buffer and its new height in pixels.
+fn trim_bottom_white(mut bgra: Vec<u8>, w: i32, h: i32, margin_px: i32) -> (Vec<u8>, i32) {
+    if w <= 0 || h <= 0 {
+        return (bgra, h);
+    }
+    let stride = (w as usize) * 4;
+    let mut last_content: Option<usize> = None;
+    for y in (0..h as usize).rev() {
+        let row = &bgra[y * stride..(y + 1) * stride];
+        let has_content = row
+            .chunks_exact(4)
+            .any(|px| px[0] < 248 || px[1] < 248 || px[2] < 248);
+        if has_content {
+            last_content = Some(y);
+            break;
+        }
+    }
+    match last_content {
+        Some(y) => {
+            let new_h = ((y + 1) as i32 + margin_px).min(h);
+            bgra.truncate(new_h as usize * stride);
+            (bgra, new_h)
+        }
+        None => (bgra, h), // fully blank page: leave untouched
+    }
+}
+
 /// Decode a PNG into a BGRA top-down buffer.
 fn decode_png_bgra(png_bytes: &[u8]) -> Result<(Vec<u8>, i32, i32), String> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
@@ -275,8 +305,19 @@ pub fn print_a4_job(req: &A4PrintRequest) -> A4PrintResult {
                 pages_bgra.push(decode_png_bgra(png)?);
             }
 
-            // 3. Print via GDI, stretching each page over the full printable area.
-            gdi::print_a4_pages_on_dc(hdc, &pages_bgra, &req.title)?;
+            // 3. Print via GDI. Single-page documents are trimmed of trailing
+            // whitespace and drawn TOP-ANCHORED at their natural height
+            // (compact A4 — never vertically stretched to fill the sheet);
+            // multi-page documents fill every sheet as before.
+            let fit = pages_bgra.len() == 1;
+            if fit {
+                let margin_px = ((raster_dpi as f64) / 25.4 * 4.0).round() as i32; // ~4 mm
+                let (w, h) = (pages_bgra[0].1, pages_bgra[0].2);
+                let (trimmed, new_h) =
+                    trim_bottom_white(std::mem::take(&mut pages_bgra[0].0), w, h, margin_px);
+                pages_bgra[0] = (trimmed, w, new_h);
+            }
+            gdi::print_a4_pages_on_dc(hdc, &pages_bgra, &req.title, fit)?;
 
             let first_h = pages_bgra.first().map(|(_, _, h)| *h).unwrap_or(0);
             Ok(A4PrintResult {
@@ -436,13 +477,15 @@ mod gdi {
         }
     }
 
-    /// Print pre-decoded BGRA pages, each stretched to the printer's FULL
-    /// printable area. Stretching (not a 1:1 BitBlt) is what guarantees the
-    /// document covers the whole sheet regardless of the printer's dpi.
+    /// Print pre-decoded BGRA pages. When `fit` is false each page is
+    /// stretched over the printer's FULL printable area (multi-page sheets);
+    /// when `fit` is true the page keeps its natural aspect, anchored to the
+    /// top of the sheet (compact single-page documents).
     pub fn print_a4_pages_on_dc(
         hdc: HDC,
         pages: &[(Vec<u8>, i32, i32)],
         job_title: &str,
+        fit: bool,
     ) -> Result<(), String> {
         let (dst_w, dst_h) = unsafe { (GetDeviceCaps(hdc, HORZRES as i32), GetDeviceCaps(hdc, VERTRES as i32)) };
         if dst_w <= 0 || dst_h <= 0 {
@@ -469,7 +512,7 @@ mod gdi {
                     failed = Some(format!("StartPage failed on page {}", idx + 1));
                     break;
                 }
-                draw_page_full_bleed(hdc, bgra, *img_w, *img_h, dst_w, dst_h);
+                draw_page_full_bleed(hdc, bgra, *img_w, *img_h, dst_w, dst_h, fit);
                 if EndPage(hdc) <= 0 {
                     failed = Some(format!("EndPage failed on page {}", idx + 1));
                     break;
@@ -489,7 +532,8 @@ mod gdi {
         }
     }
 
-    /// Stretch one BGRA page over the printer's entire printable area.
+    /// Draw one BGRA page: full printable area when `fit` is false, or
+    /// top-anchored with preserved aspect when `fit` is true.
     unsafe fn draw_page_full_bleed(
         hdc: HDC,
         bgra: &[u8],
@@ -497,10 +541,17 @@ mod gdi {
         img_h: i32,
         dst_w: i32,
         dst_h: i32,
+        fit: bool,
     ) {
         if img_w <= 0 || img_h <= 0 {
             return;
         }
+        let dst_h_drawn = if fit {
+            // Aspect-correct height at width-fit, clamped to the sheet.
+            (((img_h as f64) * (dst_w as f64 / img_w as f64)).round() as i32).min(dst_h)
+        } else {
+            dst_h
+        };
         let mem_dc = CreateCompatibleDC(hdc);
         if mem_dc.is_null() {
             return;
@@ -533,7 +584,7 @@ mod gdi {
             // origin reset afterwards is required by the GDI docs.
             SetStretchBltMode(hdc, HALFTONE);
             SetBrushOrgEx(hdc, 0, 0, std::ptr::null_mut());
-            StretchBlt(hdc, 0, 0, dst_w, dst_h, mem_dc, 0, 0, img_w, img_h, SRCCOPY);
+            StretchBlt(hdc, 0, 0, dst_w, dst_h_drawn, mem_dc, 0, 0, img_w, img_h, SRCCOPY);
 
             SelectObject(mem_dc, old);
         }
@@ -631,6 +682,33 @@ mod tests {
         let def = get_default_printer();
         println!("Default system printer: {:?}", def);
         assert!(def.is_ok(), "Should query default system printer");
+    }
+
+    #[test]
+    fn test_trim_bottom_white() {
+        // 2 content rows + 6 blank rows → trimmed to 2 + margin, width kept.
+        let w = 3usize;
+        let white = [255u8, 255, 255, 255];
+        let black = [10u8, 10, 10, 255];
+        let mut buf: Vec<u8> = Vec::new();
+        for _ in 0..2 {
+            buf.extend_from_slice(&black);
+            buf.extend_from_slice(&white);
+            buf.extend_from_slice(&black);
+        }
+        for _ in 0..6 {
+            for _ in 0..w {
+                buf.extend_from_slice(&white);
+            }
+        }
+        let (trimmed, new_h) = trim_bottom_white(buf, w as i32, 8, 0);
+        assert_eq!(new_h, 2, "trailing white rows must be trimmed");
+        assert_eq!(trimmed.len(), 2 * w * 4);
+        // A fully blank page stays untouched.
+        let blank = vec![255u8; 4 * w * 8];
+        let (same, h) = trim_bottom_white(blank, w as i32, 8, 3);
+        assert_eq!(h, 8);
+        assert_eq!(same.len(), 4 * w * 8);
     }
 
     #[test]

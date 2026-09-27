@@ -123,6 +123,7 @@
   let fQuick: QuickDate = 'all';
   let fStatus: string | null = null;
   let fPayment: string | null = null;
+  let fSource: string | null = null;
   let fSearch = '';
 
   $: filtered = (() => {
@@ -137,6 +138,7 @@
     return orders.filter((o) => {
       if (fStatus && o.status !== fStatus) return false;
       if (fPayment && o.payment_status !== fPayment) return false;
+      if (fSource && (o.source ?? 'field') !== fSource) return false;
       if (fSearch.trim()) {
         const q = fSearch.trim().toLowerCase();
         const hay = `${o.client_name ?? ''} ${o.member_name ?? ''} ${o.crm_id ?? ''}`.toLowerCase();
@@ -164,7 +166,7 @@
         {t('fo_title')}
       </h1>
       <p class="text-xs text-pos-muted">
-        {t('fo_member')} · {t('fo_status')} · {t('fo_payment')} — TitaouCRM
+        {t('fo_member')} · {t('fo_status')} · {t('fo_payment')} — Titaou CRM
       </p>
     </div>
     <button type="button" on:click={load} disabled={loading}
@@ -202,6 +204,12 @@
         <option value="paid">paid</option>
         <option value="partial">partial</option>
         <option value="unpaid">unpaid</option>
+      </select>
+      <select bind:value={fSource}
+        class="px-2.5 py-1 text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-pos-text outline-none cursor-pointer">
+        <option value={null}>{t('trucks_channel_filter')}: {t('all')}</option>
+        <option value="field">{t('trucks_presale')}</option>
+        <option value="direct_truck">{t('trucks_direct')}</option>
       </select>
       <input type="text" bind:value={fSearch} placeholder="Client / membre…"
         class="px-3 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-[10px] font-bold text-pos-text outline-none w-44" />

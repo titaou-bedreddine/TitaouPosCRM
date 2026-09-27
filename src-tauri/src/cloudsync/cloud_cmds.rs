@@ -320,7 +320,9 @@ pub fn cloud_route_order_items(route_id: String) -> Result<Value, String> {
     }))
 }
 
-/// Create a truck load (manifest document — no stock movement at load time).
+/// Create a truck load / open a trip (manifest document; stock moves at
+/// load time server-side). truck_id + driver_name snapshot are optional —
+/// legacy loads without a truck keep working.
 #[tauri::command]
 pub fn cloud_create_truck_load(
     seller_id: String,
@@ -329,6 +331,8 @@ pub fn cloud_create_truck_load(
     items: Value,
     notes: Option<String>,
     name: Option<String>,
+    truck_id: Option<String>,
+    driver_name: Option<String>,
 ) -> Result<String, String> {
     let client = cloud::ensure_session()?;
     let id = client.rpc(
@@ -340,6 +344,8 @@ pub fn cloud_create_truck_load(
             "p_items": items,
             "p_notes": notes,
             "p_name": name,
+            "p_truck_id": truck_id,
+            "p_driver_name": driver_name,
         }),
     )?;
     id.as_str().map(String::from).ok_or_else(|| "no id returned".into())
@@ -408,6 +414,181 @@ pub fn cloud_truck_loads() -> Result<Value, String> {
         &[("order", "created_at.desc".into())],
     )?;
     Ok(Value::Array(rows))
+}
+
+// ── Trucks & trips (Direct Sale back-office) ────────────────────────────────
+
+/// Trucks list for the Direct Sale back-office screen.
+#[tauri::command]
+pub fn cloud_list_trucks() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select("trucks", "*", &[("order", "name.asc".into())])?;
+    Ok(Value::Array(rows))
+}
+
+/// Create or update a truck (admin; RLS enforces organization + role).
+#[tauri::command]
+pub fn cloud_save_truck(
+    id: Option<String>,
+    name: String,
+    plate: Option<String>,
+    driver_name: Option<String>,
+    seller_id: Option<String>,
+    is_active: Option<bool>,
+    notes: Option<String>,
+) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let org = cloud::auth::fetch_profile(&client)?["organization_id"]
+        .as_str()
+        .ok_or("no org")?
+        .to_string();
+    let payload = serde_json::json!({
+        "organization_id": org,
+        "name": name,
+        "plate": plate.unwrap_or_default(),
+        "driver_name": driver_name.unwrap_or_default(),
+        "seller_id": seller_id,
+        "is_active": is_active.unwrap_or(true),
+        "notes": notes,
+    });
+    match id {
+        Some(existing) => {
+            client.patch("trucks", payload, &[("id", format!("eq.{existing}"))])?;
+            Ok(serde_json::json!({ "id": existing }))
+        }
+        None => {
+            let rows = client.insert("trucks", serde_json::json!([payload]))?;
+            rows.first()
+                .cloned()
+                .ok_or_else(|| "truck insert returned no row".into())
+        }
+    }
+}
+
+/// START TRIP: loaded → in_progress (state machine enforced server-side).
+#[tauri::command]
+pub fn cloud_start_truck_trip(load_id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc("start_truck_trip", serde_json::json!({ "p_load_id": load_id }))
+        .map(|_| ())
+}
+
+/// OPEN RECONCILIATION: in_progress → reconciling (admin only server-side).
+#[tauri::command]
+pub fn cloud_open_truck_reconciliation(load_id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc(
+            "open_truck_reconciliation",
+            serde_json::json!({ "p_load_id": load_id }),
+        )
+        .map(|_| ())
+}
+
+/// CLOSE & SETTLE: reconciling → closed. One atomic transaction: stock
+/// reconciliation rows + physical-return movements + cash settlement row.
+#[tauri::command]
+pub fn cloud_close_truck_trip(
+    load_id: String,
+    counts: Value,
+    reasons: Option<Value>,
+    actual_cash: i64,
+    cash_reason: Option<String>,
+) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc(
+            "close_truck_trip",
+            serde_json::json!({
+                "p_load_id": load_id,
+                "p_counts": counts,
+                "p_reasons": reasons,
+                "p_actual_cash": actual_cash,
+                "p_cash_reason": cash_reason,
+            }),
+        )
+        .map(|_| ())
+}
+
+/// Add an explicit trip expense (loading_fee/unloading_fee/fuel/driver_fee/other).
+#[tauri::command]
+pub fn cloud_add_truck_trip_expense(
+    load_id: String,
+    category: String,
+    amount: i64,
+    notes: Option<String>,
+) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc(
+            "add_truck_trip_expense",
+            serde_json::json!({
+                "p_load_id": load_id,
+                "p_category": category,
+                "p_amount": amount,
+                "p_notes": notes,
+            }),
+        )
+        .map(|_| ())
+}
+
+/// Canonical per-trip totals (history list + dashboard card).
+#[tauri::command]
+pub fn cloud_stats_truck_trips(
+    from_date: Option<String>,
+    to_date: Option<String>,
+) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    client.rpc(
+        "stats_truck_trips",
+        serde_json::json!({ "p_from": from_date, "p_to": to_date }),
+    )
+}
+
+/// One trip's direct-sale orders with lines, payments and client name.
+#[tauri::command]
+pub fn cloud_trip_orders(load_id: String) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "orders",
+        "id, created_at, status, total_amount, amount_paid, amount_due, payment_status, \
+         client:clients(name), \
+         items:order_items(quantity, base_quantity, unit_price, line_total, tva_rate, sale_unit, product:products(name)), \
+         pays:payments(amount, method, created_at)",
+        &[
+            ("truck_load_id", format!("eq.{load_id}")),
+            ("order", "created_at.asc".into()),
+        ],
+    )?;
+    Ok(Value::Array(rows))
+}
+
+/// One trip's settlement + stock reconciliation + expenses — the immutable
+/// audit view (SELECT-only policies make these rows unmodifiable).
+#[tauri::command]
+pub fn cloud_trip_settlement(load_id: String) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let settlement = client.select(
+        "truck_trip_settlements",
+        "*",
+        &[("load_id", format!("eq.{load_id}"))],
+    )?;
+    let reconciliations = client.select(
+        "truck_trip_reconciliations",
+        "*, product:products(name)",
+        &[("load_id", format!("eq.{load_id}")), ("order", "product_id.asc".into())],
+    )?;
+    let expenses = client.select(
+        "truck_trip_expenses",
+        "*",
+        &[("load_id", format!("eq.{load_id}")), ("order", "created_at.asc".into())],
+    )?;
+    Ok(serde_json::json!({
+        "settlement": settlement.first().cloned().unwrap_or(Value::Null),
+        "reconciliations": reconciliations,
+        "expenses": expenses,
+    }))
 }
 
 // ── Setup-code provisioning (reseller flow) ────────────────────────────────

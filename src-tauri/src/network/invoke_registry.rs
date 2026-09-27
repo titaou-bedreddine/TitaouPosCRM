@@ -624,6 +624,7 @@ pub fn dispatch(ctx: &InvokeContext, command: &str, args: &Value) -> Result<Valu
             opt_str(args, "start_date")?,
             opt_str(args, "end_date")?,
             opt_i64(args, "user_id")?,
+            opt_str(args, "channel")?,
             req_i64(args, "limit").unwrap_or(200),
         )?)?,
         "get_sale_items" => as_json(crate::services::sales_service::get_sale_items(db, req_i64(args, "sale_id")?)?)?,

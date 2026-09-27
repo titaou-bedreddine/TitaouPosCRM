@@ -11,6 +11,7 @@
   let loads: any[] = [];
   let staff: any[] = [];
   let routes: any[] = [];
+  let trucksList: any[] = [];
   let loading = true;
   let error = '';
   let msg = '';
@@ -21,6 +22,8 @@
   let sellerId = '';
   let routeId = '';
   let routeDate = new Date().toISOString().slice(0, 10);
+  let truckId = '';
+  let driverName = '';
   let items: { product_id: string; product_name: string; quantity: number; unit_price: number }[] = [];
   let busy = false;
 
@@ -32,10 +35,11 @@
     loading = true;
     error = '';
     try {
-      [loads, staff, routes] = await Promise.all([
+      [loads, staff, routes, trucksList] = await Promise.all([
         invoke<any[]>('cloud_truck_loads').catch(() => []),
         invoke<any[]>('cloud_field_staff').catch(() => []),
         invoke<any[]>('cloud_recent_routes', { limit: 30 }).catch(() => []),
+        invoke<any[]>('cloud_list_trucks').catch(() => []),
       ]);
       const nameById: Record<string, string> = {};
       for (const m of staff) nameById[m.id] = m.full_name;
@@ -108,6 +112,8 @@
     loadName = '';
     sellerId = '';
     routeId = '';
+    truckId = '';
+    driverName = '';
     items = [];
     showForm = true;
   }
@@ -173,6 +179,8 @@
           routeDate,
           items: payload,
           name: loadName || null,
+          truckId: truckId || null,
+          driverName: driverName.trim() || null,
         });
       }
       showForm = false;
@@ -270,7 +278,7 @@
         <Truck class="w-5 h-5 text-sky-500" />
         {t('tl_title')}
       </h1>
-      <p class="text-xs text-pos-muted">TitaouCRM — {t('tl_returns')}</p>
+      <p class="text-xs text-pos-muted">Titaou CRM — {t('tl_returns')}</p>
     </div>
     <div class="flex gap-2">
       <button type="button" on:click={load} disabled={loading}
@@ -363,6 +371,19 @@
               <option value="">—</option>
               {#each staff as s (s.id)}<option value={s.id}>{s.full_name} ({s.role})</option>{/each}
             </select>
+          </div>
+          <div>
+            <label class="block text-[10px] font-black text-pos-muted mb-1">{t('trucks_plate')} / {t('nav_trucks')}</label>
+            <select bind:value={truckId} on:change={() => { const tr = trucksList.find((x) => x.id === truckId); driverName = tr?.driver_name ?? ''; }}
+              class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">
+              <option value="">—</option>
+              {#each trucksList as tr (tr.id)}<option value={tr.id}>{tr.name} ({tr.plate || '—'})</option>{/each}
+            </select>
+          </div>
+          <div>
+            <label class="block text-[10px] font-black text-pos-muted mb-1">{t('trucks_driver')}</label>
+            <input type="text" bind:value={driverName} placeholder="Ahmed"
+              class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
           </div>
           <div>
             <label class="block text-[10px] font-black text-pos-muted mb-1">{t('tl_date')}</label>

@@ -33,7 +33,7 @@
   let settings: Record<string, string> = {};
   let settingsLoaded = false;
 
-  $: shopName = settings.shop_name_fr || 'TitaouPosCRM';
+  $: shopName = settings.shop_name_fr || 'Titaou POS';
   $: barcode = product?.barcodes?.[0] || product?.sku || '';
 
   $: if (isOpen) {

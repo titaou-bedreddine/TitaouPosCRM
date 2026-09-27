@@ -387,6 +387,25 @@ impl DbState {
             [],
         );
 
+        // ---- Direct Sale mode: sale channel + settlement deposit idempotency
+        // sales.channel: 'pos' (counter, default) or 'direct_truck'. SQLite
+        // can't ALTER a CHECK without rebuilding the table (sale_items FKs
+        // reference sales), so the invariant is a BEFORE INSERT trigger.
+        let _ = conn.execute("ALTER TABLE sales ADD COLUMN channel TEXT NOT NULL DEFAULT 'pos';", []);
+        let _ = conn.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS trg_sales_channel_check
+             BEFORE INSERT ON sales
+             WHEN NEW.channel NOT IN ('pos', 'direct_truck')
+             BEGIN SELECT RAISE(ABORT, 'invalid sales.channel'); END;",
+        );
+        // I10: one closed truck trip → at most one register settlement deposit,
+        // referenced by `truck_settlement:<load_id>` in cash_movements.
+        let _ = conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_cash_mov_settlement
+             ON cash_movements (reference_type, reference_id)
+             WHERE reference_type = 'truck_settlement';",
+        );
+
         // ---- Cloud sync (TitaouCRM integration) ---------------------------
         // Transactional outbox: business services enqueue events INSIDE their
         // write transaction (a rolled-back sale never syncs). The cloudsync
@@ -638,5 +657,76 @@ mod terminal_stamp_tests {
         db.run_migrations().unwrap();
         let conn = db.conn.lock().unwrap();
         assert!(has_column(&conn, "cash_movements", "terminal_name"));
+    }
+}
+
+#[cfg(test)]
+mod direct_sale_tests {
+    use super::*;
+
+    fn fresh_db() -> DbState {
+        let dir = std::env::temp_dir().join("titaou_direct_sale_tests");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("ds_{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = DbState { conn: std::sync::Mutex::new(rusqlite::Connection::open(&path).unwrap()) };
+        state.run_migrations().unwrap();
+        state
+    }
+
+    /// I10: one closed trip → at most ONE register deposit; the retry returns
+    /// the existing movement and the drawer is debited exactly once.
+    #[test]
+    fn settlement_deposit_is_idempotent() {
+        let db = fresh_db();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO users (username, display_name, password_hash, role_id, is_active) VALUES ('t', 'T', 'x', 1, 1);
+                 INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status)
+                 VALUES (1, 1, 0, 0, 'open');",
+            ).unwrap();
+        }
+        let first = crate::services::cash_service::deposit_truck_settlement(
+            &db, 1, 1, "trip-abc", 5000, None).unwrap();
+        assert_eq!(first["already_deposited"], false);
+        let second = crate::services::cash_service::deposit_truck_settlement(
+            &db, 1, 1, "trip-abc", 5000, None).unwrap();
+        assert_eq!(second["already_deposited"], true);
+
+        let conn = db.conn.lock().unwrap();
+        let movements: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cash_movements WHERE reference_type = 'truck_settlement'",
+            [], |r| r.get(0)).unwrap();
+        assert_eq!(movements, 1, "retry must not create a second cash-in");
+        let expected: i64 = conn.query_row(
+            "SELECT expected_cash FROM cash_sessions WHERE id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(expected, 5000, "drawer credited exactly once");
+    }
+
+    /// sales.channel is a DB-level invariant (trigger): only 'pos' and
+    /// 'direct_truck' may exist; the default is 'pos'.
+    #[test]
+    fn sales_channel_is_constrained_by_trigger() {
+        let db = fresh_db();
+        {
+            let conn = db.conn.lock().unwrap();
+            // Default channel = 'pos'.
+            conn.execute(
+                "INSERT INTO sales (sale_number, subtotal, total_amount, paid_amount, change_amount, payment_status, status) VALUES ('POS-T1', 100, 100, 100, 0, 'paid', 'completed')",
+                []).unwrap();
+            let ch: String = conn.query_row(
+                "SELECT channel FROM sales WHERE sale_number = 'POS-T1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(ch, "pos", "default channel must be pos");
+            // Explicit direct_truck is accepted.
+            conn.execute(
+                "INSERT INTO sales (sale_number, subtotal, total_amount, paid_amount, change_amount, payment_status, status, channel) VALUES ('POS-T2', 100, 100, 100, 0, 'paid', 'completed', 'direct_truck')",
+                []).unwrap();
+            // Anything else is rejected by the trigger.
+            let bad = conn.execute(
+                "INSERT INTO sales (sale_number, subtotal, total_amount, paid_amount, change_amount, payment_status, status, channel) VALUES ('POS-T3', 100, 100, 100, 0, 'paid', 'completed', 'bogus')",
+                []);
+            assert!(bad.is_err(), "invalid channel must be rejected by the trigger");
+        }
     }
 }
