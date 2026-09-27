@@ -48,9 +48,18 @@ impl SupabaseClient {
             .send()
             .map_err(|e| format!("network: {e}"))?;
         let status = resp.status();
-        let body: Value = resp
-            .json()
-            .map_err(|e| format!("bad json from {fn_name}: {e}"))?;
+        // Void RPCs (returns void) answer 204/200 with an EMPTY body — that is
+        // a SUCCESS, not a decoding error. Treat empty as JSON null so every
+        // error response still decodes through the same contract.
+        let text = resp
+            .text()
+            .map_err(|e| format!("bad response from {fn_name}: {e}"))?;
+        let body: Value = if text.trim().is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&text)
+                .map_err(|e| format!("bad json from {fn_name}: {e}"))?
+        };
         if !status.is_success() {
             return Err(rpc_error(fn_name, status, &body));
         }

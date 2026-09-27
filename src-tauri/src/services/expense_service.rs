@@ -145,7 +145,7 @@ pub fn list_expenses(db: &DbState) -> Result<Vec<Expense>, String> {
 /// remove its linked cash_movements row (reference_type='expense').
 /// Caller must hold an open transaction. Returns the old expense row
 /// (amount, payment_method, session_id) for rebooking decisions.
-fn reverse_expense_cash(tx: &rusqlite::Transaction, expense_id: i64) -> Result<(i64, String, Option<i64>), String> {
+pub(crate) fn reverse_expense_cash(tx: &rusqlite::Transaction, expense_id: i64) -> Result<(i64, String, Option<i64>), String> {
     let old: (i64, String, Option<i64>) = tx
         .query_row(
             "SELECT amount, payment_method, session_id FROM expenses WHERE id = ?1",

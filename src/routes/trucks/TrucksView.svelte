@@ -536,7 +536,7 @@
         <div class="flex justify-end gap-2 pt-1">
           <button type="button" on:click={() => (showTruckForm = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
           <button type="button" on:click={saveTruck} disabled={busy || !truckName.trim()}
-            class="px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">{t('tl_save')}</button>
+            class="px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">{t('trucks_save')}</button>
         </div>
       </div>
     </div>

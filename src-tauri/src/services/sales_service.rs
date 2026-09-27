@@ -602,6 +602,10 @@ pub fn delete_sale(db: &DbState, sale_id: i64, user_id: Option<i64>) -> Result<(
     let mut conn = db.conn.lock().unwrap();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
+    let sale_number: String = tx
+        .query_row("SELECT sale_number FROM sales WHERE id = ?1", [sale_id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+
     // Restore stock for each item
     {
         let mut stmt = tx
@@ -622,6 +626,58 @@ pub fn delete_sale(db: &DbState, sale_id: i64, user_id: Option<i64>) -> Result<(
                 rusqlite::params![stock_reversal, product_id],
             )
             .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Reverse the drawer: the checkout booked a 'cash_sale' movement for the
+    // net cash (reference_type='sale', reference_id=sale_id). Without this the
+    // drawer keeps counting a sale that no longer exists.
+    {
+        let rows: Vec<(i64, Option<i64>)> = {
+            let mut stmt = tx
+                .prepare("SELECT amount, session_id FROM cash_movements WHERE reference_type = 'sale' AND reference_id = ?1")
+                .map_err(|e| e.to_string())?;
+            let mapped = stmt.query_map([sale_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| e.to_string())?;
+            let out: Vec<(i64, Option<i64>)> = mapped.filter_map(|r| r.ok()).collect();
+            out
+        };
+        for (amount, session) in rows {
+            if let Some(sid) = session {
+                tx.execute(
+                    "UPDATE cash_sessions SET expected_cash = expected_cash - ?1 WHERE id = ?2",
+                    rusqlite::params![amount, sid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.execute(
+            "DELETE FROM cash_movements WHERE reference_type = 'sale' AND reference_id = ?1",
+            [sale_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Reverse + remove the sale's LOADING FEE (déchargement) expense: it was
+    // booked at checkout with receipt_reference = sale number. Deleting the
+    // sale must not leave an anonymous expense holding drawer money.
+    {
+        let fee_ids: Vec<i64> = {
+            let mut stmt = tx
+                .prepare("SELECT id FROM expenses WHERE receipt_reference = ?1 AND category_id = 8")
+                .map_err(|e| e.to_string())?;
+            let mapped = stmt
+                .query_map([sale_number], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            let out: Vec<i64> = mapped.filter_map(|r| r.ok()).collect();
+            out
+        };
+        for fee_id in fee_ids {
+                // Give the drawer its money back (reverses the expense_payment
+            // movement + expected_cash) before removing the row.
+            crate::services::expense_service::reverse_expense_cash(&tx, fee_id)?;
+            tx.execute("DELETE FROM expenses WHERE id = ?1", [fee_id])
+                .map_err(|e| e.to_string())?;
         }
     }
 

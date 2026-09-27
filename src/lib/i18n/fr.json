@@ -757,5 +757,6 @@
   "trucks_sales_mode": "Mode de vente",
   "trucks_sales_mode_hint": "Workflow métier (à ne pas confondre avec le mode d'impression). S'applique à l'application Android terrain.",
   "trucks_presale_hint": "Le vendeur livre les commandes déjà prises (flux actuel).",
-  "trucks_direct_hint": "Le vendeur vend directement depuis le camion — l'app Android devient un POS mobile."
+  "trucks_direct_hint": "Le vendeur vend directement depuis le camion — l'app Android devient un POS mobile.",
+  "trucks_save": "Enregistrer"
 }
