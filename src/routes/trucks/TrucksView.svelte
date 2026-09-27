@@ -6,6 +6,7 @@
     Truck, Plus, RefreshCw, X, Pencil, Play, ClipboardList, Lock, Wallet,
     Package, Search, CircleDollarSign, TrendingDown, CheckCircle2, Fuel,
   } from 'lucide-svelte';
+  import { printService } from '../../lib/services/printService';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
 
@@ -103,16 +104,49 @@
   let tripSeller = '';
   let tripDate = new Date().toISOString().slice(0, 10);
   let tripName = '';
-  let tripItems: { product_id: string; name: string; quantity: number }[] = [];
+  let tripItems: { product_id: string; name: string; unit: string; unitsPerPackage: number; quantity: number }[] = [];
   let tripProductSearch = '';
 
   $: tripProductMatches = tripProductSearch.trim()
     ? products.filter((p) => p.name.toLowerCase().includes(tripProductSearch.toLowerCase())).slice(0, 6)
     : [];
 
+  function packTypesFor(productId: string) {
+    return (products.find((x) => x.id === productId)?.packagings ?? []);
+  }
+
+  $: tripBaseTotal = tripItems.reduce((sum, i) => sum + i.quantity * (i.unitsPerPackage || 1), 0);
+
+  
+
+  async function printTrip(copies: number) {
+    if (!activeTrip || !stockRows.length) return;
+    for (let c = 0; c < copies; c++) {
+      const result = await printService.printDocument({
+        id: activeTrip.id,
+        documentNumber: 'TRIP-' + String(activeTrip.id).slice(0, 8),
+        documentType: 'stock_operation',
+        title: 'BON DE CHARGEMENT - TOURNEE',
+        date: String(activeTrip.route_date || new Date().toISOString()).slice(0, 10),
+        party: { name: (selected?.name || '') + ' - ' + (activeTrip.driver_name || ''), type: 'employee' },
+        items: stockRows.map((r) => ({
+          name: r.name,
+          quantity: r.loaded,
+          unitPrice: 0,
+          totalPrice: 0,
+          notes: 'Charge: ' + r.loaded + ' (base)',
+        })),
+        subtotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0,
+        notes: 'Vendeur: ' + sellerName(selected?.seller_id) + ' - Chauffeur: ' + (activeTrip.driver_name || '-'),
+        footerNote: c === 0 ? 'Exemplaire depot / Warehouse copy' : 'Exemplaire camion / Truck copy',
+      });
+      if (!result.ok && result.mode !== 'disabled') error = result.message;
+    }
+  }
+
   function addTripProduct(p: any) {
     if (tripItems.some((i) => i.product_id === p.id)) return;
-    tripItems = [...tripItems, { product_id: p.id, name: p.name, quantity: 1 }];
+    tripItems = [...tripItems, { product_id: p.id, name: p.name, unit: 'Base', unitsPerPackage: 1, quantity: 1 }];
     tripProductSearch = '';
   }
 
@@ -124,7 +158,10 @@
         sellerId: tripSeller,
         routeId: null,
         routeDate: tripDate,
-        items: tripItems.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
+        items: tripItems.map((i) => ({
+          product_id: i.product_id,
+          quantity: i.quantity * (i.unitsPerPackage || 1),
+        })),
         notes: null,
         name: tripName.trim() || null,
         truckId: selected.id,
@@ -356,11 +393,11 @@
         <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border flex items-start justify-between">
           <div>
             <p class="text-sm font-black text-pos-text">{selected.name} <span class="font-mono text-[10px] text-pos-muted">{selected.plate}</span></p>
-            <p class="text-[10px] text-pos-muted">👤 {selected.driver_name || '—'} · 🛒 {sellerName(selected.seller_id)} · {selected.is_active === false ? '⚠️ inactive' : '✓'}</p>
+            <p class="text-[10px] text-pos-muted">👤 {selected.driver_name || '—'} · 🛒 {sellerName(selected.seller_id)} · {selected.is_active === false ? '📦 ARCHIVED / ARCHIVÉ' : '✓ Active'}</p>
           </div>
           <div class="flex gap-1.5">
             <button type="button" on:click={() => openEditTruck(selected)} class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" title="Modifier"><Pencil class="w-3.5 h-3.5" /></button>
-            {#if !activeTrip}
+            {#if !activeTrip && selected.is_active !== false}
               <button type="button" on:click={() => { tripSeller = selected.seller_id ?? ''; tripDate = new Date().toISOString().slice(0, 10); tripItems = []; tripName = ''; showTripForm = true; }}
                 class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer">
                 <Plus class="w-3 h-3" />{t('trucks_new_trip')}
@@ -416,6 +453,10 @@
             </div>
 
             <div class="flex flex-wrap justify-end gap-1.5">
+              <button type="button" on:click={() => printTrip(1)}
+                class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer" title="Print x1">🖨 x1</button>
+              <button type="button" on:click={() => printTrip(2)}
+                class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer" title="Print x2">🖨 x2</button>
               <button type="button" on:click={() => (showExpense = true)}
                 class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black text-rose-600 hover:bg-rose-50 rounded-xl cursor-pointer">
                 <Fuel class="w-3 h-3" />{t('trucks_add_expense')}
@@ -593,10 +634,22 @@
             <div class="flex items-center gap-2 mb-1.5">
               <Package class="w-3.5 h-3.5 text-pos-muted shrink-0" />
               <span class="text-xs font-bold text-pos-text flex-1 truncate">{it.name}</span>
+              <select bind:value={it.unit}
+                on:change={() => { const pk = (packTypesFor(it.product_id) || []).find((pk2: any) => pk2.name === it.unit); it.unitsPerPackage = pk ? Number(pk.units_per_package) : 1; }}
+                class="w-28 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-bold outline-none">
+                <option value="Base">Base</option>
+                {#each (packTypesFor(it.product_id) || []) as pk (pk.name)}
+                  <option value={pk.name}>{pk.name} x{pk.units_per_package}</option>
+                {/each}
+              </select>
               <input type="number" step="1" min="0" bind:value={it.quantity}
-                class="w-24 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
+                class="w-20 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
+              <span class="text-[9px] text-pos-muted font-mono whitespace-nowrap">= {it.quantity * (it.unitsPerPackage || 1)} base</span>
             </div>
           {/each}
+          {#if tripItems.length > 0}
+            <p class="text-[10px] font-black text-sky-600">{t('trucks_loaded')}: {tripBaseTotal} base units / unités de base</p>
+          {/if}
         </div>
 
         <div class="flex justify-end gap-2 pt-2">

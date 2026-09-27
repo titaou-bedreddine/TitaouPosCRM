@@ -629,6 +629,7 @@ pub fn delete_sale(db: &DbState, sale_id: i64, user_id: Option<i64>) -> Result<(
         }
     }
 
+    eprintln!("[DS] A stock-restore done");
     // Reverse the drawer: the checkout booked a 'cash_sale' movement for the
     // net cash (reference_type='sale', reference_id=sale_id). Without this the
     // drawer keeps counting a sale that no longer exists.
@@ -658,6 +659,7 @@ pub fn delete_sale(db: &DbState, sale_id: i64, user_id: Option<i64>) -> Result<(
         .map_err(|e| e.to_string())?;
     }
 
+    eprintln!("[DS] B cash reversal done");
     // Reverse + remove the sale's LOADING FEE (déchargement) expense: it was
     // booked at checkout with receipt_reference = sale number. Deleting the
     // sale must not leave an anonymous expense holding drawer money.
@@ -681,6 +683,7 @@ pub fn delete_sale(db: &DbState, sale_id: i64, user_id: Option<i64>) -> Result<(
         }
     }
 
+    eprintln!("[DS] C fee reversal done");
     // Delete sale (cascade deletes sale_items and sale_payments)
     tx.execute("DELETE FROM sales WHERE id = ?1", [sale_id])
         .map_err(|e| e.to_string())?;

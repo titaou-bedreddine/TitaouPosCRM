@@ -123,6 +123,7 @@
     default_customer_name: 'Client Comptoir / زبون عادي',
     hold_sale_require_note: 'false',
     sales_mode: 'pre_sale',
+    packaging_types: [] as any[],
     default_barcode_prefix: '22',
     scale_barcode_format: '97',
     shortcut_f1: 'Focus Barcode Search',
@@ -276,6 +277,7 @@
   // Factory Reset
   let resetType = 'transactions_only';
   let resetConfirm = '';
+  let resetPassword = '';
   // Countdown giving the user time to cancel before the destructive reset.
   let resetCountdown = 0;
   let resetTimer: any = null;
@@ -300,7 +302,7 @@
   }
   async function doFactoryReset() {
     try {
-      await invoke('factory_reset', { resetType });
+      await invoke('factory_reset', { resetType, adminPassword: resetPassword });
       resetConfirm = '';
       resetResult = { ok: true, text: '✅ Reset completed — the app reloads in 2 seconds… / تمت إعادة الضبط' };
       setTimeout(() => window.location.reload(), 2000);
@@ -389,7 +391,13 @@
   };
   let userFormError = '';
 
+  let packagingTypes: any[] = [];
+
   onMount(async () => {
+    try {
+      const list = await invoke<any[]>('get_packaging_types', { activeOnly: false });
+      packagingTypes = list.map((x: any) => ({ ...x, editing: false }));
+    } catch { packagingTypes = []; }
     await loadAutostart();
     // Printer enumeration (wmic subprocess) is the reason tabs felt slow to
     // open: it blocked interaction for seconds. It now loads only when a
@@ -1574,6 +1582,45 @@
               </div>
             </label>
           </div>
+        </div>
+
+  <!-- Packaging TYPE templates (Settings): reusable names — conversions are
+       per product. Admins manage Unité/Fardeau/Palette/... here. -->
+        <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border">
+          <h3 class="text-sm font-black text-pos-text mb-1">{t('pack_title')}</h3>
+          <p class="text-[10px] text-pos-muted mb-3">{t('pack_hint')}</p>
+          <div class="space-y-1.5">
+            {#each packagingTypes as pt (pt.id)}
+              <div class="flex items-center gap-2">
+                <input type="text" bind:value={pt.name} disabled={!pt.editing}
+                  class="flex-1 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-bold text-pos-text outline-none disabled:opacity-60" />
+                <input type="text" bind:value={pt.abbreviation} disabled={!pt.editing} placeholder={t('pack_abbrev')}
+                  class="w-16 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-bold text-pos-text outline-none disabled:opacity-60" />
+                <input type="number" bind:value={pt.display_order} disabled={!pt.editing}
+                  class="w-14 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-mono text-pos-text outline-none disabled:opacity-60" />
+                <label class="flex items-center gap-1 text-[10px] font-bold text-pos-muted cursor-pointer">
+                  <input type="checkbox" bind:checked={pt.is_active} disabled={!pt.editing} class="accent-sky-600" />{t('pack_active')}
+                </label>
+                {#if pt.editing}
+                  <button type="button" on:click={async () => {
+                    await invoke('save_packaging_type', { id: pt.id, name: pt.name, abbreviation: pt.abbreviation || '', displayOrder: pt.display_order, isActive: pt.is_active });
+                    pt.editing = false; packagingTypes = [...packagingTypes];
+                  }} class="px-2 py-1 text-[10px] font-black bg-emerald-600 text-white rounded-lg cursor-pointer">OK</button>
+                {:else}
+                  <button type="button" on:click={() => { pt.editing = true; packagingTypes = [...packagingTypes]; }} class="px-2 py-1 text-[10px] font-black text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer">✎</button>
+                {/if}
+                <button type="button" on:click={async () => {
+                  await invoke('delete_packaging_type', { id: pt.id });
+                  packagingTypes = packagingTypes.filter((x: any) => x.id !== pt.id);
+                }} class="px-2 py-1 text-[10px] font-black text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer">✕</button>
+              </div>
+            {/each}
+          </div>
+          <button type="button" on:click={async () => {
+            const id = await invoke<number>('save_packaging_type', { id: null, name: 'Nouveau / New', abbreviation: '', displayOrder: packagingTypes.length, isActive: true });
+            const list = await invoke<any[]>('get_packaging_types', { activeOnly: false });
+            packagingTypes = list.map((x: any) => ({ ...x, editing: x.id === id }));
+          }} class="mt-2 px-3 py-1.5 text-[10px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer">+ {t('pack_add')}</button>
         </div>
 
   <!-- Appearance: selectable theme skins -->
@@ -3771,6 +3818,10 @@
               >
                 Execute Reset / تنفيذ المسح
               </button>
+            </div>
+            <div class="mb-2">
+              <input type="password" bind:value={resetPassword} placeholder="Mot de passe administrateur / Admin password"
+                class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none" />
             </div>
             {#if resetCountdown > 0}
               <div class="flex items-center justify-between p-2.5 bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 rounded-xl animate-in fade-in duration-150">

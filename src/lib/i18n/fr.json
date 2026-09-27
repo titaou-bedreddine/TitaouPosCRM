@@ -67,7 +67,7 @@
   "employee": "Employé",
   "product": "Produit",
   "quantity": "Qté",
-  "unit_price": "Prix Unitaire",
+  "unit_price": "Prix à l'unité",
   "line_total": "Total Ligne",
   "phone": "Téléphone",
   "email": "Email",
@@ -758,5 +758,14 @@
   "trucks_sales_mode_hint": "Workflow métier (à ne pas confondre avec le mode d'impression). S'applique à l'application Android terrain.",
   "trucks_presale_hint": "Le vendeur livre les commandes déjà prises (flux actuel).",
   "trucks_direct_hint": "Le vendeur vend directement depuis le camion — l'app Android devient un POS mobile.",
-  "trucks_save": "Enregistrer"
+  "trucks_save": "Enregistrer",
+  "pack_title": "Types de conditionnement",
+  "pack_hint": "Modèles réutilisables (Unité, Fardeau, Palette…). Chaque produit définit sa propre conversion + prix.",
+  "pack_add": "Ajouter",
+  "pack_abbrev": "Abrév.",
+  "pack_order": "Ordre",
+  "pack_name": "Nom",
+  "pack_active": "Actif",
+  "contains": "Contient (unités de base)",
+  "nav_hide_direct": "Les écrans de prévente sont masqués en mode Vente directe."
 }

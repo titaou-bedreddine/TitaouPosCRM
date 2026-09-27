@@ -35,6 +35,10 @@
     import { stockWarningModal } from './lib/stores/cart';
     import { reportFormatPicker, settleReportFormat } from './lib/stores/reportFormat';
 
+  // Sales mode (organizations.sales_mode): Direct Sale hides Pre-Sale-only
+  // navigation (Field Orders / Routes / Truck Loads). Shared features stay.
+  let salesMode = 'pre_sale';
+
   // Icons
   import {
     LayoutDashboard, ShoppingCart, Receipt, DollarSign, UsersRound, FileWarning,
@@ -263,6 +267,9 @@
 
   let sidebarVersion = '';
   onMount(async () => {
+    try {
+      salesMode = (await invoke<string>('get_setting', { key: 'sales_mode' })) || 'pre_sale';
+    } catch { salesMode = 'pre_sale'; }
     loadTelegramMaster();
     try {
       sidebarVersion = await invoke<string>('get_app_version');
@@ -481,7 +488,8 @@
         {/if}
 
         {#if isAdmin($currentUser)}
-        <button
+        {#if salesMode !== 'direct_sale'}
+          <button
           type="button"
           on:click={() => currentRoute = 'fieldorders'}
           class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'fieldorders' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
@@ -489,7 +497,9 @@
           <Truck class="w-4 h-4" />
           <span>{t('nav_fieldorders', $currentLocale)}</span>
         </button>
-        <button
+          {/if}
+        {#if salesMode !== 'direct_sale'}
+          <button
           type="button"
           on:click={() => currentRoute = 'routes'}
           class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'routes' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
@@ -497,7 +507,9 @@
           <Route class="w-4 h-4" />
           <span>{t('nav_routes', $currentLocale)}</span>
         </button>
-        <button
+          {/if}
+        {#if salesMode !== 'direct_sale'}
+          <button
           type="button"
           on:click={() => currentRoute = 'truckloads'}
           class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'truckloads' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
@@ -505,6 +517,7 @@
           <FileSpreadsheet class="w-4 h-4 text-amber-500" />
           <span>{t('nav_truckloads', $currentLocale)}</span>
         </button>
+          {/if}
         <button
           type="button"
           on:click={() => currentRoute = 'trucks'}

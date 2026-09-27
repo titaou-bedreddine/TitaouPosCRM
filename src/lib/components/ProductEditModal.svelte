@@ -76,23 +76,59 @@
     packagingRows = packagingRows.filter((_, i) => i !== idx);
   }
 
+  // Active packaging TYPES from Settings (Unité/Fardeau/Palette…) generate the
+  // rows; the CONVERSION and PRICE are per product. Saved product packagings
+  // overlay by name; legacy rows without a matching type still appear.
+  let packTypes: any[] = [];
+
+  async function loadPackagingTypes() {
+    try {
+      packTypes = await invoke<any[]>('get_packaging_types', { activeOnly: true });
+    } catch {
+      packTypes = [];
+    }
+  }
+
+  function buildRowsFromTypes(saved: any[]) {
+    const rows: PackagingRow[] = packTypes
+      .filter((t) => (t.name || '').toLowerCase() !== 'unité' && (t.name || '').toLowerCase() !== 'unite')
+      .map((t) => {
+        const savedRow = saved.find((sp) => (sp.name || '').toLowerCase() === (t.name || '').toLowerCase());
+        return {
+          name: t.name,
+          unitsPerPackage: savedRow ? Number(savedRow.units_per_package) : 0,
+          salePrice: savedRow ? Number(savedRow.sale_price ?? 0) : 0,
+          purchasePrice: savedRow ? Number(savedRow.purchase_price ?? 0) : 0,
+          isDefault: savedRow ? !!savedRow.is_default : false,
+        };
+      });
+    for (const sp of saved) {
+      if (!rows.some((r) => r.name.toLowerCase() === (sp.name || '').toLowerCase())) {
+        rows.push({
+          name: sp.name,
+          unitsPerPackage: Number(sp.units_per_package),
+          salePrice: Number(sp.sale_price ?? 0),
+          purchasePrice: Number(sp.purchase_price ?? 0),
+          isDefault: !!sp.is_default,
+        });
+      }
+    }
+    packagingRows = rows;
+  }
+
   async function loadPackagings() {
+    await loadPackagingTypes();
     if (!product) {
-      packagingRows = [];
+      buildRowsFromTypes([]);
       return;
     }
+    let saved: any[] = [];
     try {
-      const list = await invoke<any[]>('list_packagings', { productId: product.id });
-      packagingRows = list.map((p) => ({
-        name: p.name,
-        unitsPerPackage: p.units_per_package,
-        salePrice: p.sale_price,
-        purchasePrice: p.purchase_price ?? 0,
-        isDefault: !!p.is_default,
-      }));
+      saved = await invoke<any[]>('list_packagings', { productId: product.id });
     } catch {
-      packagingRows = [];
+      saved = [];
     }
+    buildRowsFromTypes(saved);
   }
 
   // Save packagings right after the product save succeeds (needs the id).
@@ -1252,9 +1288,10 @@
                 on:click={addPackagingRow}
                 class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black rounded-lg cursor-pointer"
               >
-                + Add Packaging
-              </button>
+              </div>
+              <p class="text-[9px] text-pos-muted">{t('pack_hint')}</p>
             </div>
+            <div class="hidden">
             <p class="text-[9px] text-pos-muted font-bold">
               Each packaging multiplies the base-unit quantity: 1 carton = 24 pcs, 1 palette = 672 pcs...
               Price per packaging is optional (defaults to unit price × units).
@@ -1268,8 +1305,10 @@
                     <input
                       type="text"
                       bind:value={row.name}
-                      placeholder="Name (carton / fardeau...)"
-                      class="col-span-3 px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-bold text-pos-text outline-none"
+                      readonly
+                      placeholder="Type"
+                      title="Packaging type (Settings → Packaging Types)"
+                      class="col-span-3 px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-black text-pos-text outline-none"
                     />
                     <div class="col-span-2 flex items-center gap-1">
                       <span class="text-[10px] font-bold text-pos-muted whitespace-nowrap">=</span>

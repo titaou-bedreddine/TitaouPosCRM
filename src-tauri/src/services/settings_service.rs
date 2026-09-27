@@ -215,6 +215,8 @@ pub fn factory_reset(db: &DbState, reset_type: &str) -> Result<(), String> {
                 let _ = tx.execute("DELETE FROM scale_sync_logs", []);
                 let _ = tx.execute("DELETE FROM product_price_history", []);
                 let _ = tx.execute("DELETE FROM notification_queue", []);
+                let _ = tx.execute("DELETE FROM sync_outbox", []);
+                let _ = tx.execute("DELETE FROM debt_clear_log", []);
 
                 // Reset customer and supplier balances
                 let _ = tx.execute("UPDATE customers SET balance = 0", []);
@@ -250,6 +252,8 @@ pub fn factory_reset(db: &DbState, reset_type: &str) -> Result<(), String> {
                 let _ = tx.execute("DELETE FROM product_barcodes", []);
                 let _ = tx.execute("DELETE FROM products", []);
                 let _ = tx.execute("DELETE FROM suppliers", []);
+                let _ = tx.execute("DELETE FROM sync_outbox", []);
+                let _ = tx.execute("DELETE FROM debt_clear_log", []);
                 let _ = tx.execute("DELETE FROM customers WHERE id > 1", []);
                 let _ = tx.execute("UPDATE customers SET balance = 0 WHERE id = 1", []);
                 let _ = tx.execute("DELETE FROM users WHERE id > 1", []);

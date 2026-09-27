@@ -337,6 +337,28 @@ pub fn list_sales(
     sales_service::list_sales(&db, start_date, end_date, user_id, channel, limit)
 }
 
+#[tauri::command]
+pub fn get_packaging_types(db: State<'_, DbState>, active_only: Option<bool>) -> Result<Vec<serde_json::Value>, String> {
+    product_service::get_packaging_types(&db, active_only.unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn save_packaging_type(
+    db: State<'_, DbState>,
+    id: Option<i64>,
+    name: String,
+    abbreviation: Option<String>,
+    display_order: Option<i64>,
+    is_active: Option<bool>,
+) -> Result<i64, String> {
+    product_service::save_packaging_type(&db, id, name, abbreviation.unwrap_or_default(), display_order.unwrap_or(0), is_active.unwrap_or(true))
+}
+
+#[tauri::command]
+pub fn delete_packaging_type(db: State<'_, DbState>, id: i64) -> Result<(), String> {
+    product_service::delete_packaging_type(&db, id)
+}
+
 /// Deposit a closed truck trip's cash into the register (idempotent per trip).
 #[tauri::command]
 pub fn deposit_truck_settlement(
@@ -929,7 +951,11 @@ pub fn activate_online(db: State<'_, DbState>) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn factory_reset(db: State<'_, DbState>, reset_type: String) -> Result<(), String> {
+pub fn factory_reset(db: State<'_, DbState>, reset_type: String, admin_password: String) -> Result<(), String> {
+    // Destructive: requires the admin password, not just the UI confirmation.
+    if !crate::auth::verify_admin_password(&db, &admin_password)? {
+        return Err("Mot de passe administrateur incorrect / Incorrect admin password".into());
+    }
     settings_service::factory_reset(&db, &reset_type)
 }
 

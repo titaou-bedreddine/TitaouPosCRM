@@ -918,10 +918,25 @@ pub fn cloud_products_for_promos() -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "products",
-        "id, name",
+        "id, name, packagings:product_packagings(name, units_per_package, sale_price)",
         &[("is_active", "eq.true".into()), ("order", "name.asc".into())],
     )?;
     Ok(Value::Array(rows))
+}
+
+/// The loading fee (déchargement) booked for a sale, if any — identified by
+/// receipt_reference = sale number within the Déchargement category.
+#[tauri::command]
+pub fn get_sale_loading_fee(db: State<'_, crate::database::DbState>, sale_number: String) -> Result<i64, String> {
+    let conn = db.conn.lock().unwrap();
+    let amount: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE receipt_reference = ?1 AND category_id = 8",
+            [sale_number],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    Ok(amount)
 }
 
 // ── Routes (admin: assign a day's orders to a seller as ordered stops) ─────

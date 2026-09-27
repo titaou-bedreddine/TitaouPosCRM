@@ -67,7 +67,7 @@
   "employee": "Employee",
   "product": "Product",
   "quantity": "Qty",
-  "unit_price": "Unit Price",
+  "unit_price": "Unit price",
   "line_total": "Line Total",
   "phone": "Phone",
   "email": "Email",
@@ -758,5 +758,14 @@
   "trucks_sales_mode_hint": "Business workflow (not to be confused with the printing mode). Applies to the field Android app.",
   "trucks_presale_hint": "The seller delivers previously taken orders (current flow).",
   "trucks_direct_hint": "The seller sells directly from the truck — the Android app becomes a mobile POS.",
-  "trucks_save": "Save"
+  "trucks_save": "Save",
+  "pack_title": "Packaging Types",
+  "pack_hint": "Reusable packaging templates (Unit, Fardeau, Palette…). Each product sets its own conversion + price.",
+  "pack_add": "Add type",
+  "pack_abbrev": "Abbrev.",
+  "pack_order": "Order",
+  "pack_name": "Name",
+  "pack_active": "Active",
+  "contains": "Contains (base units)",
+  "nav_hide_direct": "Pre-Sale-only screens are hidden in Direct Sale mode."
 }

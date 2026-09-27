@@ -260,6 +260,26 @@ impl DbState {
             CREATE INDEX IF NOT EXISTS idx_packagings_product ON product_packagings(product_id);
         ");
 
+        // Packaging TYPE templates (Settings): reusable names/labels — the
+        // per-product CONVERSION lives in product_packagings.units_per_package.
+        // Type and conversion are deliberately separate concepts.
+        let _ = conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS packaging_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                abbreviation TEXT DEFAULT '',
+                display_order INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            );
+            INSERT OR IGNORE INTO packaging_types (id, name, abbreviation, display_order, is_active) VALUES
+                (1, 'Unité', 'U', 0, 1),
+                (2, 'Fardeau', 'F', 1, 1),
+                (3, 'Carton', 'C', 2, 1),
+                (4, 'Palette', 'P', 3, 1),
+                (5, 'Sac', 'S', 4, 1),
+                (6, 'Caisse', 'K', 5, 1);
+        ");
+
         // Salary advances (avance sur salaire): persisted, deductible from
         // the next payroll, and booked as an expense when paid in cash.
         let _ = conn.execute_batch("
@@ -736,7 +756,6 @@ mod delete_sale_cascade_tests {
     use super::*;
 
     #[test]
-    #[ignore = "fixture hits an unrelated FK on DELETE FROM sales; cascade fix + fixture investigation pending — see release report"]
     fn delete_sale_reverses_drawer_and_loading_fee() {
         let dir = std::env::temp_dir().join("titaou_delete_cascade_tests");
         let _ = std::fs::create_dir_all(&dir);
@@ -748,6 +767,7 @@ mod delete_sale_cascade_tests {
             let conn = state.conn.lock().unwrap();
             conn.execute_batch(
                 "INSERT INTO users (username, display_name, password_hash, role_id, is_active) VALUES ('t', 'T', 'x', 1, 1);
+                 INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status) VALUES (1, 1, 0, 0, 'open');
                  INSERT INTO sales (id, sale_number, subtotal, total_amount, paid_amount, change_amount, payment_status, status)
                    VALUES (1, 'POS-T9', 6000, 6000, 6000, 0, 'paid', 'completed');
                  INSERT INTO cash_movements (session_id, user_id, type, amount, reason, reference_type, reference_id)

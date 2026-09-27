@@ -38,6 +38,7 @@
   let selectedSale: Sale | null = null;
   let saleItems: any[] = [];
   let isLoadingItems = false;
+  let loadingFee = 0;
 
   // Protected Delete Modal
   let isDeleteModalOpen = false;
@@ -125,6 +126,8 @@
 
   async function openSaleDetails(s: Sale) {
     selectedSale = s;
+    loadingFee = 0;
+    try { loadingFee = await invoke<number>('get_sale_loading_fee', { saleNumber: s.sale_number }); } catch { loadingFee = 0; }
     isDetailModalOpen = true;
     try {
       isLoadingItems = true;
@@ -606,6 +609,9 @@
           <button on:click={() => (isDetailModalOpen = false)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">
             Close
           </button>
+          {#if loadingFee > 0}
+            <div class="w-full flex items-center justify-between px-3 py-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-[11px] font-black"><span>Brut {selectedSale!.total_amount.toLocaleString('fr-DZ')} DA - Frais déchargement {loadingFee.toLocaleString('fr-DZ')} DA = Net {(selectedSale!.total_amount - loadingFee).toLocaleString('fr-DZ')} DA</span></div>
+          {/if}
           <button
             on:click={() => printReceipt(selectedSale!)}
             class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"

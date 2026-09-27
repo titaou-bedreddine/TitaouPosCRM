@@ -306,6 +306,8 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
                 input.unit_id,
                 input.purchase_price,
                 input.sale_price,
+                input.min_sale_price,
+                input.tax_rate,
                 input.current_stock,
                 input.min_stock,
                 input.image_path,
@@ -316,7 +318,8 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
                 input.scale_barcode_type,
                 input.scale_department_id,
                 input.scale_sync_status.unwrap_or_else(|| "pending".to_string()),
-                input.is_bundle
+                input.is_bundle,
+                input.unloading_fee
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -761,4 +764,188 @@ pub fn get_quantity_history(db: &DbState, product_id: i64) -> Result<Vec<Quantit
     }
     entries.reverse();
     Ok(entries)
+}
+
+#[cfg(test)]
+mod save_product_tests {
+    use super::*;
+    use crate::database::DbState;
+
+    fn fresh_db(tag: &str) -> DbState {
+        let dir = std::env::temp_dir().join("titaou_product_tests");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("prod_{}_{}.sqlite", tag, std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = DbState { conn: std::sync::Mutex::new(rusqlite::Connection::open(&path).unwrap()) };
+        state.run_migrations().unwrap();
+        state
+    }
+
+    fn base_input(sku: &str) -> ProductInput {
+        ProductInput {
+            sku: Some(sku.to_string()),
+            name_ar: "ماء".into(),
+            name_fr: "Eau minérale 0.33L".into(),
+            name_en: "Water 0.33L".into(),
+            category_id: None,
+            unit_id: None,
+            purchase_price: 3000,
+            sale_price: 5000,
+            min_sale_price: 4500,
+            tax_rate: 19,
+            current_stock: 0.0,
+            min_stock: 5.0,
+            image_path: None,
+            expiry_date: None,
+            unloading_fee: 0,
+            is_scalable: false,
+            scale_code: None,
+            scale_plu: None,
+            scale_barcode_type: None,
+            scale_department_id: None,
+            scale_sync_status: None,
+            is_bundle: false,
+            barcodes: vec![],
+        }
+    }
+
+    fn round_trip(db: &DbState, id: i64) -> (i64, i64, i64) {
+        let conn = db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT sale_price, min_sale_price, tax_rate FROM products WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    /// Regression for the field bug "got 19 parameters, needed 22": the INSERT
+    /// skipped sale_price/min_sale_price/tax_rate, so product CREATION always
+    /// failed and the saved row lost its pricing. All three values must
+    /// round-trip.
+    #[test]
+    fn a_create_base_unit_only_persists_pricing() {
+        let db = fresh_db("a");
+        let id = save_product(&db, base_input("PROD-A"), None, Some(1)).unwrap();
+        assert_eq!(round_trip(&db, id), (5000, 4500, 19));
+    }
+
+    #[test]
+    fn b_create_with_one_packaging() {
+        let db = fresh_db("b");
+        let id = save_product(&db, base_input("PROD-B"), None, Some(1)).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price)
+                 VALUES (?1, 'Pack 6', 6, 27000)",
+                rusqlite::params![id],
+            )
+            .unwrap();
+        }
+        assert_eq!(round_trip(&db, id), (5000, 4500, 19));
+        let conn = db.conn.lock().unwrap();
+        let (name, upp): (String, f64) = conn
+            .query_row(
+                "SELECT name, units_per_package FROM product_packagings WHERE product_id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((name.as_str(), upp), ("Pack 6", 6.0));
+    }
+
+    #[test]
+    fn c_create_with_multiple_packaging_levels() {
+        let db = fresh_db("c");
+        let id = save_product(&db, base_input("PROD-C"), None, Some(1)).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            for (name, upp, price) in
+                [("Pack 6", 6.0, 27000), ("Fardeau 24", 24.0, 105000), ("Palette 150", 150.0, 640000)]
+            {
+                        conn.execute(
+                    "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![id, name, upp, price],
+                )
+                .unwrap();
+            }
+        }
+        let conn = db.conn.lock().unwrap();
+        let cnt: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM product_packagings WHERE product_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cnt, 3, "three packaging levels must persist");
+        drop(conn);
+        assert_eq!(round_trip(&db, id), (5000, 4500, 19));
+    }
+}
+
+// ── Packaging TYPE templates (Settings) ─────────────────────────────────────
+
+/// All packaging types (Settings → Packaging), ordered for display.
+pub fn get_packaging_types(db: &DbState, active_only: bool) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT id, name, abbreviation, display_order, is_active FROM packaging_types {} ORDER BY display_order ASC, id ASC",
+            if active_only { "WHERE is_active = 1" } else { "" }
+        ))
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "abbreviation": r.get::<_, String>(2)?,
+                "display_order": r.get::<_, i64>(3)?,
+                "is_active": r.get::<_, i64>(4)? != 0,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Create or update a packaging type template.
+pub fn save_packaging_type(
+    db: &DbState,
+    id: Option<i64>,
+    name: String,
+    abbreviation: String,
+    display_order: i64,
+    is_active: bool,
+) -> Result<i64, String> {
+    let conn = db.conn.lock().unwrap();
+    match id {
+        Some(existing) => {
+            conn.execute(
+                "UPDATE packaging_types SET name = ?1, abbreviation = ?2, display_order = ?3, is_active = ?4 WHERE id = ?5",
+                rusqlite::params![name.trim(), abbreviation.trim(), display_order, is_active as i64, existing],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(existing)
+        }
+        None => {
+            conn.execute(
+                "INSERT INTO packaging_types (name, abbreviation, display_order, is_active) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![name.trim(), abbreviation.trim(), display_order, is_active as i64],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(conn.last_insert_rowid())
+        }
+    }
+}
+
+/// Remove a packaging type template. Products keep their saved packaging rows
+/// (they store name + conversion copies), so history is never broken.
+pub fn delete_packaging_type(db: &DbState, id: i64) -> Result<(), String> {
+    let conn = db.conn.lock().unwrap();
+    conn.execute("DELETE FROM packaging_types WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
