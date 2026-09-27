@@ -596,7 +596,7 @@
         <div class="flex items-center gap-2">
           <button
             type="button"
-            on:click={() => editSaleInPos(selectedSale)}
+            on:click={() => editSaleInPos(selectedSale!)}
             class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer"
             title="Re-open this sale in the POS cart"
           >
@@ -607,7 +607,7 @@
             Close
           </button>
           <button
-            on:click={() => printReceipt(selectedSale)}
+            on:click={() => printReceipt(selectedSale!)}
             class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"
           >
             <Printer class="w-4 h-4" />

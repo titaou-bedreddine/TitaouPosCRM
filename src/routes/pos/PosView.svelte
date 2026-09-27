@@ -1187,7 +1187,7 @@
   function advanceQtyEdit() {
     const keys = $cartItems.map(itemKey);
     if (keys.length === 0) return;
-    const currentIdx = keys.indexOf($qtyEditTarget);
+    const currentIdx = keys.indexOf($qtyEditTarget as string);
     const nextIdx = currentIdx < 0 ? 0 : currentIdx + 1;
     if (nextIdx < keys.length) {
       qtyEditTarget.set(keys[nextIdx]);

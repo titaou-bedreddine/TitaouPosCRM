@@ -83,8 +83,12 @@
     }
   }
 
-  async function loadSupplierHistory(x: Supplier) {
+  async function loadSupplierHistory(x: Supplier | null) {
     try {
+      if (!x) {
+        supplierHistory = [];
+        return;
+      }
       const purchases = await invoke<any[]>('list_purchases');
       supplierHistory = purchases.filter((pur) => pur.supplier_id === x.id).slice(0, 50);
     } catch {
@@ -463,7 +467,7 @@
           </div>
           <button
             type="button"
-            on:click={() => printSupplierCard(previewSupplier)}
+            on:click={() => printSupplierCard(previewSupplier!)}
             class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-black rounded-xl cursor-pointer shadow-md"
           >
             Print QR Card (طباعة البطاقة)

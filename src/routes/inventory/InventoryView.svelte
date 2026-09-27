@@ -171,7 +171,7 @@
   let allPacks: Array<{ product_id: number; name: string; units_per_package: number }> = [];
 
   $: stockLabelById = (() => {
-    const map: Record<number, string> = {};
+    const map: Record<number, Array<{ product_id: number; name: string; units_per_package: number }>> = {};
     for (const pk of allPacks) {
       (map[pk.product_id] ??= []).push(pk);
     }

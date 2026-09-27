@@ -81,7 +81,7 @@
         }
 
         await invoke('add_cash_movement', {
-          sessionId: $activeSession.id,
+          sessionId: $activeSession!.id,
           userId: $currentUser.id,
           movementType: mode === 'in' ? 'cash_in' : 'cash_out',
           amount: safeAmount,

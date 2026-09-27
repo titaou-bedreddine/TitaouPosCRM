@@ -177,14 +177,14 @@
       const unlisten = await listen<{ progress: number }>('update-progress', (e) => {
         updateProgress = e.payload.progress;
       });
-      const result = await invoke<{ download_url: string }>('check_github_update');
+      const result = await invoke<{ download_url: string; has_update?: boolean; tag_name?: string }>('check_github_update');
       if (!result.download_url || !result.has_update) {
         updateStatus = '';
         newUpdateAvailable = false;
         unlisten();
         return;
       }
-      updateTag = result.tag_name;
+      updateTag = result.tag_name ?? '';
       await invoke('download_and_install_update', { url: result.download_url });
       // The app exits itself once the installer is launched.
       unlisten();

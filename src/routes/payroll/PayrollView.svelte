@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { normalizeBarcode } from '../../lib/utils/barcode';
-  import type { Employee, Payroll } from '../../lib/types';
+  import type { Employee } from '../../lib/types';
   import { t } from '../../lib/i18n';
   import {
     Plus, Users, Award, DollarSign, Calendar, AlertTriangle,

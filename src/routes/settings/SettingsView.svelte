@@ -306,7 +306,7 @@
       setTimeout(() => window.location.reload(), 2000);
     } catch (e) {
       console.error(e);
-      resetResult = { ok: false, text: '❌ Factory reset failed: ' + (typeof e === 'string' ? e : e?.message || String(e)) };
+      resetResult = { ok: false, text: '❌ Factory reset failed: ' + (typeof e === 'string' ? e : (e as { message?: string })?.message || String(e)) };
     }
   }
 

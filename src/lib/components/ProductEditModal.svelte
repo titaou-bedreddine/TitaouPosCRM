@@ -365,13 +365,14 @@
     }
     return {
       id: product ? product.id : 0,
+      is_active: product ? product.is_active : true,
       sku: sku || undefined,
       name_ar: nameAr.trim() || nameFr.trim() || 'Produit',
       name_fr: nameFr.trim() || nameAr.trim() || 'Produit',
       name_en: nameEn.trim() || nameFr.trim() || 'Product',
-      category_id: categoryId,
+      category_id: categoryId ?? undefined,
       category_name: categories.find(c => c.id === categoryId)?.name_fr || '',
-      unit_id: unitId,
+      unit_id: unitId ?? undefined,
       unit_name: units.find(u => u.id === unitId)?.name || '',
       purchase_price: Number(purchasePrice) || 0,
       sale_price: Number(salePrice) || 0,

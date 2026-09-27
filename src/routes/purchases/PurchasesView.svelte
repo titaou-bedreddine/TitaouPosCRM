@@ -76,7 +76,7 @@
   let purchaseTva = 19; // default from settings; editable per invoice
 
   let items: ItemRow[] = [];
-  let allPacks: Array<{ product_id: number; name: string; units_per_package: number; purchase_price: number }> = [];
+  let allPacks: Array<{ id: number; product_id: number; name: string; units_per_package: number; purchase_price: number }> = [];
 
   function packsFor(productId: number) {
     return allPacks.filter((pk) => pk.product_id === productId);

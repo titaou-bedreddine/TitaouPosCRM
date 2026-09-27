@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { localTodayISO } from '../utils/date';
   import { t, currentLocale } from '../i18n';
-  import type { Supplier, Product, CreatePurchaseInput } from '../types';
+  import type { Supplier, Product } from '../types';
   import { normalizeBarcode } from '../utils/barcode';
   import { X, Check, ShoppingBag, Plus, Search, DollarSign } from 'lucide-svelte';
 

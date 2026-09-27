@@ -540,7 +540,7 @@
             <p class="text-[10px] text-pos-muted font-bold">Scan at POS for Instant Account Lookup</p>
             <button
               type="button"
-              on:click={() => printCustomerCard(previewCustomer)}
+              on:click={() => printCustomerCard(previewCustomer!)}
               class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-black rounded-xl cursor-pointer shadow-xs"
             >
               Print QR Card (طباعة)
@@ -570,7 +570,7 @@
       </div>
 
       <div class="px-6 py-4 border-t border-pos-border bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between">
-        <button on:click={() => printCustomerDebtRecap(previewCustomer)} class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs">
+        <button on:click={() => printCustomerDebtRecap(previewCustomer!)} class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs">
           <Printer class="w-4 h-4" />
           <span>Print Statement (طباعة كشف)</span>
         </button>

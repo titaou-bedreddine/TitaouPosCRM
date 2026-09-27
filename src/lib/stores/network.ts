@@ -48,6 +48,16 @@ export interface NetworkStatus {
   pc_name: string;
   shop_id: string;
   shop_name: string;
+  /** Present in `network_status` when a discovery diagnostic last ran. */
+  discovery_diag?: {
+    probes_sent?: number;
+    answers_received?: number;
+    announces_received?: number;
+    announces_sent?: number;
+    last_answer_from?: string;
+  } | null;
+  /** Last server PC name seen on the LAN (discovery panel). */
+  last_server?: string | null;
   coordinator: { node_id: string; pc_name: string } | null;
   server_url: string | null;
   term: number;
