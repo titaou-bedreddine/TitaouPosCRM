@@ -2,7 +2,7 @@
  * CENTRALIZED PRINT SERVICE (v1.0.0).
  *
  * The single architectural entry point for all printing operations throughout
- * the entire TitaouPosCRM application.
+ * the entire Titaou One application.
  *
  * Routing Logic:
  *   POS Operation -> Save to SQLite -> PrintService -> Read Settings:
