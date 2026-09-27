@@ -278,7 +278,7 @@
         <Truck class="w-5 h-5 text-sky-500" />
         {t('tl_title')}
       </h1>
-      <p class="text-xs text-pos-muted">Titaou CRM — {t('tl_returns')}</p>
+      <p class="text-xs text-pos-muted">Titaou One — {t('tl_returns')}</p>
     </div>
     <div class="flex gap-2">
       <button type="button" on:click={load} disabled={loading}

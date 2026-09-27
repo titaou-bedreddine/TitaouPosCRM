@@ -361,7 +361,7 @@
   let barcodeBuffer = '';
   let lastKeyTime = 0;
 
-  let currentShopName = 'Titaou POS';
+  let currentShopName = 'Titaou One';
   let currentTime = new Date().toLocaleTimeString();
   let currentDate = new Date().toLocaleDateString();
   let timeInterval: any;
@@ -910,7 +910,7 @@
       const s = await invoke<Record<string, string>>('get_all_settings');
       const tva = parseFloat(s?.default_tva_sale ?? '19');
       if (!isNaN(tva)) receiptTvaRate = tva;
-      currentShopName = s['shop_name_fr'] || s['shop_name_ar'] || 'Titaou POS';
+      currentShopName = s['shop_name_fr'] || s['shop_name_ar'] || 'Titaou One';
       if (s['cart_item_order'] === 'top' || s['cart_item_order'] === 'bottom') {
         $cartItemOrder = s['cart_item_order'];
       }
@@ -1103,55 +1103,7 @@
         100
       ).catch(() => undefined);
 
-      // Silent Auto-Print (F12 quick checkout skips it for this sale).
-      const printThisSale = autoPrintEnabled && !suppressNextPrint;
-      suppressNextPrint = false;
-      if (printThisSale) {
-        let appSettings: Record<string, string> = {};
-        try {
-          appSettings = await invoke<Record<string, string>>('get_all_settings');
-        } catch (e) {
-          console.warn('Could not load settings for receipt:', e);
-        }
 
-        const terminalName = $networkStatus?.pc_name || undefined;
-
-        const receiptItems = $cartItems.map((i) => ({
-          name: i.name_fr || i.name_ar,
-          quantity: i.quantity,
-          unitPrice: i.unit_price,
-          totalPrice: i.total_price,
-          discountPerUnit: i.discount_amount || 0,
-          isRefund: i.is_refund || false,
-        }));
-
-        // Centralized Printing System (v1.0.0): routes dynamically to
-        // Disabled, USB Thermal, or Native A4 based on global Settings.
-        const effectiveMethod = mode === 'versement' ? 'VERSEMENT (تسبقة)' : mode === 'credit' ? 'CREDIT (دين)' : selectedPaymentMode.toUpperCase();
-        const saleDocData = {
-          sale_number: saleNumber,
-          sale_date: saleDate,
-          cashier_name: cashier,
-          terminal_name: terminalName,
-          customer_name: customerName || (mode === 'credit' ? 'Client Crédit' : undefined),
-          payment_mode: mode === 'credit' ? 'credit' : mode === 'versement' ? 'versement' : selectedPaymentMode,
-          subtotal: $cartSubtotal,
-          discount_amount: $globalDiscountAmount,
-          total_amount: $cartGrandTotal,
-          paid_amount: mode === 'direct' ? $cartGrandTotal : paid,
-          change_amount: change,
-          remaining_amount: mode === 'versement' ? reste : (mode === 'credit' ? ($cartGrandTotal - paid) : 0),
-        };
-
-        void printService.printSale(saleDocData, receiptItems, {
-          isCredit: mode === 'credit',
-          copyLabel: mode === 'credit' ? 'COPIE MAGASIN / STORE COPY' : mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
-        }).then((res) => {
-          if (!res.ok && res.mode !== 'disabled') {
-            console.warn('[POS] Print notice:', res.message);
-          }
-        });
-      }
 
       // Auto-kick cash drawer
       if (autoDrawerEnabled && mode === 'direct' && effectiveMethod === 'cash') {
@@ -1172,6 +1124,63 @@
       lastSaleSuccessNumber = saleNumber;
       clearCart();
       await loadProducts();
+
+      // Deferred silent print (spec: checkout responsiveness > printing).
+      // The sale is already committed; everything the receipt needs is
+      // captured BEFORE the cart clears, and printing runs on a macrotask
+      // after the success paint. A print failure never rolls back the sale.
+      {
+        const printThisSale = autoPrintEnabled && !suppressNextPrint;
+        suppressNextPrint = false;
+        if (printThisSale) {
+          const capturedItems = $cartItems.map((i) => ({
+            name: i.name_fr || i.name_ar,
+            quantity: i.quantity,
+            unitPrice: i.unit_price,
+            totalPrice: i.total_price,
+            discountPerUnit: i.discount_amount || 0,
+            isRefund: i.is_refund || false,
+          }));
+          const captured = {
+            mode, saleNumber, saleDate, cashier, customerName, paid, change, reste,
+            paymentMode: selectedPaymentMode,
+            subtotal: $cartSubtotal,
+            discount: $globalDiscountAmount,
+            grandTotal: $cartGrandTotal,
+          };
+          setTimeout(async () => {
+            let appSettings: Record<string, string> = {};
+            try {
+              appSettings = await invoke<Record<string, string>>('get_all_settings');
+            } catch (e) {
+              console.warn('Could not load settings for receipt:', e);
+            }
+            const effectiveMethod = captured.mode === 'versement' ? 'VERSEMENT (تسبقة)' : captured.mode === 'credit' ? 'CREDIT (دين)' : captured.paymentMode.toUpperCase();
+            const saleDocData = {
+              sale_number: captured.saleNumber,
+              sale_date: captured.saleDate,
+              cashier_name: captured.cashier,
+              terminal_name: $networkStatus?.pc_name || undefined,
+              customer_name: captured.customerName || (captured.mode === 'credit' ? 'Client Crédit' : undefined),
+              payment_mode: captured.mode === 'credit' ? 'credit' : captured.mode === 'versement' ? 'versement' : captured.paymentMode,
+              subtotal: captured.subtotal,
+              discount_amount: captured.discount,
+              total_amount: captured.grandTotal,
+              paid_amount: captured.mode === 'direct' ? captured.grandTotal : captured.paid,
+              change_amount: captured.change,
+              remaining_amount: captured.mode === 'versement' ? captured.reste : (captured.mode === 'credit' ? (captured.grandTotal - captured.paid) : 0),
+            };
+            void printService.printSale(saleDocData, capturedItems, {
+              isCredit: captured.mode === 'credit',
+              copyLabel: captured.mode === 'credit' ? 'COPIE MAGASIN / STORE COPY' : captured.mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
+            }).then((res) => {
+              if (!res.ok && res.mode !== 'disabled') {
+                console.warn('[POS] Print notice:', res.message);
+              }
+            });
+          }, 50);
+        }
+      }
 
       setTimeout(() => {
         lastSaleSuccessNumber = '';

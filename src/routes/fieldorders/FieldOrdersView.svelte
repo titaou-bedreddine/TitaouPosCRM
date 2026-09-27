@@ -166,7 +166,7 @@
         {t('fo_title')}
       </h1>
       <p class="text-xs text-pos-muted">
-        {t('fo_member')} · {t('fo_status')} · {t('fo_payment')} — Titaou CRM
+        {t('fo_member')} · {t('fo_status')} · {t('fo_payment')} — Titaou One
       </p>
     </div>
     <button type="button" on:click={load} disabled={loading}

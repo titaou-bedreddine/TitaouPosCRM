@@ -261,6 +261,15 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
               <span>NET À PAYER:</span>
               <span class="grand-total-amount">${formatMoney(doc.grandTotal, currency)}</span>
             </div>
+            ${doc.loadingFee !== undefined && doc.loadingFee > 0 ? `
+              <div class="total-row text-rose">
+                <span>Frais de déchargement:</span>
+                <span>-${formatMoney(doc.loadingFee, currency)}</span>
+              </div>
+              <div class="total-row font-black">
+                <span>Net encaissé (caisse):</span>
+                <span>${formatMoney(doc.grandTotal - doc.loadingFee, currency)}</span>
+              </div>` : ''}
           </div>
         </div>
       `;

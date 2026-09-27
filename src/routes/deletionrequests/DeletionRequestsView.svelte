@@ -66,7 +66,7 @@
         <FileWarning class="w-5 h-5 text-amber-500" />
         {t('dr_title')}
       </h1>
-      <p class="text-xs text-pos-muted">{t('dr_pending')} — Titaou CRM</p>
+      <p class="text-xs text-pos-muted">{t('dr_pending')} — Titaou One</p>
     </div>
     <button type="button" on:click={load} disabled={loading}
       class="p-2 text-pos-muted hover:text-pos-text rounded-xl cursor-pointer">

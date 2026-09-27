@@ -46,6 +46,8 @@ export interface UnifiedReceiptContext {
   isCredit?: boolean;
   versementPaid?: number;
   versementRemaining?: number;
+  /** Déchargement fee (informational): drawer net = grandTotal − fee. */
+  loadingFee?: number;
 }
 
 function bool(s: Record<string, any>, key: string, dflt = true): boolean {
@@ -201,6 +203,10 @@ export function buildEscposReceipt(c: UnifiedReceiptContext, width: 32 | 42 | 48
   }
   out += ESC + '!\x30'; // big total
   out += escposRow('TOTAL', escposMoney(c.grandTotal), width);
+  if (c.loadingFee !== undefined && c.loadingFee > 0) {
+    out += escposRow('DECHARGEMENT', '-' + escposMoney(c.loadingFee), width);
+    out += escposRow('NET CAISSE', escposMoney(c.grandTotal - c.loadingFee), width);
+  }
   out += ESC + '!\x00';
   if (c.amountPaid !== undefined && c.amountPaid > 0) out += escposRow('PAID', escposMoney(c.amountPaid), width);
   if (c.change) out += escposRow('CHANGE', escposMoney(c.change), width);

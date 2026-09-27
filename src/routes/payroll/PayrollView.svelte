@@ -401,7 +401,7 @@
       <p style="font-size:13px;font-weight:900;margin:0;">${emp.full_name}</p>
       <p style="font-size:9px;margin:2px 0;">${emp.employee_code} • ${emp.job_title || ''}</p>
       <img src="${qr}" alt="QR" style="width:34mm;height:34mm;margin:4mm auto;" />
-      <p style="font-size:8px;">Titaou POS • ${new Date().toLocaleDateString('fr-FR')}</p>
+      <p style="font-size:8px;">Titaou One • ${new Date().toLocaleDateString('fr-FR')}</p>
     </div>`;
     const r = await printHtmlSilently(html, 'Employee Card ' + emp.employee_code, { widthMm: 60 });
     if (!r.ok) showError('Print failed: ' + r.message);

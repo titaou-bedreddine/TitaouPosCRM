@@ -924,6 +924,46 @@ pub fn cloud_products_for_promos() -> Result<Value, String> {
     Ok(Value::Array(rows))
 }
 
+/// Read the business sales mode from the CRM organizations row.
+#[tauri::command]
+pub fn cloud_get_sales_mode() -> Result<String, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select("organizations", "sales_mode", &[])?;
+    Ok(rows
+        .first()
+        .and_then(|r| r["sales_mode"].as_str().map(String::from))
+        .unwrap_or_else(|| "pre_sale".into()))
+}
+
+/// Change the business sales mode. SECURITY-SENSITIVE: requires the local
+/// admin password (server-side, the Supabase RLS org_admin_update policy
+/// additionally restricts the patch to the admin account).
+#[tauri::command]
+pub fn cloud_set_sales_mode(
+    db: State<'_, crate::database::DbState>,
+    mode: String,
+    admin_password: String,
+) -> Result<(), String> {
+    if mode != "pre_sale" && mode != "direct_sale" {
+        return Err("invalid sales mode".into());
+    }
+    // Local admin authorization: only the machine's admin may flip the
+    // business workflow (the Supabase RLS org_admin_update policy then
+    // restricts the patch itself to the admin account).
+    if !crate::auth::verify_admin_password(&db, &admin_password).unwrap_or(false) {
+        return Err("Mot de passe administrateur incorrect / Incorrect admin password".into());
+    }
+    let client = cloud::ensure_session()?;
+    let org = cloud::auth::fetch_profile(&client)?["organization_id"]
+        .as_str()
+        .ok_or("no org")?
+        .to_string();
+    client.patch(
+        "organizations",
+        serde_json::json!({ "sales_mode": mode }),
+        &[("id", format!("eq.{org}"))],
+    )
+}
 /// The loading fee (déchargement) booked for a sale, if any — identified by
 /// receipt_reference = sale number within the Déchargement category.
 #[tauri::command]

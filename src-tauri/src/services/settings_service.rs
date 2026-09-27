@@ -283,7 +283,7 @@ pub fn factory_reset(db: &DbState, reset_type: &str) -> Result<(), String> {
                     [],
                 );
             }
-            _ => {}
+            _ => return Err(rusqlite::Error::InvalidParameterName(format!("factory_reset: unknown reset type '{}'", reset_type))),
         }
 
         tx.commit()?;
@@ -601,4 +601,46 @@ pub fn restore_settings_only(source_backup_path: &str) -> Result<usize, String> 
     let count = parsed.len();
     set_multiple_settings(&db, parsed).map_err(|e| e.to_string())?;
     Ok(count)
+}
+#[cfg(test)]
+mod factory_reset_tests {
+    use super::*;
+    use crate::database::DbState;
+
+    fn fresh_db(tag: &str) -> DbState {
+        let dir = std::env::temp_dir().join("titaou_reset_tests");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("reset_{}_{}.sqlite", tag, std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = DbState { conn: std::sync::Mutex::new(rusqlite::Connection::open(&path).unwrap()) };
+        state.run_migrations().unwrap();
+        state
+    }
+
+    /// The products_only scope wipes products AND their dependent rows
+    /// transactionally (price history, barcodes, movements).
+    #[test]
+    fn products_only_scope_wipes_transactionally() {
+        let db = fresh_db("a");
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                 "INSERT INTO products (id, sku, name_ar, name_fr, name_en, category_id, purchase_price, sale_price)
+                   VALUES (1, 'RST-1', 'م', 'Produit reset', 'Product reset', 1, 1000, 2000);",
+            ).unwrap();
+        }
+        factory_reset(&db, "products_only").unwrap();
+        let conn = db.conn.lock().unwrap();
+        let products: i64 = conn.query_row("SELECT COUNT(*) FROM products", [], |r| r.get(0)).unwrap();
+        let history: i64 = conn.query_row("SELECT COUNT(*) FROM product_price_history", [], |r| r.get(0)).unwrap();
+        assert_eq!(products, 0, "products_only must wipe products");
+        assert_eq!(history, 0, "dependent history must be wiped");
+    }
+
+    /// Unknown reset types are rejected (no accidental wipes).
+    #[test]
+    fn unknown_reset_type_is_rejected() {
+        let db = fresh_db("b");
+        assert!(factory_reset(&db, "wipe_everything_secret").is_err());
+    }
 }

@@ -767,5 +767,6 @@
   "pack_name": "Name",
   "pack_active": "Active",
   "contains": "Contains (base units)",
-  "nav_hide_direct": "Pre-Sale-only screens are hidden in Direct Sale mode."
+  "nav_hide_direct": "Pre-Sale-only screens are hidden in Direct Sale mode.",
+  "trucks_sales_mode_current": "Current mode"
 }

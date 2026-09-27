@@ -74,6 +74,9 @@ export interface PrintableDocument {
   discountTotal: number;
   taxTotal: number;
   grandTotal: number;
+  /** Déchargement fee booked against this sale (informational — the
+   * customer owes grandTotal; the fee reduces the drawer, not the debt). */
+  loadingFee?: number;
   payment?: PrintablePayment;
   notes?: string;
   footerNote?: string;

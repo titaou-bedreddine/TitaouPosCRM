@@ -104,7 +104,7 @@
         <UsersRound class="w-5 h-5 text-sky-500" />
         {t('team_title')}
       </h1>
-      <p class="text-xs text-pos-muted">Titaou CRM — preseller / seller / admin</p>
+      <p class="text-xs text-pos-muted">Titaou One — preseller / seller / admin</p>
     </div>
     <div class="flex gap-2">
       <button type="button" on:click={load} disabled={loading}

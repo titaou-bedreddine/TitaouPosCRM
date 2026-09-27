@@ -277,6 +277,8 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             commands::save_packaging_type,
             commands::delete_packaging_type,
             cloudsync::cloud_cmds::get_sale_loading_fee,
+            cloudsync::cloud_cmds::cloud_get_sales_mode,
+            cloudsync::cloud_cmds::cloud_set_sales_mode,
         ]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

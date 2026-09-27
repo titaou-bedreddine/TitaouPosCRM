@@ -46,7 +46,7 @@
   let currentTab: SettingsTab = 'general';
   let settings: Record<string, any> = {
     shop_name_ar: 'سوبرماركت تيتاو',
-    shop_name_fr: 'Titaou POS Supermarché',
+    shop_name_fr: 'Titaou One Supermarché',
     shop_phone: '0553444057 / 021654321',
     shop_address: 'Alger Centre, Algérie',
     shop_rc: '16/00-0123456B22',
@@ -123,7 +123,6 @@
     default_customer_name: 'Client Comptoir / زبون عادي',
     hold_sale_require_note: 'false',
     sales_mode: 'pre_sale',
-    packaging_types: [] as any[],
     default_barcode_prefix: '22',
     scale_barcode_format: '97',
     shortcut_f1: 'Focus Barcode Search',
@@ -393,6 +392,46 @@
 
   let packagingTypes: any[] = [];
 
+  // SECURITY-SENSITIVE: changing the business workflow requires the admin
+  // password AND typing CHANGE. The patch itself is RLS-admin-scoped
+  // server-side (organizations.org_admin_update).
+  let salesModeDialog: { from: string; to: string } | null = null;
+  let salesModePassword = '';
+  let salesModeConfirm = '';
+  let salesModeError = '';
+  let salesModeBusy = false;
+
+  function requestSalesModeChange(to: string) {
+    if (to === settings.sales_mode) return;
+    salesModeDialog = { from: settings.sales_mode, to };
+    salesModePassword = '';
+    salesModeConfirm = '';
+    salesModeError = '';
+  }
+
+  async function confirmSalesModeChange() {
+    if (!salesModeDialog) return;
+    if (salesModeConfirm.trim().toUpperCase() !== 'CHANGE') {
+      salesModeError = "Type CHANGE / Tapez CHANGE";
+      return;
+    }
+    salesModeBusy = true;
+    salesModeError = '';
+    try {
+      await invoke('cloud_set_sales_mode', {
+        mode: salesModeDialog.to,
+        adminPassword: salesModePassword,
+      });
+      settings.sales_mode = salesModeDialog.to;
+      salesModeDialog = null;
+      await autoSaveSettings();
+    } catch (e: any) {
+      salesModeError = typeof e === 'string' ? e : e?.message || String(e);
+    } finally {
+      salesModeBusy = false;
+    }
+  }
+
   onMount(async () => {
     try {
       const list = await invoke<any[]>('get_packaging_types', { activeOnly: false });
@@ -408,7 +447,7 @@
       const v = await invoke<string>('get_app_version');
       if (v) {
         appVersion = `v${v}`;
-        updateStatus = `Titaou POS is up to date (Version ${v} - Latest Release)`;
+        updateStatus = `Titaou One is up to date (Version ${v} - Latest Release)`;
       }
     } catch (e) {
       console.warn(e);
@@ -621,7 +660,7 @@
       autostartEnabled = !autostartEnabled;
       triggerSaveNotification(
         autostartEnabled
-          ? 'Titaou POS will start with Windows / سينطلق البرنامج مع ويندوز'
+          ? 'Titaou One will start with Windows / سينطلق البرنامج مع ويندوز'
           : 'Autostart disabled / تم إلغاء الانطلاق مع ويندوز'
       );
     } catch (e: any) {
@@ -865,7 +904,7 @@
     refreshLanStatus();
   }
 
-  // ----- LAN shop network (Titaou POS Network: server / client / automatic) -----
+  // ----- LAN shop network (Titaou One Network: server / client / automatic) -----
   let lanStatus: any = null;
   let lanBusy = '';
   let lanMsg = '';
@@ -977,7 +1016,7 @@
         },
       });
       await invoke('send_telegram_message', {
-        text: '🚀 *Titaou POS Live Alert*\nTest connection successful from POS settings!',
+        text: '🚀 *Titaou One Live Alert*\nTest connection successful from POS settings!',
       });
       telegramStatusMsg = '✅ Telegram test alert delivered successfully!';
     } catch (e: any) {
@@ -1060,14 +1099,14 @@
   async function checkForUpdates() {
     try {
       isCheckingUpdate = true;
-      updateStatus = 'Querying GitHub releases for Titaou POS...';
+      updateStatus = 'Querying GitHub releases for Titaou One...';
 
       let updateResult: AppUpdateResult;
       try {
         updateResult = await invoke<AppUpdateResult>('check_github_update');
       } catch (invErr: any) {
         console.warn('Backend check_github_update error, attempting fetch fallback:', invErr);
-        const res = await fetch('https://api.github.com/repos/titaou-bedreddine/Titaou POS/releases', {
+        const res = await fetch('https://api.github.com/repos/titaou-bedreddine/Titaou One/releases', {
           headers: { 'Accept': 'application/vnd.github.v3+json' }
         });
         if (!res.ok) throw new Error(`GitHub API HTTP ${res.status}`);
@@ -1085,7 +1124,7 @@
           tag_name: latestTag,
           release_name: latest.name || latestTag,
           release_notes: latest.body || '',
-          release_url: latest.html_url || 'https://github.com/titaou-bedreddine/Titaou POS/releases',
+          release_url: latest.html_url || 'https://github.com/titaou-bedreddine/Titaou One/releases',
           download_url: setupAsset ? setupAsset.browser_download_url : (latest.html_url || ''),
           published_at: latest.published_at || '',
         };
@@ -1096,7 +1135,7 @@
       latestDownloadUrl = updateResult.download_url;
 
       if (!updateResult.has_update) {
-        updateStatus = `Titaou POS is up to date (${appVersion} is the latest release).`;
+        updateStatus = `Titaou One is up to date (${appVersion} is the latest release).`;
         updateAvailable = false;
         triggerSaveNotification('System is up to date!');
       } else {
@@ -1567,15 +1606,17 @@
           <h3 class="text-sm font-black text-pos-text mb-1">{t('trucks_sales_mode')}</h3>
           <p class="text-[10px] text-pos-muted mb-3">{t('trucks_sales_mode_hint')}</p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-            <label class="flex items-start gap-3 p-3.5 rounded-xl border-2 cursor-pointer transition {settings.sales_mode === 'pre_sale' ? 'border-sky-500 bg-sky-50/40 dark:bg-sky-950/20' : 'border-pos-border hover:border-slate-300'}">
-              <input type="radio" bind:group={settings.sales_mode} value="pre_sale" on:change={autoSaveSettings} class="mt-1 text-sky-600 focus:ring-sky-500" />
+            <label class="flex items-start gap-3 p-3.5 rounded-xl border-2 cursor-pointer transition {settings.sales_mode === 'pre_sale' ? 'border-sky-500 bg-sky-50/40 dark:bg-sky-950/20' : 'border-pos-border hover:border-slate-300'}"
+              on:click|preventDefault={() => requestSalesModeChange('pre_sale')}>
+              <input type="radio" checked={settings.sales_mode === 'pre_sale'} class="mt-1 text-sky-600 focus:ring-sky-500" />
               <div>
                 <p class="text-xs font-black text-pos-text">{t('trucks_presale')}</p>
                 <p class="text-[10px] text-pos-muted">{t('trucks_presale_hint')}</p>
               </div>
             </label>
-            <label class="flex items-start gap-3 p-3.5 rounded-xl border-2 cursor-pointer transition {settings.sales_mode === 'direct_sale' ? 'border-purple-500 bg-purple-50/40 dark:bg-purple-950/20' : 'border-pos-border hover:border-slate-300'}">
-              <input type="radio" bind:group={settings.sales_mode} value="direct_sale" on:change={autoSaveSettings} class="mt-1 text-purple-600 focus:ring-purple-500" />
+            <label class="flex items-start gap-3 p-3.5 rounded-xl border-2 cursor-pointer transition {settings.sales_mode === 'direct_sale' ? 'border-purple-500 bg-purple-50/40 dark:bg-purple-950/20' : 'border-pos-border hover:border-slate-300'}"
+              on:click|preventDefault={() => requestSalesModeChange('direct_sale')}>
+              <input type="radio" checked={settings.sales_mode === 'direct_sale'} class="mt-1 text-purple-600 focus:ring-purple-500" />
               <div>
                 <p class="text-xs font-black text-pos-text">{t('trucks_direct')}</p>
                 <p class="text-[10px] text-pos-muted">{t('trucks_direct_hint')}</p>
@@ -1623,6 +1664,28 @@
           }} class="mt-2 px-3 py-1.5 text-[10px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer">+ {t('pack_add')}</button>
         </div>
 
+  {#if salesModeDialog}
+    <div class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" on:click={() => (salesModeDialog = null)} role="presentation">
+      <div class="bg-white dark:bg-slate-900 rounded-2xl border border-amber-400 w-full max-w-md p-5 space-y-3" on:click|stopPropagation>
+        <h3 class="text-sm font-black text-pos-text">⚠︎ {t('trucks_sales_mode')}</h3>
+        <p class="text-[11px] text-pos-muted">
+          {t('trucks_sales_mode_current')}: <b>{salesModeDialog.from === 'direct_sale' ? t('trucks_direct') : t('trucks_presale')}</b>
+          → <b>{salesModeDialog.to === 'direct_sale' ? t('trucks_direct') : t('trucks_presale')}</b>
+        </p>
+        <input type="password" bind:value={salesModePassword} placeholder="Admin password"
+          class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none" />
+        <input type="text" bind:value={salesModeConfirm} placeholder="Type CHANGE to confirm"
+          class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-black text-pos-text outline-none" />
+        {#if salesModeError}<p class="text-[11px] font-bold text-rose-600">{salesModeError}</p>{/if}
+        <div class="flex justify-end gap-2">
+          <button type="button" on:click={() => (salesModeDialog = null)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">Cancel</button>
+          <button type="button" on:click={confirmSalesModeChange} disabled={salesModeBusy}
+            class="px-4 py-2 text-[11px] font-black bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">Change Mode</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- Appearance: selectable theme skins -->
         <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border">
           <h3 class="text-sm font-black text-pos-text mb-3">Appearance / المظهر / Apparence</h3>
@@ -1657,7 +1720,7 @@
           </div>
 
           <div class="space-y-2">
-            <h4 class="text-xs font-black text-pos-text">Store Logo Preview (Titaou POS Icon)</h4>
+            <h4 class="text-xs font-black text-pos-text">Store Logo Preview (Titaou One Icon)</h4>
             <p class="text-[11px] text-pos-muted">This logo appears on printed invoices, thermal receipts, and sidebar branding.</p>
             <div class="flex items-center gap-2">
               <label class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-xl cursor-pointer flex items-center gap-1.5 transition">
@@ -1723,7 +1786,7 @@
         <div class="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-pos-border flex items-center justify-between gap-4">
           <div>
             <h4 class="text-xs font-black text-pos-text">Start with Windows (الانطلاق مع ويندوز)</h4>
-            <p class="text-[11px] text-pos-muted">Titaou POS launches automatically when the PC boots.</p>
+            <p class="text-[11px] text-pos-muted">Titaou One launches automatically when the PC boots.</p>
           </div>
           <button
             type="button"
@@ -2839,13 +2902,13 @@
           <p class="text-xs text-pos-muted">Connect Android scanners, waiter tablets, and inventory devices via Wi-Fi</p>
         </div>
 
-        <!-- ============ Titaou POS SHOP NETWORK (LAN multi-PC) ============ -->
+        <!-- ============ Titaou One SHOP NETWORK (LAN multi-PC) ============ -->
         <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border space-y-4">
           <div class="flex items-start justify-between">
             <div>
               <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
                 <span class="w-3 h-3 rounded-full {lanStatus?.mode === 'connected' || lanStatus?.serving ? 'bg-emerald-500 animate-pulse' : lanStatus?.mode === 'searching' || lanStatus?.mode === 'reconnecting' ? 'bg-amber-500 animate-pulse' : lanStatus?.mode === 'offline' ? 'bg-rose-500' : 'bg-slate-400'}"></span>
-                Titaou POS Shop Network (LAN)
+                Titaou One Shop Network (LAN)
               </h3>
               <p class="text-xs text-pos-muted mt-0.5">
                 Multi-PC operation: one shop, one authoritative database, automatic discovery over the local network.
@@ -2976,7 +3039,7 @@
           <!-- Connected terminals (server view: real registered devices) -->
           <div class="p-3 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
             <p class="text-[10px] font-black text-pos-muted uppercase mb-2">
-              Connected Titaou POS Terminals ({lanStatus?.devices_count ?? 0})
+              Connected Titaou One Terminals ({lanStatus?.devices_count ?? 0})
             </p>
             {#if lanStatus?.devices?.length}
               <div class="space-y-1.5">
@@ -3009,7 +3072,7 @@
             {/if}
           </div>
         </div>
-        <!-- ============ /Titaou POS SHOP NETWORK ============ -->
+        <!-- ============ /Titaou One SHOP NETWORK ============ -->
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <!-- Server Status & QR Connection (REAL data from the embedded server) -->
@@ -3095,7 +3158,7 @@
                     <Smartphone class="w-8 h-8 mx-auto text-pos-muted opacity-40 mb-2" />
                     <p class="text-xs font-bold text-pos-muted">No devices connected yet</p>
                     <p class="text-[10px] text-pos-muted mt-1">
-                      Scan the pairing QR from the Titaou POS mobile app — devices appear here the moment they connect.
+                      Scan the pairing QR from the Titaou One mobile app — devices appear here the moment they connect.
                     </p>
                   </div>
                 {:else}
@@ -3125,7 +3188,7 @@
 
     </div>
 
-    <!-- 4b. CLOUD SYNC TAB (Titaou CRM) -->
+    <!-- 4b. CLOUD SYNC TAB (Titaou One) -->
     <div class:hidden={currentTab !== 'cloud'}>
       <CloudSyncTab />
     </div>
@@ -3237,7 +3300,7 @@
                 <div class="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-pos-border flex items-center justify-between gap-3">
                   <div class="min-w-0">
                     <span class="text-[11px] font-bold text-pos-muted block">Backup location</span>
-                    <p class="text-[10px] text-pos-text font-mono truncate">{settings.backup_dir || '%APPDATA%\\Titaou POS\\backups (default)'}</p>
+                    <p class="text-[10px] text-pos-text font-mono truncate">{settings.backup_dir || '%APPDATA%\\Titaou One\\backups (default)'}</p>
                   </div>
                   <button
                     type="button"
@@ -3345,7 +3408,7 @@
           <div class="flex items-center gap-3">
             <ShieldCheck class="w-8 h-8 text-emerald-600 shrink-0" />
             <div>
-              <h4 class="font-black text-sm text-emerald-900 dark:text-emerald-200">Titaou POS PRO LIFETIME LICENSE</h4>
+              <h4 class="font-black text-sm text-emerald-900 dark:text-emerald-200">Titaou One PRO LIFETIME LICENSE</h4>
               <p class="text-xs text-emerald-700 dark:text-emerald-400">Fully activated and authorized for this hardware terminal.</p>
             </div>
           </div>
@@ -3427,7 +3490,7 @@
           <div class="flex items-center justify-between">
             <div class="space-y-0.5">
               <p class="text-xs font-bold text-pos-muted">Current Installed Version:</p>
-              <p class="text-base font-black text-pos-text">Titaou POS {appVersion} (Windows x64)</p>
+              <p class="text-base font-black text-pos-text">Titaou One {appVersion} (Windows x64)</p>
             </div>
             <span class="px-3 py-1 bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 font-mono text-xs font-black rounded-full">
               Stable Channel
@@ -3962,7 +4025,7 @@
   <!-- Bottom Global Developer Credit Footer -->
   <div class="pt-3 flex items-center justify-between text-xs text-pos-muted border-t border-pos-border mt-3 shrink-0">
     <div class="flex items-center gap-2">
-      <span class="font-bold text-pos-text">Titaou POS Desktop</span>
+      <span class="font-bold text-pos-text">Titaou One Desktop</span>
       <span>•</span>
       <span>Created & Developed by <strong class="text-sky-600">Titaou Bedreddine (0553444057)</strong></span>
     </div>

@@ -191,6 +191,7 @@ class PrintService {
         isCredit: options?.isCredit || doc.payment?.isCredit,
         versementPaid: doc.payment?.amountPaid,
         versementRemaining: doc.payment?.remainingDue,
+        loadingFee: doc.loadingFee,
       };
 
       const result = await printReceiptSmart(context);
@@ -241,8 +242,16 @@ class PrintService {
       isRefund: it.is_refund || false,
     }));
 
+    let loadingFee = 0;
+    try {
+      if (sale.sale_number) {
+        loadingFee = await invoke<number>('get_sale_loading_fee', { saleNumber: sale.sale_number });
+      }
+    } catch { loadingFee = 0; }
+
     const doc: PrintableDocument = {
       id: sale.id,
+      loadingFee,
       documentNumber: sale.sale_number || `POS-${sale.id}`,
       documentType: isCredit ? 'sale_invoice' : 'sale_receipt',
       title: isCredit ? 'FACTURE DE VENTE' : isVersement ? 'BON DE VERSEMENT' : 'TICKET DE VENTE',

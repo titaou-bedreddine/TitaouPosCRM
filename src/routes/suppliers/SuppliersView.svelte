@@ -32,7 +32,7 @@
 
   // Full supplier card: shop header, details, dues and QR.
   async function printSupplierCard(x: Supplier) {
-    let shopName = 'Titaou POS';
+    let shopName = 'Titaou One';
     let shopPhone = '';
     let shopAddress = '';
     try {
@@ -56,7 +56,7 @@
         <p style="font-size:10px;font-family:monospace;">${code}</p>
         <hr style="border-top:1px dashed #000;margin:5px 0;" />
         <p style="font-size:13px;font-weight:900;margin:2px 0;">DUES: ${(x.balance || 0).toLocaleString()} DZD</p>
-        <p style="font-size:9px;margin-top:6px;">Titaou POS • ${shopName}</p>
+        <p style="font-size:9px;margin-top:6px;">Titaou One • ${shopName}</p>
       </div>
     `;
     const r = await printHtmlSilently(html, 'Fournisseur Card ' + x.name, { widthMm: 80 });

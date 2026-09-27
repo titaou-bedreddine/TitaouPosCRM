@@ -767,5 +767,6 @@
   "pack_name": "Nom",
   "pack_active": "Actif",
   "contains": "Contient (unités de base)",
-  "nav_hide_direct": "Les écrans de prévente sont masqués en mode Vente directe."
+  "nav_hide_direct": "Les écrans de prévente sont masqués en mode Vente directe.",
+  "trucks_sales_mode_current": "Mode actuel"
 }
