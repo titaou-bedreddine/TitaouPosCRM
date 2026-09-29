@@ -39,6 +39,8 @@
   let saleItems: any[] = [];
   let isLoadingItems = false;
   let loadingFee = 0;
+  let feesBySale: Record<string, number> = {};
+  let feesTotal = 0;
 
   // Protected Delete Modal
   let isDeleteModalOpen = false;
@@ -68,6 +70,14 @@
         channel: selectedChannel === 'all' ? null : selectedChannel,
         limit: 200,
       });
+      try {
+        const summary = await invoke<any>('get_loading_fees_summary', {
+          startDate: startDate || null,
+          endDate: endDate || null,
+        });
+        feesBySale = summary?.by_sale ?? {};
+        feesTotal = summary?.total ?? 0;
+      } catch { feesBySale = {}; feesTotal = 0; }
     } catch (e) {
       console.error(e);
     }
@@ -123,6 +133,7 @@
   // Lines ≠ units: A×2 + B×5 + C×1 → 3 lines, 8 units.
   $: totalLinesSold = filteredSales.reduce((sum, s) => sum + (s.lines_sold || 0), 0);
   $: totalUnitsSold = filteredSales.reduce((sum, s) => sum + (s.units_sold || 0), 0);
+  $: periodFees = feesTotal;
 
   async function openSaleDetails(s: Sale) {
     selectedSale = s;
@@ -329,6 +340,16 @@
       <div>
         <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_units_sold') || 'Units Sold'}</p>
         <p class="text-base font-black font-mono text-indigo-600">{totalUnitsSold.toLocaleString()}</p>
+      </div>
+    </div>
+
+    <div class="bg-pos-card border border-pos-border p-3 rounded-2xl shadow-xs flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950 text-amber-600 flex items-center justify-center font-black">
+        F
+      </div>
+      <div>
+        <p class="text-[10px] font-bold text-pos-muted uppercase">FRAIS / FEES</p>
+        <p class="text-base font-black font-mono text-amber-600">{(periodFees / 100).toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DA</p>
       </div>
     </div>
   </div>

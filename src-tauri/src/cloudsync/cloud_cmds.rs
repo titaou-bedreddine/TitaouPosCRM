@@ -924,6 +924,65 @@ pub fn cloud_products_for_promos() -> Result<Value, String> {
     Ok(Value::Array(rows))
 }
 
+/// Delete a truck that has no historical dependency (no trips). Trucks with
+/// trips must be archived instead (is_active = false) so history survives.
+#[tauri::command]
+pub fn cloud_delete_truck(id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    // Guard: refuse when any trip references the truck (defense in depth —
+    // the DB FK sets truck_id NULL, but a silent history detach is confusing).
+    let loads = client.select(
+        "truck_loads",
+        "id",
+        &[("truck_id", format!("eq.{id}"))],
+    )?;
+    if !loads.is_empty() {
+        return Err("Ce camion a des tournées enregistrées — archivez-le au lieu de le supprimer / Truck has trips — archive it instead".into());
+    }
+    client.delete("trucks", &[("id", format!("eq.{id}"))])
+}
+
+/// Total loading-fee (déchargement) expenses booked in a date range, keyed by
+/// sale number — drives the Sales History FEES card.
+#[tauri::command]
+pub fn get_loading_fees_summary(
+    db: State<'_, crate::database::DbState>,
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().unwrap();
+    let mut sql = String::from(
+        "SELECT COALESCE(receipt_reference, '') AS sale_number, SUM(amount) AS total
+         FROM expenses WHERE category_id = 8",
+    );
+    if let Some(sd) = &start_date {
+        if !sd.is_empty() {
+            sql.push_str(&format!(" AND date >= '{sd}'"));
+        }
+    }
+    if let Some(ed) = &end_date {
+        if !ed.is_empty() {
+            sql.push_str(&format!(" AND date <= '{ed}'"));
+        }
+    }
+    sql.push_str(" GROUP BY receipt_reference");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut by_sale = serde_json::Map::new();
+    let mut total: i64 = 0;
+    for row in rows.filter_map(|r| r.ok()) {
+        total += row.1;
+        if !row.0.is_empty() {
+            by_sale.insert(row.0, serde_json::json!(row.1));
+        }
+    }
+    Ok(serde_json::json!({ "total": total, "by_sale": by_sale }))
+}
+
 /// Read the business sales mode from the CRM organizations row.
 #[tauri::command]
 pub fn cloud_get_sales_mode() -> Result<String, String> {

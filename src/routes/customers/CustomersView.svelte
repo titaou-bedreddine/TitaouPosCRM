@@ -61,6 +61,32 @@
   }
 
   // Full customer card: shop header, details, debts and QR.
+  // Print the client's QR (titaou://client/<id>) — scannable at the counter
+  // to open the client. Uses the existing silent-print infrastructure.
+  async function printClientQr(c: Customer) {
+    let shopName = 'Titaou One';
+    try {
+      const st = await invoke<Record<string, string>>('get_all_settings');
+      if (st.shop_name_fr) shopName = st.shop_name_fr;
+      else if (st.shop_name_ar) shopName = st.shop_name_ar;
+    } catch { /* fallback stands */ }
+    const qr = await entityQrDataUrl(`titaou://client/${c.id}`, 220).catch(() => undefined);
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; width: 80mm; margin: 0 auto; text-align: center; }
+      .shop { font-size: 16px; font-weight: 900; margin-bottom: 4px; }
+      .name { font-size: 14px; font-weight: 700; margin: 8px 0; }
+      .id { font-size: 9px; color: #64748b; word-break: break-all; }
+      .hint { font-size: 10px; color: #334155; margin-top: 6px; }
+    </style></head><body>
+      <div class="shop">${shopName}</div>
+      <div class="name">${c.name}</div>
+      ${qr ? `<img src="${qr}" style="width: 60mm; height: 60mm;" />` : ''}
+      <div class="hint">Scannez pour ouvrir le client / Scan to open</div>
+      <div class="id">${c.id}</div>
+    </body></html>`;
+    await printHtmlSilently(html, `QR - ${c.name}`, { widthMm: 80 });
+  }
+
   async function printCustomerCard(c: Customer) {
     let shopName = 'Titaou One';
     let shopPhone = '';
@@ -540,6 +566,10 @@
             <p class="text-[10px] text-pos-muted font-bold">Scan at POS for Instant Account Lookup</p>
             <button
               type="button"
+              on:click={() => printClientQr(previewCustomer!)}
+              class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-[10px] font-black rounded-xl cursor-pointer shadow-xs"
+              title="Imprimer le QR client / Print client QR">QR</button>
+            <button type="button"
               on:click={() => printCustomerCard(previewCustomer!)}
               class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-black rounded-xl cursor-pointer shadow-xs"
             >

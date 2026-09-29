@@ -65,8 +65,9 @@
     }
   }
 
+  let deleteTarget: string | null = null;
+
   async function remove(id: string) {
-    if (!confirm(t('promo_confirm_delete'))) return;
     busy = true;
     try {
       await invoke('cloud_promotion_delete', { id });
@@ -167,7 +168,7 @@
               <Edit2 class="w-3.5 h-3.5" />{t('team_edit')}
             </button>
             <button type="button" class="flex items-center justify-center px-3 py-1.5 text-[11px] font-black bg-rose-600 hover:bg-rose-700 text-white rounded-xl cursor-pointer"
-              on:click={() => remove(pr)}>
+              on:click={() => remove(pr.id)}>
               <Trash2 class="w-3.5 h-3.5" />
             </button>
           </div>
@@ -223,6 +224,25 @@
         </button>
         <button type="button" on:click={save} disabled={busy || !fName || !fProductId}
           class="px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">OK</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if deleteTarget}
+  <div class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" on:click={() => (deleteTarget = null)} role="presentation">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-rose-300 dark:border-rose-800 w-full max-w-sm p-5 space-y-3" on:click|stopPropagation>
+      <div class="flex items-center gap-2">
+        <div class="w-9 h-9 rounded-xl bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center">
+          <Trash2 class="w-4 h-4 text-rose-600" />
+        </div>
+        <h3 class="text-sm font-black text-pos-text">{t('promo_confirm_delete')}</h3>
+      </div>
+      <p class="text-[11px] text-pos-muted">Cette action est irréversible. / This action is irreversible.</p>
+      <div class="flex justify-end gap-2 pt-1">
+        <button type="button" on:click={() => (deleteTarget = null)} class="px-4 py-2 text-[11px] font-black bg-slate-200 dark:bg-slate-700 text-pos-text rounded-xl cursor-pointer">Annuler</button>
+        <button type="button" on:click={() => { const id = deleteTarget!; deleteTarget = null; remove(id); }}
+          class="px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 text-white rounded-xl cursor-pointer">Supprimer</button>
       </div>
     </div>
   </div>

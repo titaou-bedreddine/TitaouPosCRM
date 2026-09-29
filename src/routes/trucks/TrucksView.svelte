@@ -574,10 +574,25 @@
           <textarea bind:value={truckNotes} rows="2"
             class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text outline-none"></textarea>
         </div>
-        <div class="flex justify-end gap-2 pt-1">
-          <button type="button" on:click={() => (showTruckForm = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
-          <button type="button" on:click={saveTruck} disabled={busy || !truckName.trim()}
-            class="px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">{t('trucks_save')}</button>
+        <div class="flex justify-between items-center pt-1">
+          {#if editingTruck && !(loads.some((l) => l.truck_id === editingTruck.id))}
+            <button type="button" on:click={async () => {
+              busy = true; error = '';
+              try {
+                await invoke('cloud_delete_truck', { id: editingTruck.id });
+                showTruckForm = false; selectedId = '';
+                await load();
+                msg = '✅';
+              } catch (e: any) {
+                error = typeof e === 'string' ? e : e?.message || 'Failed';
+              } finally { busy = false; }
+            }} class="px-3 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 text-white rounded-xl cursor-pointer">🗑 {t('promo_confirm_delete')}</button>
+          {/if}
+          <div class="flex justify-end gap-2 ms-auto">
+            <button type="button" on:click={() => (showTruckForm = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
+            <button type="button" on:click={saveTruck} disabled={busy || !truckName.trim()}
+              class="px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">{t('trucks_save')}</button>
+          </div>
         </div>
       </div>
     </div>

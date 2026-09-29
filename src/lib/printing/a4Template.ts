@@ -136,7 +136,7 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
 
         ${((showCustomer || showSupplier) && doc.party) ? `
           <div class="party-card">
-            <div class="party-title">${doc.party.type === 'supplier' ? 'FOURNISSEUR' : 'CLIENT'}</div>
+            <div class="party-title">${doc.party.type === 'supplier' ? 'FOURNISSEUR' : doc.party.type === 'employee' ? 'VENDEUR / CHAUFFEUR' : 'CLIENT'}</div>
             <div class="party-name">${doc.party.name}</div>
             <div class="party-details">
               ${doc.party.phone ? `<span><strong>Tél:</strong> ${doc.party.phone}</span>` : ''}
@@ -189,7 +189,7 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
             <span class="item-name">${isRefund ? '[RETOUR] ' : ''}${escapeHtml(item.name)}</span>
             ${item.notes ? `<span class="item-note">(${escapeHtml(item.notes)})</span>` : ''}
           </td>
-          ${showQuantity ? `<td class="col-qty text-center font-bold">${item.quantity} ${item.unit || ''}</td>` : ''}
+          ${showQuantity ? `<td class="col-qty text-center font-bold">${item.quantity}${item.unit ? `<span class="text-[9px] font-bold text-pos-muted"> ${item.unit}</span>` : ''}</td>` : ''}
           ${showUnitPrice ? `<td class="col-price text-end">${formatMoney(item.unitPrice, currency)}</td>` : ''}
           ${showDiscount ? `<td class="col-discount text-end">${item.discountPerUnit ? formatMoney(item.discountPerUnit, currency) : '-'}</td>` : ''}
           ${showTax ? `<td class="col-tax text-center">${item.taxRate ? `${item.taxRate}%` : '-'}</td>` : ''}
