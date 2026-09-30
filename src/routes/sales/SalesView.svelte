@@ -348,8 +348,8 @@
         F
       </div>
       <div>
-        <p class="text-[10px] font-bold text-pos-muted uppercase">FRAIS / FEES</p>
-        <p class="text-base font-black font-mono text-amber-600">{(periodFees / 100).toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DA</p>
+        <p class="text-[10px] font-bold text-pos-muted uppercase">FRAIS / FEES (période)</p>
+        <p class="text-base font-black font-mono text-amber-600">{periodFees.toLocaleString('fr-DZ')} DA</p>
       </div>
     </div>
   </div>
@@ -631,7 +631,13 @@
             Close
           </button>
           {#if loadingFee > 0}
-            <div class="w-full flex items-center justify-between px-3 py-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-[11px] font-black"><span>Brut {selectedSale!.total_amount.toLocaleString('fr-DZ')} DA - Frais déchargement {loadingFee.toLocaleString('fr-DZ')} DA = Net {(selectedSale!.total_amount - loadingFee).toLocaleString('fr-DZ')} DA</span></div>
+            <div class="w-full px-3 py-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-[11px] space-y-1">
+              <div class="flex items-center justify-between font-bold text-pos-text"><span>TOTAL BRUT</span><span class="font-mono">{selectedSale!.total_amount.toLocaleString('fr-DZ')} DA</span></div>
+              <div class="flex items-center justify-between font-bold text-rose-600"><span>FRAIS DE DÉCHARGEMENT</span><span class="font-mono">-{loadingFee.toLocaleString('fr-DZ')} DA</span></div>
+              <div class="flex items-center justify-between font-black text-emerald-600 border-t border-amber-300 dark:border-amber-800 pt-1"><span>NET ENCAISSÉ (CAISSE)</span><span class="font-mono">{(selectedSale!.total_amount - loadingFee).toLocaleString('fr-DZ')} DA</span></div>
+              <div class="flex items-center justify-between font-bold text-pos-text"><span>PAYÉ</span><span class="font-mono">{selectedSale!.paid_amount.toLocaleString('fr-DZ')} DA</span></div>
+              <div class="flex items-center justify-between font-bold {selectedSale!.total_amount - selectedSale!.paid_amount > 0 ? 'text-rose-600' : 'text-pos-muted'}"><span>CRÉDIT</span><span class="font-mono">{Math.max(0, selectedSale!.total_amount - selectedSale!.paid_amount).toLocaleString('fr-DZ')} DA</span></div>
+            </div>
           {/if}
           <button
             on:click={() => printReceipt(selectedSale!)}

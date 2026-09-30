@@ -87,13 +87,13 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
         }
 
         tx.execute(
-            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity, base_quantity)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity, base_quantity, sale_unit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             rusqlite::params![
                 sale_id, item.product_id, item.quantity, item.unit_price,
                 item.discount_amount, item.tax_amount, item.total_price,
                 item.is_refund, if item.is_refund { item.quantity } else { 0.0 },
-                base_of(item)
+                base_of(item), item.sale_unit
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -477,7 +477,8 @@ fn get_sale_by_query(
         let mut stmt = conn
             .prepare(
                 "SELECT si.product_id, p.sku, '', p.name_ar, p.name_fr, p.name_en, p.image_path,
-                        si.unit_price, si.quantity, si.discount_amount, si.tax_amount, si.total_price, si.is_refunded
+                        si.unit_price, si.quantity, si.discount_amount, si.tax_amount, si.total_price, si.is_refunded,
+                        si.sale_unit
                  FROM sale_items si
                  JOIN products p ON si.product_id = p.id
                  WHERE si.sale_id = ?1",
@@ -499,8 +500,8 @@ fn get_sale_by_query(
                     tax_amount: row.get(10)?,
                     total_price: row.get(11)?,
                     is_refund: row.get(12)?,
-                sale_unit: None,
-                base_quantity: 0.0,
+                    sale_unit: row.get(13)?,
+                    base_quantity: 0.0,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -519,7 +520,8 @@ pub fn get_sale_items(db: &DbState, sale_id: i64) -> Result<Vec<CartItem>, Strin
     let mut stmt = conn
         .prepare(
             "SELECT si.product_id, p.sku, '', p.name_ar, p.name_fr, p.name_en, p.image_path,
-                    si.unit_price, si.quantity, si.discount_amount, si.tax_amount, si.total_price, si.is_refunded
+                    si.unit_price, si.quantity, si.discount_amount, si.tax_amount, si.total_price, si.is_refunded,
+                    si.sale_unit
              FROM sale_items si
              JOIN products p ON si.product_id = p.id
              WHERE si.sale_id = ?1",
@@ -542,7 +544,7 @@ pub fn get_sale_items(db: &DbState, sale_id: i64) -> Result<Vec<CartItem>, Strin
                 tax_amount: row.get(10)?,
                 total_price: row.get(11)?,
                 is_refund: row.get(12)?,
-                sale_unit: None,
+                sale_unit: row.get(13)?,
                 base_quantity: 0.0,
             })
         })
@@ -940,6 +942,21 @@ pub fn replace_sale(
             ],
         )
         .map_err(|e| e.to_string())?;
+        // Re-insert the sale line — the old rows were deleted above and the
+        // lines were previously LOST on every edit (blank receipts, 0-line
+        // history). Persisted values only: the receipt must reflect what was
+        // sold, at sale time (incl. the packaging label).
+        tx.execute(
+            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity, base_quantity, sale_unit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                original_sale_id, item.product_id, item.quantity, item.unit_price,
+                item.discount_amount, item.tax_amount, item.total_price,
+                item.is_refund, if item.is_refund { item.quantity } else { 0.0 },
+                if item.base_quantity > 0.0 { item.base_quantity } else { item.quantity }, item.sale_unit
+            ],
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     // New drawer effect (cash sales only).
@@ -1029,5 +1046,159 @@ mod checkout_fk_tests {
         };
         let r = process_sale(&db, sale_input(session_id, 1, Some(1)));
         assert!(r.is_ok(), "real session must work: {:?}", r.err());
+    }
+}
+
+#[cfg(test)]
+mod receipt_consistency_tests {
+    use super::*;
+    use crate::database::DbState;
+    use crate::models::SalePaymentInput;
+
+    fn fresh_db(tag: &str) -> DbState {
+        let dir = std::env::temp_dir().join("titaou_receipt_tests");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("rc_{}_{}.sqlite", tag, std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let state = DbState { conn: std::sync::Mutex::new(rusqlite::Connection::open(&path).unwrap()) };
+        state.run_migrations().unwrap();
+        state.seed_default_admin().unwrap();
+        state
+    }
+
+    /// The exact field-reported transaction: test ×4 @ 3,000, cash, paid.
+    /// Guards the fee-link fix: process_sale must return the PERSISTED
+    /// sale number (POS-…) — the frontend books the déchargement expense
+    /// against THIS reference, so Sales History / receipts / deletion
+    /// reversal can all find the fee. The old flow booked the fee against a
+    /// local 'VTE-…' placeholder that no reader could find.
+    #[test]
+    fn process_sale_returns_persisted_pos_number() {
+        let db = fresh_db("c");
+        let (sale_number, _) = checkout_test_sale(&db);
+        assert!(sale_number.starts_with("POS-"), "returned number {} must be the persisted POS- number", sale_number);
+        let conn = db.conn.lock().unwrap();
+        let persisted: String = conn
+            .query_row("SELECT sale_number FROM sales WHERE sale_number = ?1", [&sale_number], |r| r.get(0))
+            .unwrap();
+        assert_eq!(persisted, sale_number);
+    }
+
+    /// Spec #10: the packaging chosen at sale time must survive printing —
+    /// get_sale_items (what receipts read) returns the persisted sale_unit.
+    #[test]
+    fn sale_unit_roundtrips_through_get_sale_items() {
+        let db = fresh_db("a");
+        // checkout_test_sale loads product 987001 ('test') with a Fardeau line
+        let (_, sale_id) = checkout_test_sale(&db);
+        let items = get_sale_items(&db, sale_id).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].quantity, 4.0);
+        assert_eq!(items[0].total_price, 12000);
+        assert_eq!(items[0].sale_unit.as_deref(), Some("Fardeau"), "packaging label must round-trip to the receipt");
+    }
+
+    /// Spec #14.10 + #8: the fee expense must be findable (and reversible)
+    /// through the number returned by process_sale. Mirrors the frontend
+    /// booking: add_expense with receipt_reference = persisted sale number.
+    #[test]
+    fn loading_fee_is_linked_and_reversed_via_returned_number() {
+        let db = fresh_db("b");
+        let (sale_number, _) = checkout_test_sale(&db);
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(&format!(
+                "INSERT INTO expenses (expense_number, category_id, amount, payment_method, session_id, user_id, receipt_reference, date)
+                 VALUES ('EXP-FEE', 8, 1200, 'cash', 1, 1, '{}', '2026-09-30');
+                 UPDATE cash_sessions SET expected_cash = expected_cash - 1200 WHERE id = 1;",
+                sale_number
+            ))
+            .unwrap();
+        }
+        // The lookup the Sales History modal / receipts use:
+        let fee: i64 = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE receipt_reference = ?1 AND category_id = 8",
+                [&sale_number],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(fee, 1200, "the fee must be found via the PERSISTED sale number");
+
+        // Deletion must reverse the fee through the same reference.
+        delete_sale(&db, {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT id FROM sales WHERE sale_number = ?1", [&sale_number], |r| r.get::<_, i64>(0))
+                .unwrap()
+        }, Some(1)).unwrap();
+        let orphan: i64 = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM expenses WHERE receipt_reference = ?1", [&sale_number], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(orphan, 0, "fee expense must be reversed with the sale");
+    }
+
+    /// One checkout of the reported transaction: test ×4 @ 3,000 cash.
+    /// Returns (persisted sale number, local sale id).
+    fn checkout_test_sale(db: &DbState) -> (String, i64) {
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO products (id, sku, name_ar, name_fr, name_en, category_id, purchase_price, sale_price, current_stock)
+                   VALUES (987001, 'TEST-1', 'تجربة', 'test', 'test', 1, 3000, 3000, 100);
+                 INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status) VALUES (1, 1, 0, 0, 'open');",
+            )
+            .unwrap();
+        }
+        let input = CreateSaleInput {
+            channel: None,
+            session_id: 1,
+            user_id: 1,
+            customer_id: None,
+            items: vec![CartItem {
+                sale_unit: Some("Fardeau".into()),
+                base_quantity: 4.0,
+                product_id: 987001,
+                sku: Some("TEST-1".into()),
+                barcode: None,
+                name_ar: Some("تجربة".into()),
+                name_fr: Some("test".into()),
+                name_en: Some("test".into()),
+                image_path: None,
+                unit_price: 3000,
+                quantity: 4.0,
+                discount_amount: 0,
+                tax_amount: 0,
+                total_price: 12000,
+                is_refund: false,
+            }],
+            subtotal: 12000,
+            discount_amount: 0,
+            discount_percentage: 0.0,
+            discount_reason: None,
+            tax_amount: 0,
+            total_amount: 12000,
+            paid_amount: 12000,
+            change_amount: 0,
+            payment_method: Some("cash".into()),
+            is_refund: Some(false),
+            notes: None,
+            skip_stock: false,
+            payments: vec![SalePaymentInput {
+                payment_method: "cash".into(),
+                amount: 12000,
+                reference_code: None,
+            }],
+        };
+        let sale_number = process_sale(db, input).unwrap();
+        let sale_id: i64 = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT id FROM sales WHERE sale_number = ?1", [&sale_number], |r| r.get(0))
+                .unwrap()
+        };
+        (sale_number, sale_id)
     }
 }

@@ -1065,10 +1065,20 @@
 
       // Editing a sale loaded from history? Update it in place (tagged
       // MODIFIED, no duplicate) instead of creating a new row.
+      // Both RPCs return the PERSISTED sale number (POS-…). Everything that
+      // references the sale afterwards — the déchargement expense link, the
+      // receipt QR, the deferred print — MUST use this number. The local
+      // 'VTE-…' placeholder is never persisted and must never be used as a
+      // reference (field bug: the fee was linked to VTE-… and became
+      // unfindable by Sales History / deletion reversal).
+      let persistedSaleNumber: string;
       if (get(originSaleId)) {
-        await invoke('replace_sale', { originalSaleId: get(originSaleId), input: saleInput });
+        persistedSaleNumber = await invoke<string>('replace_sale', { originalSaleId: get(originSaleId), input: saleInput });
       } else {
-        await invoke('create_sale', { input: saleInput });
+        persistedSaleNumber = await invoke<string>('create_sale', { input: saleInput });
+      }
+      if (!persistedSaleNumber) {
+        throw new Error('Sale saved but no receipt number returned — do not book the fee against a placeholder');
       }
 
       // Unloading fees (déchargement): the driver's per-unit take leaves the
@@ -1089,7 +1099,7 @@
             sessionId: $activeSession?.id ?? null,
             userId: $currentUser?.id || 1,
             recipient: null,
-            receiptReference: saleNumber,
+            receiptReference: persistedSaleNumber,
             notes: `Frais de déchargement (POS): ${feeDetail || feeTotal + ' DA'}`,
           });
         } catch (feeErr) {
@@ -1099,7 +1109,7 @@
 
       // Offline receipt QR (local data URL; no network needed).
       const receiptQrDataUrl = await entityQrDataUrl(
-        `SALE:${saleNumber}`,
+        `SALE:${persistedSaleNumber}`,
         100
       ).catch(() => undefined);
 
@@ -1121,66 +1131,62 @@
       // weight-suggestion chips next time (1kg, 0.5, eggs 30…).
       recordSoldQuantities($cartItems.map((i) => ({ product_id: i.product_id, quantity: i.quantity })));
 
-      lastSaleSuccessNumber = saleNumber;
+      lastSaleSuccessNumber = persistedSaleNumber;
       clearCart();
       await loadProducts();
 
       // Deferred silent print (spec: checkout responsiveness > printing).
-      // The sale is already committed; everything the receipt needs is
-      // captured BEFORE the cart clears, and printing runs on a macrotask
-      // after the success paint. A print failure never rolls back the sale.
-      {
-        const printThisSale = autoPrintEnabled && !suppressNextPrint;
+      // The sale is committed and the UI updated; the macrotask then reads
+      // the AUTHORITATIVE persisted sale (get_sale_by_number) — the same
+      // rows Sales History shows — and prints from that. Nothing is
+      // reconstructed from the cart, and a print failure never rolls the
+      // sale back.
+      if (autoPrintEnabled && !suppressNextPrint) {
         suppressNextPrint = false;
-        if (printThisSale) {
-          const capturedItems = $cartItems.map((i) => ({
-            name: i.name_fr || i.name_ar,
-            quantity: i.quantity,
-            unitPrice: i.unit_price,
-            totalPrice: i.total_price,
-            discountPerUnit: i.discount_amount || 0,
-            isRefund: i.is_refund || false,
-          }));
-          const captured = {
-            mode, saleNumber, saleDate, cashier, customerName, paid, change, reste,
-            paymentMode: selectedPaymentMode,
-            subtotal: $cartSubtotal,
-            discount: $globalDiscountAmount,
-            grandTotal: $cartGrandTotal,
-          };
-          setTimeout(async () => {
-            let appSettings: Record<string, string> = {};
-            try {
-              appSettings = await invoke<Record<string, string>>('get_all_settings');
-            } catch (e) {
-              console.warn('Could not load settings for receipt:', e);
+        setTimeout(async () => {
+          try {
+            const res = await invoke<any | null>('get_sale_by_number', { saleNumber: persistedSaleNumber });
+            if (!res?.sale) {
+              console.warn('[POS] Deferred print: persisted sale not found:', persistedSaleNumber);
+              return;
             }
-            const effectiveMethod = captured.mode === 'versement' ? 'VERSEMENT (تسبقة)' : captured.mode === 'credit' ? 'CREDIT (دين)' : captured.paymentMode.toUpperCase();
-            const saleDocData = {
-              sale_number: captured.saleNumber,
-              sale_date: captured.saleDate,
-              cashier_name: captured.cashier,
+            const sale = res.sale;
+            const items = (res.items ?? []).map((it: any) => ({
+              name: it.name_fr || it.name_ar || 'Article',
+              quantity: it.quantity,
+              unitPrice: it.unit_price,
+              totalPrice: it.total_price,
+              discountPerUnit: it.discount_amount || 0,
+              sale_unit: it.sale_unit || undefined,
+              isRefund: it.is_refund || false,
+            }));
+            void printService.printSale({
+              sale_number: persistedSaleNumber,
+              sale_date: sale.created_at,
+              cashier_name: sale.user_name || 'Admin',
               terminal_name: $networkStatus?.pc_name || undefined,
-              customer_name: captured.customerName || (captured.mode === 'credit' ? 'Client Crédit' : undefined),
-              payment_mode: captured.mode === 'credit' ? 'credit' : captured.mode === 'versement' ? 'versement' : captured.paymentMode,
-              subtotal: captured.subtotal,
-              discount_amount: captured.discount,
-              total_amount: captured.grandTotal,
-              paid_amount: captured.mode === 'direct' ? captured.grandTotal : captured.paid,
-              change_amount: captured.change,
-              remaining_amount: captured.mode === 'versement' ? captured.reste : (captured.mode === 'credit' ? (captured.grandTotal - captured.paid) : 0),
-            };
-            void printService.printSale(saleDocData, capturedItems, {
-              isCredit: captured.mode === 'credit',
-              copyLabel: captured.mode === 'credit' ? 'COPIE MAGASIN / STORE COPY' : captured.mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
-            }).then((res) => {
-              if (!res.ok && res.mode !== 'disabled') {
-                console.warn('[POS] Print notice:', res.message);
+              customer_name: sale.customer_name || undefined,
+              payment_mode: sale.payment_method || selectedPaymentMode,
+              subtotal: sale.subtotal,
+              discount_amount: sale.discount_amount,
+              total_amount: sale.total_amount,
+              paid_amount: sale.paid_amount,
+              change_amount: sale.change_amount,
+            }, items, {
+              isCredit: mode === 'credit',
+              copyLabel: mode === 'credit' ? 'COPIE MAGASIN / STORE COPY' : mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
+            }).then((res2) => {
+              if (!res2.ok && res2.mode !== 'disabled') {
+                console.warn('[POS] Print notice:', res2.message);
               }
             });
-          }, 50);
-        }
+          } catch (e) {
+            // Non-blocking: the sale is safe; only the print failed.
+            console.warn('[POS] Deferred print failed:', e);
+          }
+        }, 50);
       }
+
 
       setTimeout(() => {
         lastSaleSuccessNumber = '';

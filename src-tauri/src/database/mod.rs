@@ -401,6 +401,9 @@ impl DbState {
         // product unit (bottles) — what the stock ledger uses. Packagings
         // also gain a purchase price per packaging.
         let _ = conn.execute("ALTER TABLE sale_items ADD COLUMN base_quantity REAL;", []);
+        // Persisted selling presentation (Fardeau/Palette/Unité…) — receipts
+        // must show the unit AT SALE TIME even if packagings change later.
+        let _ = conn.execute("ALTER TABLE sale_items ADD COLUMN sale_unit TEXT;", []);
         let _ = conn.execute("ALTER TABLE purchase_items ADD COLUMN base_quantity REAL;", []);
         let _ = conn.execute(
             "ALTER TABLE product_packagings ADD COLUMN purchase_price INTEGER DEFAULT 0;",
