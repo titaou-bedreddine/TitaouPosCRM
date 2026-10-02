@@ -7,6 +7,7 @@
   import type { Category, CartItem, Product, Supplier, Unit } from '../../lib/types';
   import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, saleFeeOverride, setSaleFeeOverride, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates, unloadingFeesTotal, setLineUnloadingFee } from '../../lib/stores/cart';
   import UnloadingFeeModal from '../../lib/components/UnloadingFeeModal.svelte';
+  import ProductPresentationModal from '../../lib/components/ProductPresentationModal.svelte';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
   import { printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
@@ -440,6 +441,9 @@
         categoryId: selectedCategory,
         searchType: searchType === 'qr' ? 'barcode' : searchType,
       });
+      // The catalog may have changed (prices/packagings edited) — the
+      // presentation-picker cache must not outlive it.
+      packagingsCache.clear();
 
       // Sort products
       // Pinned products ALWAYS float to the top, in their manual order,
@@ -545,45 +549,83 @@
 
   // Adding a product to the cart: in PURCHASE mode the cashier is buying
   // stock, so a small dialog first asks the new purchase cost (prefilled
-  // with the product's current one); sale mode adds at the shelf price.
+  // with the product's current one); in sale mode, a product WITH configured
+  // packaging sale prices opens the presentation picker (Unité / Palette…,
+  // pricing refinement §14) — base-unit products add directly at the shelf
+  // price, exactly as before.
   async function addProductToCart(product: Product) {
     if ($posMode === 'purchase') {
       purchasePriceTarget = product;
       return;
     }
+    const packs = await getProductPackagings(product.id);
+    if (packs.length > 0) {
+      presentationTarget = product;
+      return;
+    }
     requestAddToCart(product, 1);
+  }
+
+  // ── Presentation picker + packaging cache ────────────────────────────────
+  let presentationTarget: Product | null = null;
+  const packagingsCache = new Map<number, any[]>();
+
+  /** Configured packaging sale prices of a product (cached until the next
+   * catalog reload). Empty = base-unit-only product, no picker. */
+  async function getProductPackagings(productId: number): Promise<any[]> {
+    const cached = packagingsCache.get(productId);
+    if (cached) return cached;
+    let rows: any[] = [];
+    try {
+      rows = (await invoke<any[]>('list_packagings', { productId })).filter(
+        (r) => (r.sale_price_per_unit ?? r.sale_price ?? 0) > 0
+      );
+    } catch {
+      rows = [];
+    }
+    packagingsCache.set(productId, rows);
+    return rows;
+  }
+
+  function pickPresentation(packaging: any | null) {
+    const p = presentationTarget;
+    presentationTarget = null;
+    if (p) requestAddToCart(p, 1, packaging ?? undefined);
   }
 
   // ── Unloading-fee flow (déchargement) ────────────────────────────────────
   // A product with the option enabled pops a small dialog when its line is
   // FIRST added to the cart: the driver's per-unit unloading fee (300/palette
   // …), editable per sale. Quantity merges keep the line's fee; the fee
-  // total re-computes with the quantity. Skip adds a fee-less line.
+  // total re-computes with the quantity. Skip adds a fee-less line. The
+  // chosen presentation (packaging) rides along so the fee lands on the
+  // right line (a Palette line and its Unité line are separate).
   let isUnloadingFeeOpen = false;
-  let pendingFeeTarget: { product: Product; quantity: number } | null = null;
+  let pendingFeeTarget: { product: Product; quantity: number; packaging?: any } | null = null;
   let feeEditLine: CartItem | null = null;
   let unloadingFeeInput = 0;
 
-  function requestAddToCart(product: Product, quantity = 1) {
+  function requestAddToCart(product: Product, quantity = 1, packaging?: any) {
     const fee = (product as any).unloading_fee ?? 0;
     if (fee > 0 && !$isRefundMode && $posMode === 'sale') {
+      const wantedUnit = packaging ? packaging.name : undefined;
       const lineExists = $cartItems.some(
         (i) =>
           i.product_id === product.id &&
-          i.sale_unit === undefined &&
+          i.sale_unit === wantedUnit &&
           i.is_refund === $isRefundMode
       );
       if (lineExists) {
         // Line already in the cart: merge quantities and keep its fee.
-        addToCart(product, quantity, $isRefundMode);
+        addToCart(product, quantity, $isRefundMode, packaging);
         return;
       }
-      pendingFeeTarget = { product, quantity };
+      pendingFeeTarget = { product, quantity, packaging };
       unloadingFeeInput = fee;
       isUnloadingFeeOpen = true;
       return;
     }
-    addToCart(product, quantity, $isRefundMode);
+    addToCart(product, quantity, $isRefundMode, packaging);
   }
 
   function confirmUnloadingFee(feePerUnit: number) {
@@ -591,7 +633,7 @@
     isUnloadingFeeOpen = false;
     pendingFeeTarget = null;
     if (!target) return;
-    addToCart(target.product, target.quantity, $isRefundMode, undefined, feePerUnit);
+    addToCart(target.product, target.quantity, $isRefundMode, target.packaging, feePerUnit);
     searchQuery = '';
   }
 
@@ -599,7 +641,7 @@
     const target = pendingFeeTarget;
     isUnloadingFeeOpen = false;
     pendingFeeTarget = null;
-    if (target) addToCart(target.product, target.quantity, $isRefundMode, undefined, undefined);
+    if (target) addToCart(target.product, target.quantity, $isRefundMode, target.packaging, undefined);
   }
 
   function editLineUnloadingFee(item: CartItem) {
@@ -1944,6 +1986,17 @@
   <CashDrawerModal
     isOpen={isCashDrawerOpen}
     onClose={() => (isCashDrawerOpen = false)}
+  />
+
+  <!-- Presentation picker (pricing refinement §14): a product with
+       configured packaging sale prices asks Unité / Palette / … first —
+       the cashier never computes a package total by hand. -->
+  <ProductPresentationModal
+    isOpen={!!presentationTarget}
+    product={presentationTarget}
+    loadPackagings={getProductPackagings}
+    onPick={pickPresentation}
+    onClose={() => (presentationTarget = null)}
   />
 
   <!-- Unloading fee (déchargement): per-unit driver fee, asked when a

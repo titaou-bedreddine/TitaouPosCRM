@@ -86,6 +86,17 @@ export interface ProductInput {
   scale_department_id?: number;
   scale_sync_status?: string;
   is_bundle: boolean;
+  /** Packaging sale prices saved ATOMICALLY with the product. The
+   * authoritative price is sale_price_per_unit (DZD / base unit); the
+   * backend derives the per-package total. Omit when not managing prices. */
+  packagings?: Array<{
+    name: string;
+    units_per_package: number;
+    sale_price_per_unit: number;
+    purchase_price?: number;
+    packaging_type_id?: number | null;
+    is_default?: boolean;
+  }>;
   barcodes: string[];
   unloading_fee?: number;
 }

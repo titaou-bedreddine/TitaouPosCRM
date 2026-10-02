@@ -132,6 +132,12 @@ pub struct ProductInput {
     pub scale_sync_status: Option<String>,
     #[serde(default)]
     pub is_bundle: bool,
+    /// Packaging sale prices saved ATOMICALLY with the product (same
+    /// transaction). None = caller doesn't manage packagings (legacy/LAN
+    /// callers, side-effect saves) — existing rows are left untouched and
+    /// the outbox payload keeps reading the stored rows.
+    #[serde(default)]
+    pub packagings: Option<Vec<PackagingInput>>,
     pub barcodes: Vec<String>,
 }
 
@@ -685,7 +691,15 @@ pub struct ProductPackaging {
     pub product_id: i64,
     pub name: String,
     pub units_per_package: i64,
+    /// Per-package total — DERIVED (sale_price_per_unit × units_per_package),
+    /// kept for every existing reader (cart, receipts, CRM mirror).
     pub sale_price: i64,
+    /// AUTHORITATIVE price: DZD per BASE unit when sold through this
+    /// packaging (e.g. 190 DZD/u for a 112-unit palette).
+    #[serde(default)]
+    pub sale_price_per_unit: i64,
+    #[serde(default)]
+    pub packaging_type_id: Option<i64>,
     pub is_default: bool,
 }
 
@@ -693,11 +707,20 @@ pub struct ProductPackaging {
 pub struct PackagingInput {
     pub name: String,
     pub units_per_package: i64,
+    /// Kept for legacy callers; recomputed as per_unit × units on save —
+    /// never the source of truth.
     #[serde(default)]
     pub sale_price: i64,
+    /// AUTHORITATIVE sale price: DZD per BASE unit for this packaging.
+    #[serde(default)]
+    pub sale_price_per_unit: i64,
     // Purchase price PER PACKAGING (DZD) — e.g. 15,000 DZD per palette.
     #[serde(default)]
     pub purchase_price: i64,
+    /// The packaging TYPE template this row uses (Settings → Packaging).
+    /// Legacy rows may send null — they are then matched by name.
+    #[serde(default)]
+    pub packaging_type_id: Option<i64>,
     #[serde(default)]
     pub is_default: bool,
 }

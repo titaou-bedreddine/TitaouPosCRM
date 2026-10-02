@@ -401,6 +401,52 @@
   let salesModeError = '';
   let salesModeBusy = false;
 
+  // ── Packaging types: admin-gated mutations (settings protection) ──
+  let packAdminAction: { type: 'add' | 'save' | 'delete'; pt: any } | null = null;
+  let packAdminPassword = '';
+  let packAdminError = '';
+  let packAdminBusy = false;
+
+  function requestPackagingMutation(type: 'add' | 'save' | 'delete', pt: any) {
+    packAdminAction = { type, pt };
+    packAdminPassword = '';
+    packAdminError = '';
+  }
+
+  async function confirmPackagingMutation() {
+    if (!packAdminAction) return;
+    // Local verification first (fast UX); the Rust command re-verifies
+    // server-side — the frontend check alone is never the protection.
+    packAdminBusy = true;
+    packAdminError = '';
+    const pwd = packAdminPassword;
+    const action = packAdminAction;
+    try {
+      const ok = await invoke<boolean>('verify_admin_password', { password: pwd });
+      if (!ok) {
+        packAdminError = 'Invalid password / كلمة المرور غير صحيحة';
+        return;
+      }
+      if (action.type === 'add') {
+        const id = await invoke<number>('save_packaging_type', { id: null, name: 'Nouveau / New', abbreviation: '', displayOrder: packagingTypes.length, isActive: true, adminPassword: pwd });
+        const list = await invoke<any[]>('get_packaging_types', { activeOnly: false });
+        packagingTypes = list.map((x: any) => ({ ...x, editing: x.id === id }));
+      } else if (action.type === 'save') {
+        await invoke('save_packaging_type', { id: action.pt.id, name: action.pt.name, abbreviation: action.pt.abbreviation || '', displayOrder: action.pt.display_order, isActive: action.pt.is_active, adminPassword: pwd });
+        action.pt.editing = false;
+        packagingTypes = [...packagingTypes];
+      } else {
+        await invoke('delete_packaging_type', { id: action.pt.id, adminPassword: pwd });
+        packagingTypes = packagingTypes.filter((x: any) => x.id !== action.pt.id);
+      }
+      packAdminAction = null;
+    } catch (e: any) {
+      packAdminError = typeof e === 'string' ? e : e?.message || String(e);
+    } finally {
+      packAdminBusy = false;
+    }
+  }
+
   function requestSalesModeChange(to: string) {
     if (to === settings.sales_mode) return;
     salesModeDialog = { from: settings.sales_mode, to };
@@ -1626,43 +1672,69 @@
         </div>
 
   <!-- Packaging TYPE templates (Settings): reusable names — conversions are
-       per product. Admins manage Unité/Fardeau/Palette/... here. -->
+       per product. Admins manage Unité/Fardeau/Palette/... here. Sensitive
+       settings mutations are gated by the admin password (verified
+       server-side too); 'Unité' is a protected SYSTEM packaging (pricing
+       refinement): no delete / deactivate / rename. -->
         <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border">
           <h3 class="text-sm font-black text-pos-text mb-1">{t('pack_title')}</h3>
-          <p class="text-[10px] text-pos-muted mb-3">{t('pack_hint')}</p>
+          <p class="text-[10px] text-pos-muted mb-3">{t('pack_hint')} — {t('pack_admin_required')}.</p>
           <div class="space-y-1.5">
             {#each packagingTypes as pt (pt.id)}
               <div class="flex items-center gap-2">
-                <input type="text" bind:value={pt.name} disabled={!pt.editing}
+                {#if pt.is_system}
+                  <span class="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-slate-200 dark:bg-slate-700 text-pos-muted" title={t('pack_protected')}>🔒 {t('pack_protected')}</span>
+                {/if}
+                <input type="text" bind:value={pt.name} disabled={!pt.editing || pt.is_system}
                   class="flex-1 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-bold text-pos-text outline-none disabled:opacity-60" />
-                <input type="text" bind:value={pt.abbreviation} disabled={!pt.editing} placeholder={t('pack_abbrev')}
+                <input type="text" bind:value={pt.abbreviation} disabled={!pt.editing || pt.is_system} placeholder={t('pack_abbrev')}
                   class="w-16 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-bold text-pos-text outline-none disabled:opacity-60" />
                 <input type="number" bind:value={pt.display_order} disabled={!pt.editing}
                   class="w-14 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-mono text-pos-text outline-none disabled:opacity-60" />
                 <label class="flex items-center gap-1 text-[10px] font-bold text-pos-muted cursor-pointer">
-                  <input type="checkbox" bind:checked={pt.is_active} disabled={!pt.editing} class="accent-sky-600" />{t('pack_active')}
+                  <input type="checkbox" bind:checked={pt.is_active} disabled={!pt.editing || pt.is_system} class="accent-sky-600" />{t('pack_active')}
                 </label>
                 {#if pt.editing}
-                  <button type="button" on:click={async () => {
-                    await invoke('save_packaging_type', { id: pt.id, name: pt.name, abbreviation: pt.abbreviation || '', displayOrder: pt.display_order, isActive: pt.is_active });
-                    pt.editing = false; packagingTypes = [...packagingTypes];
-                  }} class="px-2 py-1 text-[10px] font-black bg-emerald-600 text-white rounded-lg cursor-pointer">OK</button>
+                  <button type="button" on:click={() => requestPackagingMutation('save', pt)}
+                    class="px-2 py-1 text-[10px] font-black bg-emerald-600 text-white rounded-lg cursor-pointer">OK</button>
                 {:else}
                   <button type="button" on:click={() => { pt.editing = true; packagingTypes = [...packagingTypes]; }} class="px-2 py-1 text-[10px] font-black text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer">✎</button>
                 {/if}
-                <button type="button" on:click={async () => {
-                  await invoke('delete_packaging_type', { id: pt.id });
-                  packagingTypes = packagingTypes.filter((x: any) => x.id !== pt.id);
-                }} class="px-2 py-1 text-[10px] font-black text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer">✕</button>
+                {#if !pt.is_system}
+                  <button type="button" on:click={() => requestPackagingMutation('delete', pt)}
+                    class="px-2 py-1 text-[10px] font-black text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer">✕</button>
+                {/if}
               </div>
             {/each}
           </div>
-          <button type="button" on:click={async () => {
-            const id = await invoke<number>('save_packaging_type', { id: null, name: 'Nouveau / New', abbreviation: '', displayOrder: packagingTypes.length, isActive: true });
-            const list = await invoke<any[]>('get_packaging_types', { activeOnly: false });
-            packagingTypes = list.map((x: any) => ({ ...x, editing: x.id === id }));
-          }} class="mt-2 px-3 py-1.5 text-[10px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer">+ {t('pack_add')}</button>
+          <button type="button" on:click={() => requestPackagingMutation('add', null)}
+            class="mt-2 px-3 py-1.5 text-[10px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer">+ {t('pack_add')}</button>
         </div>
+
+  <!-- Admin password gate for packaging-type mutations (settings protection):
+       verified against verify_admin_password BEFORE the call, and AGAIN
+       server-side inside save/delete_packaging_type. -->
+  {#if packAdminAction}
+    <div class="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" on:mousedown|self={() => (packAdminAction = null)} role="presentation">
+      <div class="bg-pos-card border border-amber-400 rounded-2xl w-full max-w-sm p-5 space-y-3" role="dialog" tabindex="-1">
+        <h3 class="text-sm font-black text-pos-text">🔒 {t('pack_admin_required')}</h3>
+        <p class="text-[11px] text-pos-muted">
+          {#if packAdminAction.type === 'add'}{t('pack_add')}{/if}
+          {#if packAdminAction.type === 'save'}{t('pack_name')}: {packAdminAction.pt?.name}{/if}
+          {#if packAdminAction.type === 'delete'}{t('btn_delete')}: {packAdminAction.pt?.name}{/if}
+        </p>
+        <input type="password" bind:value={packAdminPassword} placeholder="Admin password"
+          on:keydown={(e) => { if (e.key === 'Enter') confirmPackagingMutation(); }}
+          class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none" />
+        {#if packAdminError}<p class="text-[11px] font-bold text-rose-600">{packAdminError}</p>{/if}
+        <div class="flex justify-end gap-2">
+          <button type="button" on:click={() => (packAdminAction = null)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">Cancel</button>
+          <button type="button" on:click={confirmPackagingMutation} disabled={packAdminBusy}
+            class="px-4 py-2 text-[11px] font-black bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">OK</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if salesModeDialog}
     <div class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" on:click={() => (salesModeDialog = null)} role="presentation">

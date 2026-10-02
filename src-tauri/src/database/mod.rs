@@ -280,6 +280,41 @@ impl DbState {
                 (6, 'Caisse', 'K', 5, 1);
         ");
 
+        // ---- Pricing model refinement: sale prices are stored PER BASE UNIT
+        // per packaging (authoritative); the per-package sale_price stays as
+        // a maintained DERIVED column (= per_unit × units_per_package) so
+        // every existing reader (cart, outbox → CRM mirror, receipts
+        // semantics) keeps working unchanged. Additive + idempotent only.
+        let _ = conn.execute("ALTER TABLE product_packagings ADD COLUMN packaging_type_id INTEGER;", []);
+        let _ = conn.execute("ALTER TABLE product_packagings ADD COLUMN sale_price_per_unit INTEGER DEFAULT 0;", []);
+        let _ = conn.execute("ALTER TABLE packaging_types ADD COLUMN is_system INTEGER DEFAULT 0;", []);
+        // The base Unité is a protected system packaging: pricing and stock
+        // semantics depend on it — re-seed if absent, then lock it.
+        let _ = conn.execute_batch("
+            UPDATE packaging_types SET is_system = 1
+             WHERE id = 1 OR lower(trim(name)) IN ('unité', 'unite', 'unit');
+        ");
+        // Legacy rows carry only the old per-package price: backfill the
+        // per-unit value once (rounded to whole DZD, the app's money unit)
+        // and link them to their type by name. Rows that match no type keep
+        // working by name — nothing is deleted.
+        let _ = conn.execute(
+            "UPDATE product_packagings
+                SET sale_price_per_unit = CAST(round(sale_price * 1.0 / units_per_package) AS INTEGER)
+              WHERE (sale_price_per_unit IS NULL OR sale_price_per_unit = 0)
+                AND sale_price > 0 AND units_per_package > 1;",
+            [],
+        );
+        let _ = conn.execute(
+            "UPDATE product_packagings
+                SET packaging_type_id = (
+                     SELECT pt.id FROM packaging_types pt
+                      WHERE lower(trim(pt.name)) = lower(trim(product_packagings.name))
+                      LIMIT 1)
+              WHERE packaging_type_id IS NULL;",
+            [],
+        );
+
         // Salary advances (avance sur salaire): persisted, deductible from
         // the next payroll, and booked as an expense when paid in cash.
         let _ = conn.execute_batch("

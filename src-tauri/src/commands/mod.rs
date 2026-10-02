@@ -350,13 +350,14 @@ pub fn save_packaging_type(
     abbreviation: Option<String>,
     display_order: Option<i64>,
     is_active: Option<bool>,
+    admin_password: String,
 ) -> Result<i64, String> {
-    product_service::save_packaging_type(&db, id, name, abbreviation.unwrap_or_default(), display_order.unwrap_or(0), is_active.unwrap_or(true))
+    product_service::save_packaging_type(&db, id, name, abbreviation.unwrap_or_default(), display_order.unwrap_or(0), is_active.unwrap_or(true), admin_password)
 }
 
 #[tauri::command]
-pub fn delete_packaging_type(db: State<'_, DbState>, id: i64) -> Result<(), String> {
-    product_service::delete_packaging_type(&db, id)
+pub fn delete_packaging_type(db: State<'_, DbState>, id: i64, admin_password: String) -> Result<(), String> {
+    product_service::delete_packaging_type(&db, id, admin_password)
 }
 
 /// Deposit a closed truck trip's cash into the register (idempotent per trip).

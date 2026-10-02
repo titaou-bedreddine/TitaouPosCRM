@@ -361,18 +361,28 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
         }
     }
 
+    // Packaging sale prices travel with the product in the SAME transaction
+    // (pricing spec: never a half-saved product). Legacy callers that don't
+    // manage packagings (None) leave the stored rows untouched.
+    if let Some(packagings) = &input.packagings {
+        write_packagings_tx(&tx, id, packagings)?;
+    }
+
     // Cloud sync outbox (same transaction): product create/update →
     // upsert_pos_product; a manual stock edit additionally becomes a
     // stock_adjustment event (append-only ledger on the CRM side).
     {
         let primary_barcode = clean_barcodes.first().cloned();
         // Packaging definitions travel with the product so the CRM mirrors
-        // the Palette/Fardeau/Bottle tier prices for the field apps.
+        // the Palette/Fardeau/Bottle tier prices for the field apps. The
+        // per-unit price rides along (authoritative); the CRM RPC keeps
+        // writing the derived per-package total for existing readers.
         let mut packagings_json: Vec<serde_json::Value> = vec![];
         {
             let mut stmt = tx
                 .prepare(
-                    "SELECT id, name, units_per_package, sale_price, COALESCE(purchase_price, 0)
+                    "SELECT id, name, units_per_package, sale_price, COALESCE(purchase_price, 0),
+                            COALESCE(sale_price_per_unit, 0), packaging_type_id
                        FROM product_packagings WHERE product_id = ?1",
                 )
                 .map_err(|e| e.to_string())?;
@@ -384,6 +394,8 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
                         "units_per_package": r.get::<_, f64>(2)?,
                         "sale_price": r.get::<_, i64>(3)?,
                         "purchase_price": r.get::<_, i64>(4)?,
+                        "sale_price_per_unit": r.get::<_, i64>(5)?,
+                        "packaging_type_id": r.get::<_, Option<i64>>(6)?,
                     }))
                 })
                 .map_err(|e| e.to_string())?;
@@ -646,7 +658,8 @@ pub fn list_packagings(db: &DbState, product_id: i64) -> Result<Vec<ProductPacka
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn
         .prepare(
-            "SELECT id, product_id, name, units_per_package, sale_price, COALESCE(is_default, 0)
+            "SELECT id, product_id, name, units_per_package, sale_price,
+                    COALESCE(sale_price_per_unit, 0), packaging_type_id, COALESCE(is_default, 0)
              FROM product_packagings WHERE product_id = ?1 ORDER BY units_per_package ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -658,7 +671,9 @@ pub fn list_packagings(db: &DbState, product_id: i64) -> Result<Vec<ProductPacka
                 name: row.get(2)?,
                 units_per_package: row.get(3)?,
                 sale_price: row.get(4)?,
-                is_default: row.get::<_, i64>(5)? == 1,
+                sale_price_per_unit: row.get(5)?,
+                packaging_type_id: row.get(6)?,
+                is_default: row.get::<_, i64>(7)? == 1,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -669,27 +684,99 @@ pub fn list_packagings(db: &DbState, product_id: i64) -> Result<Vec<ProductPacka
 pub fn save_packagings(db: &DbState, product_id: i64, inputs: Vec<PackagingInput>) -> Result<(), String> {
     let mut conn = db.conn.lock().unwrap();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    write_packagings_tx(&tx, product_id, &inputs)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Validated packaging write, usable INSIDE another transaction so the
+/// product editor can save product + prices atomically (pricing spec §23:
+/// never a half-saved product).
+///
+/// Semantics: the AUTHORITATIVE stored price is `sale_price_per_unit`
+/// (DZD per base unit); `sale_price` is rewritten as the derived package
+/// total (per_unit × units) — never the other way around. Rows with
+/// units_per_package <= 1 or an empty name are "not a packaging" and are
+/// skipped (base-unit pricing lives on products.sale_price). A row WITH a
+/// conversion but WITHOUT a price is a validation error, never silently
+/// dropped or coerced to zero.
+pub(crate) fn write_packagings_tx(
+    tx: &rusqlite::Transaction,
+    product_id: i64,
+    inputs: &[PackagingInput],
+) -> Result<(), String> {
     tx.execute("DELETE FROM product_packagings WHERE product_id = ?1", [product_id])
         .map_err(|e| e.to_string())?;
-    for input in &inputs {
-        if input.units_per_package <= 1 || input.name.trim().is_empty() {
+    let mut seen_names: Vec<String> = Vec::new();
+    let mut seen_types: Vec<i64> = Vec::new();
+    for input in inputs {
+        let name = input.name.trim().to_string();
+        if input.units_per_package <= 1 || name.is_empty() {
             continue; // single unit is not a packaging
         }
+        if input.units_per_package < 0 {
+            return Err(format!("Packaging '{}' has an invalid conversion / تحويل غير صالح للتغليف {}", name, input.units_per_package));
+        }
+        if input.sale_price_per_unit <= 0 {
+            return Err(format!(
+                "Packaging '{}' needs a sale price per unit / التغليف {} يحتاج سعر بيع للوحدة",
+                name, name
+            ));
+        }
+        if let Some(tid) = input.packaging_type_id {
+            let known: Option<i64> = tx
+                .query_row(
+                    "SELECT id FROM packaging_types WHERE id = ?1 AND is_active = 1",
+                    [tid],
+                    |r| r.get(0),
+                )
+                .ok();
+            if known.is_none() {
+                return Err(format!(
+                    "Packaging type for '{}' does not exist or is inactive / نوع التغليف {} غير موجود أو معطّل",
+                    name, name
+                ));
+            }
+            if seen_types.contains(&tid) {
+                return Err(format!("Duplicate packaging price for '{}' / سعر مكرر للتغليف {}", name, name));
+            }
+            seen_types.push(tid);
+        }
+        let norm = name.to_lowercase();
+        if seen_names.contains(&norm) {
+            return Err(format!("Duplicate packaging price for '{}' / سعر مكرر للتغليف {}", name, name));
+        }
+        seen_names.push(norm);
+
+        // Legacy fallback: no type id → resolve by name; unmatched legacy
+        // rows keep NULL and keep working by name (nothing is deleted).
+        let type_id: Option<i64> = match input.packaging_type_id {
+            Some(tid) => Some(tid),
+            None => tx
+                .query_row(
+                    "SELECT id FROM packaging_types WHERE lower(trim(name)) = lower(trim(?1)) LIMIT 1",
+                    [&name],
+                    |r| r.get(0),
+                )
+                .ok(),
+        };
+        let derived_total = input.sale_price_per_unit * input.units_per_package;
         tx.execute(
-            "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price, purchase_price, is_default)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price, sale_price_per_unit, purchase_price, packaging_type_id, is_default)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 product_id,
-                input.name.trim(),
+                name,
                 input.units_per_package,
-                input.sale_price,
+                derived_total,
+                input.sale_price_per_unit,
                 input.purchase_price,
+                type_id,
                 if input.is_default { 1 } else { 0 }
             ],
         )
         .map_err(|e| e.to_string())?;
     }
-    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -805,6 +892,7 @@ mod save_product_tests {
             scale_department_id: None,
             scale_sync_status: None,
             is_bundle: false,
+            packagings: None,
             barcodes: vec![],
         }
     }
@@ -884,6 +972,174 @@ mod save_product_tests {
         drop(conn);
         assert_eq!(round_trip(&db, id), (5000, 4500, 19));
     }
+
+    // ── Pricing-model refinement tests (per-base-unit packaging prices) ──
+
+    /// The spec's exact product: Water @ 200/unit, Palette 112 @ 190/unit →
+    /// per-unit stored, package total DERIVED (190 × 112 = 21 280), never
+    /// the other way around.
+    #[test]
+    fn d_packaging_price_stored_per_base_unit_total_derived() {
+        let db = fresh_db("d");
+        let mut input = base_input("PROD-D");
+        input.purchase_price = 180;
+        input.sale_price = 200;
+        input.packagings = Some(vec![PackagingInput {
+            name: "Palette PL112".into(),
+            units_per_package: 112,
+            sale_price: 0,
+            sale_price_per_unit: 190,
+            purchase_price: 0,
+            packaging_type_id: Some(4), // Palette seed
+            is_default: false,
+        }]);
+        let id = save_product(&db, input, None, Some(1)).unwrap();
+        let packs = list_packagings(&db, id).unwrap();
+        assert_eq!(packs.len(), 1);
+        assert_eq!(packs[0].sale_price_per_unit, 190, "authoritative per-base-unit price");
+        assert_eq!(packs[0].sale_price, 21280, "per-package total must be DERIVED 190×112");
+        assert_eq!(packs[0].packaging_type_id, Some(4));
+    }
+
+    /// Atomic save (pricing spec §23): a packaging row sent with the product
+    /// is persisted by save_product itself in ONE transaction — the caller
+    /// no longer needs a second save_packagings round-trip.
+    #[test]
+    fn e_packagings_persist_atomically_with_product() {
+        let db = fresh_db("e");
+        let mut input = base_input("PROD-E");
+        input.packagings = Some(vec![PackagingInput {
+            name: "Carton".into(),
+            units_per_package: 12,
+            sale_price: 0,
+            sale_price_per_unit: 195,
+            purchase_price: 0,
+            packaging_type_id: Some(3),
+            is_default: false,
+        }]);
+        let id = save_product(&db, input, None, Some(1)).unwrap();
+        assert_eq!(list_packagings(&db, id).unwrap().len(), 1, "packagings saved with the product in one call");
+    }
+
+    /// Validation (pricing spec §24): a configured conversion without a
+    /// price is rejected — never silently dropped or coerced to zero.
+    #[test]
+    fn f_packaging_without_price_rejected() {
+        let db = fresh_db("f");
+        let mut input = base_input("PROD-F");
+        input.packagings = Some(vec![PackagingInput {
+            name: "Sac".into(),
+            units_per_package: 50,
+            sale_price: 0,
+            sale_price_per_unit: 0,
+            purchase_price: 0,
+            packaging_type_id: Some(5),
+            is_default: false,
+        }]);
+        let err = save_product(&db, input, None, Some(1)).unwrap_err();
+        assert!(err.to_lowercase().contains("sale price per unit"), "clear validation error: {}", err);
+        // And the product must NOT have been half-saved:
+        let conn = db.conn.lock().unwrap();
+        let cnt: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE sku = 'PROD-F'", [], |r| r.get(0)).unwrap();
+        assert_eq!(cnt, 0, "invalid pricing must roll the whole save back");
+    }
+
+    /// Validation (pricing spec §24): duplicate active packaging prices for
+    /// the same product/type are rejected.
+    #[test]
+    fn g_duplicate_packaging_type_rejected() {
+        let db = fresh_db("g");
+        let mk = |name: &str, per_unit: i64| PackagingInput {
+            name: name.into(),
+            units_per_package: 12,
+            sale_price: 0,
+            sale_price_per_unit: per_unit,
+            purchase_price: 0,
+            packaging_type_id: Some(3),
+            is_default: false,
+        };
+        let mut input = base_input("PROD-G");
+        input.packagings = Some(vec![mk("Carton", 195), mk("Carton bis", 190)]);
+        assert!(save_product(&db, input, None, Some(1)).is_err(), "duplicate type pricing must be rejected");
+    }
+
+    /// Legacy legacy rows (name copy, no type id, per-package price only)
+    /// are backfilled on migration: per-unit derived, type resolved by name.
+    #[test]
+    fn h_legacy_packaging_rows_backfilled() {
+        let db = fresh_db("h");
+        {
+            let conn = db.conn.lock().unwrap();
+            // Insert BEFORE... the migration block runs inside run_migrations,
+            // so simulate a legacy row by clearing the backfilled columns.
+            conn.execute_batch(
+                "INSERT INTO products (sku, name_ar, name_fr, name_en, purchase_price, sale_price) VALUES ('PROD-H','ماء','Eau','Water',180,200);
+                 INSERT INTO product_packagings (product_id, name, units_per_package, sale_price)
+                   VALUES ((SELECT id FROM products WHERE sku='PROD-H'), 'Fardeau', 6, 1170);
+                 UPDATE product_packagings SET sale_price_per_unit = 0, packaging_type_id = NULL;",
+            )
+            .unwrap();
+            // Re-run just the backfill statements the migration applies.
+            conn.execute(
+                "UPDATE product_packagings
+                    SET sale_price_per_unit = CAST(round(sale_price * 1.0 / units_per_package) AS INTEGER)
+                  WHERE (sale_price_per_unit IS NULL OR sale_price_per_unit = 0)
+                    AND sale_price > 0 AND units_per_package > 1;",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE product_packagings
+                    SET packaging_type_id = (SELECT pt.id FROM packaging_types pt WHERE lower(trim(pt.name)) = lower(trim(product_packagings.name)) LIMIT 1)
+                  WHERE packaging_type_id IS NULL;",
+                [],
+            )
+            .unwrap();
+        }
+        let conn = db.conn.lock().unwrap();
+        let (per_unit, type_id): (i64, Option<i64>) = conn
+            .query_row(
+                "SELECT sale_price_per_unit, packaging_type_id FROM product_packagings WHERE name = 'Fardeau'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(per_unit, 195, "1170/6 = 195 per base unit");
+        assert_eq!(type_id, Some(2), "legacy name matched to the Fardeau type");
+    }
+
+    /// Unit protection (pricing spec §44): the system 'Unité' cannot be
+    /// renamed, deactivated or deleted; other types need the admin password
+    /// server-side.
+    #[test]
+    fn i_system_unit_protected_and_admin_gated() {
+        let db = fresh_db("i");
+        // Unité is seeded is_system by the migration.
+        let sys_flag: i64 = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT is_system FROM packaging_types WHERE id = 1", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(sys_flag, 1, "Unité must be marked as a protected system packaging");
+
+        // Rename attempt → rejected.
+        let err = save_packaging_type(&db, Some(1), "Bouteille".into(), "B".into(), 0, true, "admin".into()).unwrap_err();
+        assert!(err.contains("protected"), "rename must be rejected: {}", err);
+        // Deactivate attempt (even with the right name) → stays active.
+        save_packaging_type(&db, Some(1), "Unité".into(), "U".into(), 0, false, "admin".into()).unwrap();
+        let active: i64 = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT is_active FROM packaging_types WHERE id = 1", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(active, 1, "Unité cannot be deactivated");
+        // Delete attempt → rejected.
+        assert!(delete_packaging_type(&db, 1, "admin".into()).is_err(), "Unité cannot be deleted");
+
+        // Ordinary type mutations require the admin password server-side.
+        assert!(save_packaging_type(&db, None, "Bidon".into(), "B".into(), 9, true, "wrong".into()).is_err(), "wrong password rejected");
+        let new_id = save_packaging_type(&db, None, "Bidon".into(), "B".into(), 9, true, "admin".into()).unwrap();
+        assert!(delete_packaging_type(&db, new_id, "wrong".into()).is_err(), "delete without admin password rejected");
+        delete_packaging_type(&db, new_id, "admin".into()).unwrap();
+    }
 }
 
 // ── Packaging TYPE templates (Settings) ─────────────────────────────────────
@@ -893,7 +1149,7 @@ pub fn get_packaging_types(db: &DbState, active_only: bool) -> Result<Vec<serde_
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT id, name, abbreviation, display_order, is_active FROM packaging_types {} ORDER BY display_order ASC, id ASC",
+            "SELECT id, name, abbreviation, display_order, is_active, COALESCE(is_system, 0) FROM packaging_types {} ORDER BY display_order ASC, id ASC",
             if active_only { "WHERE is_active = 1" } else { "" }
         ))
         .map_err(|e| e.to_string())?;
@@ -905,13 +1161,26 @@ pub fn get_packaging_types(db: &DbState, active_only: bool) -> Result<Vec<serde_
                 "abbreviation": r.get::<_, String>(2)?,
                 "display_order": r.get::<_, i64>(3)?,
                 "is_active": r.get::<_, i64>(4)? != 0,
+                "is_system": r.get::<_, i64>(5)? != 0,
             }))
         })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-/// Create or update a packaging type template.
+fn require_admin(db: &DbState, admin_password: &str) -> Result<(), String> {
+    if !crate::auth::verify_admin_password(db, admin_password).unwrap_or(false) {
+        return Err("Mot de passe administrateur incorrect / كلمة مرور المدير غير صحيحة / Incorrect admin password".into());
+    }
+    Ok(())
+}
+
+/// Create or update a packaging type template. Sensitive settings mutation:
+/// requires the admin password, verified SERVER-SIDE (same mechanism as the
+/// sales-mode switch and the danger zone). The base 'Unité' is a protected
+/// SYSTEM packaging: its name, abbreviation and active state are immutable
+/// (the whole pricing/stock model depends on it) — only its display order
+/// may change.
 pub fn save_packaging_type(
     db: &DbState,
     id: Option<i64>,
@@ -919,15 +1188,39 @@ pub fn save_packaging_type(
     abbreviation: String,
     display_order: i64,
     is_active: bool,
+    admin_password: String,
 ) -> Result<i64, String> {
+    require_admin(db, &admin_password)?;
     let conn = db.conn.lock().unwrap();
     match id {
         Some(existing) => {
-            conn.execute(
-                "UPDATE packaging_types SET name = ?1, abbreviation = ?2, display_order = ?3, is_active = ?4 WHERE id = ?5",
-                rusqlite::params![name.trim(), abbreviation.trim(), display_order, is_active as i64, existing],
-            )
-            .map_err(|e| e.to_string())?;
+            let (old_name, is_system): (String, bool) = conn
+                .query_row(
+                    "SELECT name, COALESCE(is_system, 0) FROM packaging_types WHERE id = ?1",
+                    [existing],
+                    |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0)),
+                )
+                .map_err(|e| e.to_string())?;
+            if is_system {
+                // Identity is locked: same name required, always active.
+                if old_name.trim().to_lowercase() != name.trim().to_lowercase() {
+                    return Err(format!(
+                        "'{}' is a protected system packaging — it cannot be renamed / التغليف الأساسي محمي ولا يمكن تغيير اسمه",
+                        old_name
+                    ));
+                }
+                conn.execute(
+                    "UPDATE packaging_types SET display_order = ?1, is_active = 1 WHERE id = ?2",
+                    rusqlite::params![display_order, existing],
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                conn.execute(
+                    "UPDATE packaging_types SET name = ?1, abbreviation = ?2, display_order = ?3, is_active = ?4 WHERE id = ?5",
+                    rusqlite::params![name.trim(), abbreviation.trim(), display_order, is_active as i64, existing],
+                )
+                .map_err(|e| e.to_string())?;
+            }
             Ok(existing)
         }
         None => {
@@ -943,8 +1236,20 @@ pub fn save_packaging_type(
 
 /// Remove a packaging type template. Products keep their saved packaging rows
 /// (they store name + conversion copies), so history is never broken.
-pub fn delete_packaging_type(db: &DbState, id: i64) -> Result<(), String> {
+/// Admin-protected server-side; the base 'Unité' cannot be deleted.
+pub fn delete_packaging_type(db: &DbState, id: i64, admin_password: String) -> Result<(), String> {
+    require_admin(db, &admin_password)?;
     let conn = db.conn.lock().unwrap();
+    let is_system: bool = conn
+        .query_row(
+            "SELECT COALESCE(is_system, 0) FROM packaging_types WHERE id = ?1",
+            [id],
+            |r| Ok(r.get::<_, i64>(0)? != 0),
+        )
+        .unwrap_or(false);
+    if is_system {
+        return Err("Unité is a protected system packaging and cannot be deleted / لا يمكن حذف الوحدة الأساسية".into());
+    }
     conn.execute("DELETE FROM packaging_types WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())

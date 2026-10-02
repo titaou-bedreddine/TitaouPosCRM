@@ -235,7 +235,27 @@ fn push_product(
             "p_cost_price": dzd_to_centimes(p["purchase_price"].as_i64().unwrap_or(0)),
             "p_min_stock_alert": qty_round(p["min_stock"].as_f64().unwrap_or(0.0)),
             "p_is_active": p["is_active"].as_bool().unwrap_or(true),
-            "p_packagings": p["packagings"],
+            // Packaging prices cross the boundary like every other money
+            // field — DZD locally, centimes in Supabase (matching how
+            // p_unit_price/p_cost_price and order_items are converted).
+            // The per-unit price is the authoritative one; sale_price rides
+            // along as the derived package total.
+            "p_packagings": json!(p["packagings"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|mut pk| {
+                    for key in ["sale_price", "purchase_price", "sale_price_per_unit"] {
+                        if let Some(v) = pk.get_mut(key) {
+                            if let Some(dzd) = v.as_i64() {
+                                *v = json!(dzd_to_centimes(dzd));
+                            }
+                        }
+                    }
+                    pk
+                })
+                .collect::<Vec<_>>()),
         }),
     )?;
     let id = remote.as_str().unwrap_or_default().to_string();
