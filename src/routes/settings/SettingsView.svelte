@@ -1692,8 +1692,6 @@
                 <input type="number" min="0" bind:value={pt.default_units} disabled={!pt.editing || pt.is_system}
                   title={t('pack_default_units')}
                   class="w-16 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-mono text-pos-text outline-none disabled:opacity-60" />
-                <input type="number" bind:value={pt.display_order} disabled={!pt.editing}
-                  class="w-14 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-[11px] font-mono text-pos-text outline-none disabled:opacity-60" />
                 <label class="flex items-center gap-1 text-[10px] font-bold text-pos-muted cursor-pointer">
                   <input type="checkbox" bind:checked={pt.is_active} disabled={!pt.editing || pt.is_system} class="accent-sky-600" />{t('pack_active')}
                 </label>

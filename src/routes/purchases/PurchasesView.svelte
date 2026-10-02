@@ -73,7 +73,7 @@
   }
 
   // TVA (TTC pricing): the stored tax is the VAT INSIDE the TTC total.
-  let purchaseTva = 19; // default from settings; editable per invoice
+  let purchaseTva = 0; // default from settings (0 = no VAT); editable per invoice
 
   let items: ItemRow[] = [];
   let allPacks: Array<{ id: number; product_id: number; name: string; units_per_package: number; purchase_price: number }> = [];
@@ -492,7 +492,7 @@
   onMount(async () => {
     try {
       const st = await invoke<Record<string, string>>('get_all_settings');
-      const r = parseFloat(st?.default_tva_purchase ?? '19');
+      const r = parseFloat(st?.default_tva_purchase ?? '0');
       if (!isNaN(r)) purchaseTva = r;
     } catch {}
   });
@@ -865,6 +865,7 @@
                 <th class="p-2.5 text-center w-24">Qty (Qté)</th>
                 <th class="p-2.5 text-center w-28">Purchase Cost</th>
                 <th class="p-2.5 text-center w-28">Sale Price</th>
+                <th class="p-2.5 text-center w-14" title="VAT % inside the line total — empty = invoice rate">TVA %</th>
                 <th class="p-2.5 text-end w-28">Total Cost</th>
                 <th class="p-2.5 text-center w-12"></th>
               </tr>
@@ -990,8 +991,9 @@
               <span class="text-[10px] font-bold text-pos-muted">TVA %</span>
               <input type="number" min="0" max="100" bind:value={purchaseTva}
                 class="w-16 px-2 py-0.5 text-center bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-black font-mono text-pos-text outline-none" />
-              <span class="text-[10px] font-mono font-bold text-pos-muted">dont TVA: {tvaOf(total).toLocaleString()} DZD</span>
+              <span class="text-[10px] font-mono font-bold text-pos-muted">dont TVA: {itemsTvaTotal().toLocaleString()} DZD</span>
             </div>
+            <p class="text-xs text-pos-muted font-bold">Total HT (hors TVA): <span class="font-mono">{(total - itemsTvaTotal()).toLocaleString()} DZD</span></p>
             <p class="text-xs text-pos-muted font-bold">Total Invoice (TTC):</p>
             <p class="text-2xl font-black font-mono text-sky-600">{total.toLocaleString()} DZD</p>
             {#if estSaleValue > 0}

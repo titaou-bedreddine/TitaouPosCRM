@@ -8,8 +8,6 @@
     applyItemDiscount,
     toggleItemRefund,
     removeFromCart,
-    setLineUnit,
-    allPackagings,
     lastAddedProductId,
     qtyEditTarget,
     itemKey,
@@ -31,17 +29,7 @@
 
   let showDiscountInput = false;
 
-  function changeUnit(e: Event) {
-    const name = (e.currentTarget as HTMLSelectElement).value;
-    if (!name || name === (item.sale_unit ?? 'BASE')) return;
-    if (name === 'BASE') {
-      setLineUnit(item, null, baseSalePrice);
-    } else {
-      const packaging = linePackagings.find((pp) => pp.name === name);
-      if (packaging) setLineUnit(item, packaging, baseSalePrice);
-    }
-  }
-  let lineDiscountValue: number | null = item.discount_amount;
+let lineDiscountValue: number | null = item.discount_amount;
   let discountInputEl: HTMLInputElement;
   let qtyInputEl: HTMLInputElement;
 
@@ -58,9 +46,13 @@
   // F6 quantity-edit mode: when this line is the active target, focus and
   // select the quantity so the user can just type a new value.
   $: myKey = itemKey(item);
-  // This product's packagings (largest first) for the unit picker.
-  $: linePackagings = ($allPackagings || []).filter((pp: any) => pp.product_id === item.product_id);
-  $: hasUnits = (item.units_per_package ?? 1) !== 1 || linePackagings.length > 0;
+  // Packaging presentation label: the unit is chosen at add time (the
+  // presentation picker); the cart only DISPLAYS it — the dead unit
+  // dropdown (allPackagings was never populated) is removed.
+  $: lineUnitsPerPackage = (item.units_per_package && item.units_per_package !== 1)
+    ? item.units_per_package
+    : (item.sale_unit && item.base_quantity ? Math.max(1, Math.round(item.base_quantity / (item.quantity || 1))) : 0);
+  $: hasUnits = !!item.sale_unit && lineUnitsPerPackage > 0;
   $: isQtyEditTarget = $qtyEditTarget === myKey;
   $: if (isQtyEditTarget && qtyInputEl) {
     qtyInputEl.focus();
@@ -194,22 +186,12 @@
         {/if}
       </div>
       {#if hasUnits}
-        <div class="flex items-center gap-1.5 mt-0.5">
-          <select
-            class="text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg px-1.5 py-0.5 text-pos-text outline-none cursor-pointer"
-            value={item.sale_unit ?? 'BASE'}
-            on:change={changeUnit}
-          >
-            <option value="BASE">Bouteille / زجاجة</option>
-            {#each linePackagings as pp (pp.id)}
-              <option value={pp.name}>{pp.name} ({pp.units_per_package})</option>
-            {/each}
-          </select>
-          {#if (item.units_per_package ?? 1) !== 1}
-            <span class="text-[9px] font-mono text-pos-muted">
-              = {item.base_quantity?.toLocaleString()} u
-            </span>
-          {/if}
+        <!-- Static presentation label, e.g. "PL112 = 112u" — switching a
+             line's unit = remove it and re-add from the presentation picker. -->
+        <div class="mt-0.5">
+          <span class="inline-block text-[9px] font-black uppercase tracking-wide bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-md px-1.5 py-0.5 text-pos-text">
+            {item.sale_unit} = {lineUnitsPerPackage}u
+          </span>
         </div>
       {/if}
       {#if showCost}
