@@ -418,6 +418,10 @@ pub struct PurchaseItem {
     pub tax: i64,
     #[serde(default)]
     pub total: i64,
+    /// quantity × units_per_package — lets the editor restore the line's
+    /// packaging conversion (base_quantity / quantity).
+    #[serde(default)]
+    pub base_quantity: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

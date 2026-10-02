@@ -77,6 +77,10 @@
   // it is never auto-filled from settings or from the previous invoice).
   // Line rates are SEPARATE values (tva_rate per line, empty line = follow
   // the invoice rate, the pre-existing business rule).
+  // Purchase-invoice packaging mode (Settings → Packaging): 'unit' adds
+  // products directly as units (no popup); 'all' offers the packaging
+  // selection. PURCHASE INVOICES ONLY — sales are untouched.
+  let purchasePackagingMode: 'unit' | 'all' = 'unit';
   let purchaseTva: number | null = null;
 
   let items: ItemRow[] = [];
@@ -137,29 +141,31 @@
   }
 
   function resolveLineUnit(item: ItemRow, name: string) {
+    // Rebase on the product's CURRENT UNIT prices, then apply the chosen
+    // conversion — switching Palette → Unit returns exactly the product
+    // unit prices (never a double-multiplied or stale packaged price).
+    const prod = productOf(item.product_id);
+    const oldUpp = item.units_per_package ?? 1;
+    const baseCost = prod ? prod.purchase_price : Math.round(item.unit_cost / oldUpp);
+    const baseSale = prod ? prod.sale_price : Math.round(item.sale_price / oldUpp);
     if (name === 'BASE') {
-      const basePrice = Math.round(item.unit_cost / (item.units_per_package || 1));
       item.sale_unit = undefined;
       item.units_per_package = undefined;
-      item.unit_cost = basePrice;
+      item.unit_cost = baseCost;
+      item.sale_price = baseSale;
       item.total = item.quantity * item.unit_cost;
       items = [...items];
       return;
     }
     const productPack = packsFor(item.product_id).find((pp) => pp.name === name);
-    if (productPack) {
-      item.sale_unit = productPack.name;
-      item.units_per_package = productPack.units_per_package;
-      item.unit_cost = productPack.purchase_price > 0
-        ? productPack.purchase_price
-        : Math.round(item.unit_cost * productPack.units_per_package);
-    } else {
-      const type = packTypes.find((pt) => pt.name === name);
-      const units = Math.max(1, Number(type?.default_units) || 1);
-      item.sale_unit = name;
-      item.units_per_package = units;
-      item.unit_cost = Math.round(item.unit_cost * units);
-    }
+    const type = packTypes.find((pt) => pt.name === name);
+    const units = productPack
+      ? productPack.units_per_package
+      : Math.max(1, Number(type?.default_units) || 1);
+    item.sale_unit = productPack ? productPack.name : name;
+    item.units_per_package = units;
+    item.unit_cost = baseCost * units;
+    item.sale_price = baseSale * units;
     item.total = item.quantity * item.unit_cost;
     items = [...items];
   }
@@ -188,6 +194,13 @@
         const vat = it.tax ?? 0;
         const ht = (it.total ?? 0) - vat;
         const rate = ht > 0 && vat > 0 ? Math.round((vat / ht) * 1000) / 10 : 0;
+        // Restore the packaging conversion from the stored base quantity.
+        const units = it.quantity > 0 ? Math.max(1, Math.round((it.base_quantity ?? it.quantity) / it.quantity)) : 1;
+        const packaged = units > 1;
+        const packLabel =
+          packsFor(it.product_id).find((pk) => pk.units_per_package === units)?.name ||
+          packTypes.find((pt) => Number(pt.default_units) === units)?.name ||
+          `${units}u`;
         return {
           product_id: it.product_id,
           name: it.product_name || it.product_name_ar || '#' + it.product_id,
@@ -197,6 +210,8 @@
           sale_price: it.sale_price || it.unit_cost,
           tva_rate: rate,
           total: it.total,
+          sale_unit: packaged ? packLabel : undefined,
+          units_per_package: packaged ? units : undefined,
         };
       });
       editingPurchase = pur;
@@ -361,8 +376,17 @@
     await requestAddPurchaseLine(p);
   }
 
-  // Ask for the unit FIRST when the product has sellable presentations.
+  function productOf(productId: number): Product | undefined {
+    return products.find((pp) => pp.id === productId);
+  }
+
+  // Ask for the unit FIRST when the mode allows packaging AND the product
+  // has sellable presentations. 'Unit only' mode adds directly — no popup.
   async function requestAddPurchaseLine(p: Product) {
+    if (purchasePackagingMode !== 'all') {
+      await addItemAndFocus(p, null);
+      return;
+    }
     const options = unitOptionsFor(p.id, p.purchase_price);
     if (options.length > 1) {
       unitChoiceTarget = { product: p, options };
@@ -380,15 +404,19 @@
       items = [...items];
       targetIndex = existingIndex;
     } else {
+      // Pricing source of truth = the product's CURRENT UNIT prices
+      // (product row), multiplied by the packaging conversion — never a
+      // stored per-pack price and never the previous invoice line.
       const usePack = chosen && chosen.name !== 'BASE' ? chosen : null;
-      const startUnitCost = usePack && usePack.cost > 0 ? usePack.cost : p.purchase_price;
+      const units = usePack ? usePack.units : 1;
+      const startUnitCost = p.purchase_price * units;
       items = [...items, {
         product_id: p.id,
         name: p.name_fr || p.name_ar,
         barcode: (p.barcodes && p.barcodes[0]) || p.sku || '',
         quantity: 1,
         unit_cost: startUnitCost,
-        sale_price: p.sale_price,
+        sale_price: p.sale_price * units,
         total: startUnitCost,
         sale_unit: usePack ? usePack.name : undefined,
         units_per_package: usePack ? usePack.units : undefined,
@@ -476,14 +504,6 @@
 
   function updateTotals() {
     items = items.map(i => ({ ...i, total: i.quantity * i.unit_cost }));
-    // Paid-to-supplier tracks the invoice total until the cashier edits it
-    // manually (typing or a preset); after that their choice sticks.
-    // Compute the total LOCALLY: the reactive `subtotal` still holds the
-    // previous render's value here, which made the field lag one edit
-    // behind (e.g. 10000 shown for a 100000 invoice).
-    if (!paidManuallyEdited) {
-      paidAmount = items.reduce((sum, i) => sum + i.total, 0);
-    }
   }
 
   // (subtotal / itemsTva / total are derived above, VAT-exclusive.)
@@ -493,6 +513,12 @@
 
   // Cashier overrides the paid default by typing or picking a preset.
   let paidManuallyEdited = false;
+  // Paid-to-supplier follows the FINAL invoice TTC (HT + line VAT +
+  // invoice VAT) until the cashier edits it manually — then their value
+  // sticks (existing payment-state pattern).
+  $: if (!paidManuallyEdited) {
+    paidAmount = total;
+  }
 
   function setPaidPercent(pct: number) {
     paidManuallyEdited = true;
@@ -503,7 +529,15 @@
     paidManuallyEdited = true;
   }
 
-  // NOTE: intentionally NO settings/previous-invoice auto-fill here — a new
+  onMount(async () => {
+    try {
+      const st = await invoke<Record<string, string>>('get_all_settings');
+      purchasePackagingMode = st?.purchase_packaging_mode === 'all' ? 'all' : 'unit';
+    } catch {}
+  });
+
+  // NOTE: intentionally NO settings/previous-invoice auto-fill of the TVA —
+  // a new purchase invoice always opens with an EMPTY invoice TVA.
   // purchase invoice always opens with an EMPTY invoice TVA (field spec).
 
   function tvaOf(ttc: number): number {
@@ -535,7 +569,12 @@
   });
   $: subtotal = lineTotals.reduce((sum, l) => sum + l.ht, 0);
   $: itemsTva = lineTotals.reduce((sum, l) => sum + l.tva, 0);
-  $: total = subtotal + itemsTva;
+  // TWO TVA LEVELS: lines carry their own VAT; the invoice-level rate is
+  // applied ON TOP of the lines' TTC subtotal. invoiceTva = 0 when the
+  // invoice field is empty, so single-level invoices are unchanged.
+  $: subtotalTtc = subtotal + itemsTva;
+  $: invoiceTva = Math.round((subtotalTtc * Math.max(0, purchaseTva ?? 0)) / 100);
+  $: total = subtotalTtc + invoiceTva;
 
   // Dedicated fresh state for a NEW purchase invoice (never a spread of
   // the previous invoice): TVA EMPTY, supplier/dates/lines clean.
@@ -944,7 +983,8 @@
             <thead class="bg-slate-50 dark:bg-slate-800/60 border-b border-pos-border text-pos-muted font-bold">
               <tr>
                 <th class="p-2.5 text-start">Product</th>
-                <th class="p-2.5 text-center w-24">Qty (Qté)</th>
+                <th class="p-2.5 text-center w-24">Packaging</th>
+                <th class="p-2.5 text-center w-20">Qty (Qté)</th>
                 <th class="p-2.5 text-center w-28">Purchase Cost</th>
                 <th class="p-2.5 text-center w-28">Sale Price</th>
                 <th class="p-2.5 text-center w-14" title="VAT % — added on top of the line HT">TVA %</th>
@@ -957,7 +997,7 @@
             <tbody class="divide-y divide-pos-border/40">
               {#if items.length === 0}
                 <tr>
-                  <td colspan="8" class="p-6 text-center text-pos-muted">Scan or type in the search bar above to add products.</td>
+                  <td colspan="9" class="p-6 text-center text-pos-muted">Scan or type in the search bar above to add products.</td>
                 </tr>
               {:else}
                 {#each items as item, idx}
@@ -970,18 +1010,25 @@
                       {/if}
                     </td>
                     <td class="p-2.5 text-center">
-                      {#if unitOptionsFor(item.product_id, 0).length > 1}
+                      {#if purchasePackagingMode === 'all' && unitOptionsFor(item.product_id, 0).length > 1}
                         <select
-                          class="w-24 mb-1 px-1 py-0.5 text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-pos-text outline-none cursor-pointer"
+                          class="w-24 px-1 py-1 text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-pos-text outline-none cursor-pointer"
                           value={item.sale_unit ?? 'BASE'}
                           on:change={(e) => resolveLineUnit(item, e.currentTarget.value)}
+                          title={item.sale_unit ? `${item.sale_unit} = ${item.units_per_package}u` : t('sales_unit')}
                         >
                           <option value="BASE">{t('sales_unit')}</option>
                           {#each unitOptionsFor(item.product_id, 0).filter((o) => o.name !== 'BASE') as o (o.name)}
                             <option value={o.name}>{o.name} ({o.units})</option>
                           {/each}
                         </select>
+                      {:else if item.sale_unit}
+                        <span class="text-[10px] font-black text-amber-600">{item.sale_unit}</span>
+                      {:else}
+                        <span class="text-[10px] font-bold text-pos-muted">{t('sales_unit')}</span>
                       {/if}
+                    </td>
+                    <td class="p-2.5 text-center">
                       <input
                         id={`qty-${idx}`}
                         type="number"
@@ -1072,13 +1119,15 @@
 
           <div class="text-end">
             <p class="text-xs text-pos-muted font-bold">TOTAL HT (hors TVA): <span class="font-mono font-black text-pos-text">{subtotal.toLocaleString()} DZD</span></p>
-            <div class="flex items-center justify-end gap-2 mb-1 mt-0.5">
-              <span class="text-[10px] font-bold text-pos-muted">TVA %</span>
+            <p class="text-xs text-pos-muted font-bold">TVA (lignes): <span class="font-mono text-amber-600 font-black">{itemsTva.toLocaleString()}</span> DZD</p>
+            <p class="text-xs text-pos-muted font-bold">Sous-total TTC (lignes): <span class="font-mono font-black text-pos-text">{subtotalTtc.toLocaleString()} DZD</span></p>
+            <div class="flex items-center justify-end gap-2 mb-1">
+              <span class="text-[10px] font-bold text-pos-muted">TVA (facture) %</span>
               <input type="number" min="0" max="100" bind:value={purchaseTva} placeholder="TVA %"
                 class="w-16 px-2 py-0.5 text-center bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-black font-mono text-pos-text outline-none" />
-              <span class="text-[10px] font-mono font-bold text-pos-muted">TOTAL TVA: <span class="text-amber-600 font-black">{itemsTva.toLocaleString()}</span> DZD</span>
+              <span class="text-[10px] font-mono font-bold text-pos-muted">TVA facture: <span class="text-rose-600 font-black">{invoiceTva.toLocaleString()}</span> DZD</span>
             </div>
-            <p class="text-xs text-pos-muted font-bold">TOTAL TTC:</p>
+            <p class="text-xs text-pos-muted font-bold">TOTAL TTC (final):</p>
             <p class="text-2xl font-black font-mono text-sky-600">{total.toLocaleString()} DZD</p>
             {#if estSaleValue > 0}
               <p class="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
@@ -1211,9 +1260,15 @@
             <span class="font-mono">{(previewPurchase.subtotal ?? (previewPurchase.total - previewPurchase.tax)).toLocaleString()} DZD</span>
           </div>
           <div class="flex items-center justify-between font-bold text-amber-600">
-            <span>TVA (facture)</span>
+            <span>TVA (lignes)</span>
             <span class="font-mono">{(previewPurchase.tax ?? 0).toLocaleString()} DZD</span>
           </div>
+          {#if (previewPurchase.total - previewPurchase.subtotal - (previewPurchase.tax ?? 0)) > 0}
+            <div class="flex items-center justify-between font-bold text-rose-600">
+              <span>TVA (facture)</span>
+              <span class="font-mono">{(previewPurchase.total - previewPurchase.subtotal - (previewPurchase.tax ?? 0)).toLocaleString()} DZD</span>
+            </div>
+          {/if}
           <div class="flex items-center justify-between font-black text-sky-600 border-t border-amber-300 dark:border-amber-800 pt-1">
             <span>GRAND TOTAL (TTC)</span>
             <span class="font-mono">{previewPurchase.total.toLocaleString()} DZD</span>
@@ -1356,10 +1411,8 @@
           <span class="text-xs font-black text-pos-text">{unitChoiceLabel(o)}</span>
           <span class="text-[10px] font-bold font-mono text-emerald-600">
             {o.name === 'BASE'
-              ? `${o.cost.toLocaleString()} DZD / ${t('pem_units')}`
-              : o.cost > 0
-                ? `${o.cost.toLocaleString()} DZD / ${o.name}`
-                : t('purch_cost_enter')}
+              ? `${(unitChoiceTarget.product.purchase_price || 0).toLocaleString()} DZD / ${t('pem_units')}`
+              : `${((unitChoiceTarget.product.purchase_price || 0) * o.units).toLocaleString()} DZD / ${o.name}`}
           </span>
         </button>
       {/each}

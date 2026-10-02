@@ -45,6 +45,7 @@
 
   let currentTab: SettingsTab = 'general';
   let settings: Record<string, any> = {
+    purchase_packaging_mode: 'unit', // purchase invoices: 'unit' | 'all'
     shop_name_ar: 'سوبرماركت تيتاو',
     shop_name_fr: 'Titaou One Supermarché',
     shop_phone: '0553444057 / 021654321',
@@ -1679,6 +1680,14 @@
         <div class="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border">
           <h3 class="text-sm font-black text-pos-text mb-1">{t('pack_title')}</h3>
           <p class="text-[10px] text-pos-muted mb-3">{t('pack_hint')} — {t('pack_admin_required')}.</p>
+          <div class="flex items-center gap-2 mb-3 p-2 rounded-xl bg-white dark:bg-slate-900 border border-pos-border">
+            <span class="text-[10px] font-black text-pos-muted uppercase">Purchase Invoice Packaging</span>
+            <select bind:value={settings.purchase_packaging_mode} on:change={autoSaveSettings}
+              class="px-2 py-1 text-[11px] font-bold bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-pos-text outline-none cursor-pointer">
+              <option value="unit">Unit only (وحدة فقط) — no packaging popup</option>
+              <option value="all">All packaging (كل التغليف)</option>
+            </select>
+          </div>
           <div class="space-y-1.5">
             {#each packagingTypes as pt (pt.id)}
               <div class="flex items-center gap-2">

@@ -154,7 +154,8 @@ pub fn get_purchase_items(db: &DbState, purchase_id: i64) -> Result<Vec<Purchase
     let mut stmt = conn
         .prepare(
             "SELECT pi.id, pi.purchase_id, pi.product_id, p.name_fr, p.name_ar,
-                    pi.quantity, pi.unit_cost, pi.discount, pi.tax, pi.total
+                    pi.quantity, pi.unit_cost, pi.discount, pi.tax, pi.total,
+                    COALESCE(pi.base_quantity, pi.quantity)
              FROM purchase_items pi
              LEFT JOIN products p ON pi.product_id = p.id
              WHERE pi.purchase_id = ?1 ORDER BY pi.id ASC",
@@ -174,6 +175,7 @@ pub fn get_purchase_items(db: &DbState, purchase_id: i64) -> Result<Vec<Purchase
                 discount: row.get(7)?,
                 tax: row.get(8)?,
                 total: row.get(9)?,
+                base_quantity: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?;
