@@ -472,8 +472,7 @@
     }
   }
 
-  $: subtotal = items.reduce((sum, i) => sum + i.total, 0);
-  $: total = subtotal;
+  // (subtotal / itemsTva / total are derived above, VAT-exclusive.)
   // Estimated revenue if the whole invoice is sold at the entered sale
   // prices (small digits under the invoice total).
   $: estSaleValue = items.reduce((sum, i) => sum + (i.sale_price || 0) * i.quantity, 0);
@@ -513,13 +512,21 @@
     return items.reduce((sum, i) => sum + tvaOfLine(i), 0);
   }
 
-  // Reactive aggregate (template + save): references items AND purchaseTva
-  // inline so both invalidate it — the function-call form above only
-  // tracked `items`, which froze the display until save + reopen.
-  $: itemsTva = items.reduce((sum, i) => {
+  // ── VAT-EXCLUSIVE pricing (field model): the typed unit cost is HT —
+  // VAT is CALCULATED per line and ADDED on top. Line: HT = qty × cost,
+  // TVA = HT × rate, TTC = HT + TVA. Invoice: HT = Σ line HT, TVA = Σ
+  // line TVA, TTC = HT + TVA. (Reactive on items AND purchaseTva inline —
+  // the old function-call form only tracked `items` and froze until
+  // save + reopen.)
+  $: lineTotals = items.map((i) => {
     const r = Math.max(0, i.tva_rate ?? purchaseTva);
-    return sum + Math.round((i.total * r) / (100 + r));
-  }, 0);
+    const ht = Math.round(i.quantity * i.unit_cost);
+    const tva = Math.round((ht * r) / 100);
+    return { ht, tva, ttc: ht + tva };
+  });
+  $: subtotal = lineTotals.reduce((sum, l) => sum + l.ht, 0);
+  $: itemsTva = lineTotals.reduce((sum, l) => sum + l.tva, 0);
+  $: total = subtotal + itemsTva;
 
   // Applied-state: after Apply (save without closing), re-saving with
   // unchanged lines is a no-op; changed lines save a CORRECTED invoice
@@ -555,20 +562,20 @@
           supplier_id: selectedSupplierId,
           user_id: $currentUser?.id || 1,
           date: invoiceDate,
-          subtotal: total - itemsTva,
+          subtotal: subtotal,
           discount: 0,
           tax: itemsTva,
           total: total,
           paid_amount: paidAmount,
           payment_method: paymentMethod,
           notes: notes || 'Facture Achat',
-          items: items.map(i => ({
+          items: items.map((i, idx2) => ({
             product_id: i.product_id,
             quantity: i.quantity,
             unit_cost: i.unit_cost,
             discount: 0,
-            tax: tvaOfLine(i),
-            total: i.total,
+            tax: lineTotals[idx2].tva,
+            total: lineTotals[idx2].ttc,
             units_per_package: i.units_per_package ?? 0,
             expiry_date: null,
             batch_number: null,
@@ -918,15 +925,17 @@
                 <th class="p-2.5 text-center w-24">Qty (Qté)</th>
                 <th class="p-2.5 text-center w-28">Purchase Cost</th>
                 <th class="p-2.5 text-center w-28">Sale Price</th>
-                <th class="p-2.5 text-center w-14" title="VAT % inside the line total — empty = invoice rate">TVA %</th>
-                <th class="p-2.5 text-end w-28">Total Cost</th>
+                <th class="p-2.5 text-center w-14" title="VAT % — added on top of the line HT">TVA %</th>
+                <th class="p-2.5 text-end w-24">Total HT</th>
+                <th class="p-2.5 text-end w-20">TVA</th>
+                <th class="p-2.5 text-end w-28">Total TTC</th>
                 <th class="p-2.5 text-center w-12"></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-pos-border/40">
               {#if items.length === 0}
                 <tr>
-                  <td colspan="6" class="p-6 text-center text-pos-muted">Scan or type in the search bar above to add products.</td>
+                  <td colspan="8" class="p-6 text-center text-pos-muted">Scan or type in the search bar above to add products.</td>
                 </tr>
               {:else}
                 {#each items as item, idx}
@@ -992,15 +1001,15 @@
                         max="100"
                         inputmode="numeric"
                         placeholder={String(purchaseTva)}
-                        title="Vide = TVA de la facture"
+                        title="Empty = invoice rate"
                         bind:value={item.tva_rate}
                         on:input={updateTotals}
                         class="w-14 px-2 py-1 text-center bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg font-mono font-black text-pos-text outline-none"
                       />
                     </td>
-                    <td class="p-2.5 text-end font-mono font-black text-pos-text">
-                      {item.total.toLocaleString()} DZD
-                    </td>
+                    <td class="p-2.5 text-end font-mono text-pos-muted">{lineTotals[idx].ht.toLocaleString()}</td>
+                    <td class="p-2.5 text-end font-mono text-amber-600">{lineTotals[idx].tva.toLocaleString()}</td>
+                    <td class="p-2.5 text-end font-mono font-black text-pos-text">{lineTotals[idx].ttc.toLocaleString()} DZD</td>
                     <td class="p-2.5 text-center">
                       <button on:click={() => removeItem(idx)} class="text-pos-muted hover:text-rose-600 p-1 cursor-pointer">
                         <Trash2 class="w-4 h-4" />
@@ -1040,14 +1049,14 @@
           </div>
 
           <div class="text-end">
-            <p class="text-xs text-pos-muted font-bold">Total HT (hors TVA): <span class="font-mono font-black text-pos-text">{(total - itemsTva).toLocaleString()} DZD</span></p>
+            <p class="text-xs text-pos-muted font-bold">TOTAL HT (hors TVA): <span class="font-mono font-black text-pos-text">{subtotal.toLocaleString()} DZD</span></p>
             <div class="flex items-center justify-end gap-2 mb-1 mt-0.5">
               <span class="text-[10px] font-bold text-pos-muted">TVA %</span>
               <input type="number" min="0" max="100" bind:value={purchaseTva}
                 class="w-16 px-2 py-0.5 text-center bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-black font-mono text-pos-text outline-none" />
-              <span class="text-[10px] font-mono font-bold text-pos-muted">dont TVA: <span class="text-amber-600">{itemsTva.toLocaleString()}</span> DZD</span>
+              <span class="text-[10px] font-mono font-bold text-pos-muted">TOTAL TVA: <span class="text-amber-600 font-black">{itemsTva.toLocaleString()}</span> DZD</span>
             </div>
-            <p class="text-xs text-pos-muted font-bold">Total Invoice (TTC):</p>
+            <p class="text-xs text-pos-muted font-bold">TOTAL TTC:</p>
             <p class="text-2xl font-black font-mono text-sky-600">{total.toLocaleString()} DZD</p>
             {#if estSaleValue > 0}
               <p class="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
@@ -1074,7 +1083,7 @@
 
         <div class="flex items-center gap-2">
           {#if applyMsg}<span class="text-[10px] font-black text-emerald-600 me-1">{applyMsg}</span>{/if}
-          <button on:click={() => { isCreateOpen = false; appliedInvoiceNumber = null; }} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">
+          <button on:click={() => { isCreateOpen = false; appliedInvoiceNumber = null; }} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-pos-text font-black text-xs rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5">
             Cancel
           </button>
           <button

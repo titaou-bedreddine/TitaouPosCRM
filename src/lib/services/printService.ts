@@ -290,17 +290,27 @@ class PrintService {
    * Print a Purchase invoice/receipt.
    */
   async printPurchase(purchase: any, items: any[] = [], options?: PrintOptions): Promise<PrintResult> {
-    const printableItems: PrintableItem[] = items.map((it) => ({
-      id: it.product_id || it.id,
-      sku: it.sku || '',
-      barcode: it.barcode || '',
-      name: it.product_name || it.name_fr || it.name || 'Article',
-      quantity: it.quantity || 1,
-      unit: it.unit || '',
-      unitPrice: it.unit_cost || it.unit_price || 0,
-      discountPerUnit: it.discount_amount || 0,
-      totalPrice: it.total_cost || it.total_price || (it.quantity || 1) * (it.unit_cost || 0),
-    }));
+    const printableItems: PrintableItem[] = items.map((it) => {
+      // Saved purchase lines: total = TTC, tax = the line's VAT AMOUNT —
+      // the rate is derived (amount / HT) so the bon d'achat can show the
+      // full HT | TVA % | TVA | TTC breakdown per line.
+      const ttc = it.total_cost || it.total_price || it.total || (it.quantity || 1) * (it.unit_cost || it.unit_price || 0);
+      const vat = it.tax ?? 0;
+      const ht = ttc - vat;
+      return {
+        id: it.product_id || it.id,
+        sku: it.sku || '',
+        barcode: it.barcode || '',
+        name: it.product_name || it.name_fr || it.name || 'Article',
+        quantity: it.quantity || 1,
+        unit: it.unit || '',
+        unitPrice: it.unit_cost || it.unit_price || 0,
+        discountPerUnit: it.discount_amount || 0,
+        totalPrice: ttc,
+        taxAmount: vat,
+        taxRate: vat > 0 && ht > 0 ? Math.round((vat / ht) * 1000) / 10 : it.tax_rate,
+      };
+    });
 
     const doc: PrintableDocument = {
       id: purchase.id,

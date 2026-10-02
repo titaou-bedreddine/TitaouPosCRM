@@ -52,6 +52,15 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
   const showAmountPaid = bool(settings, 'a4_show_amount_paid', true);
   const showRemaining = bool(settings, 'a4_show_remaining', true);
 
+  // VAT breakdown (purchase invoices / any doc carrying VAT): per-line
+  // Total HT | TVA % | TVA | Total TTC + the HT/TVA/TTC totals. Sales
+  // carry no VAT (taxTotal 0) and keep their classic layout.
+  const showTva = showTax || (doc.taxTotal ?? 0) > 0;
+  const docHasVat = (doc.taxTotal ?? 0) > 0;
+  const vatRatePct = docHasVat && (doc.subtotal ?? 0) > 0
+    ? Math.round(((doc.taxTotal as number) / (doc.subtotal as number)) * 1000) / 10
+    : null;
+
   const showNotes = bool(settings, 'a4_show_notes', true);
   const showFooter = bool(settings, 'a4_show_footer', true);
 
@@ -170,8 +179,10 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
             ${showQuantity ? '<th class="col-qty">Qté</th>' : ''}
             ${showUnitPrice ? '<th class="col-price">P.U.</th>' : ''}
             ${showDiscount ? '<th class="col-discount">Remise</th>' : ''}
-            ${showTax ? '<th class="col-tax">TVA</th>' : ''}
-            <th class="col-total">Total</th>
+            ${showTva ? '<th class="col-price">Total HT</th>' : ''}
+            ${showTva ? '<th class="col-tax">TVA %</th>' : ''}
+            ${showTva ? '<th class="col-discount">TVA</th>' : ''}
+            <th class="col-total">${showTva ? 'Total TTC' : 'Total'}</th>
           </tr>
         </thead>
         <tbody>
@@ -192,7 +203,9 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
           ${showQuantity ? `<td class="col-qty text-center font-bold">${item.quantity}${item.unit ? `<span class="text-[9px] font-bold text-pos-muted"> ${item.unit}</span>` : ''}</td>` : ''}
           ${showUnitPrice ? `<td class="col-price text-end">${formatMoney(item.unitPrice, currency)}</td>` : ''}
           ${showDiscount ? `<td class="col-discount text-end">${item.discountPerUnit ? formatMoney(item.discountPerUnit, currency) : '-'}</td>` : ''}
-          ${showTax ? `<td class="col-tax text-center">${item.taxRate ? `${item.taxRate}%` : '-'}</td>` : ''}
+          ${showTva ? `<td class="col-price text-end">${formatMoney(item.totalPrice - (item.taxAmount || 0), currency)}</td>` : ''}
+          ${showTva ? `<td class="col-tax text-center">${item.taxRate ? `${item.taxRate}%` : '—'}</td>` : ''}
+          ${showTva ? `<td class="col-discount text-end text-rose-600">${formatMoney(item.taxAmount || 0, currency)}</td>` : ''}
           <td class="col-total text-end font-bold">${formatMoney(item.totalPrice, currency)}</td>
         </tr>
       `;
@@ -241,21 +254,30 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
           </div>
 
           <div class="totals-box">
-            ${doc.discountTotal > 0 ? `
-              <div class="total-row">
-                <span>Sous-total:</span>
+            ${docHasVat ? `
+              <div class="total-row font-bold" style="color:#0f172a;">
+                <span>TOTAL HT:</span>
                 <span>${formatMoney(doc.subtotal, currency)}</span>
               </div>
               <div class="total-row text-rose">
-                <span>Remise totale:</span>
-                <span>-${formatMoney(doc.discountTotal, currency)}</span>
-              </div>` : ''}
-
-            ${doc.taxTotal > 0 ? `
-              <div class="total-row">
-                <span>Total TVA:</span>
+                <span>TVA${vatRatePct !== null ? ` (${vatRatePct}%)` : ''}:</span>
                 <span>${formatMoney(doc.taxTotal, currency)}</span>
-              </div>` : ''}
+              </div>` : `
+              ${doc.discountTotal > 0 ? `
+                <div class="total-row">
+                  <span>Sous-total:</span>
+                  <span>${formatMoney(doc.subtotal, currency)}</span>
+                </div>
+                <div class="total-row text-rose">
+                  <span>Remise totale:</span>
+                  <span>-${formatMoney(doc.discountTotal, currency)}</span>
+                </div>` : ''}
+
+              ${doc.taxTotal > 0 ? `
+                <div class="total-row">
+                  <span>Total TVA:</span>
+                  <span>${formatMoney(doc.taxTotal, currency)}</span>
+                </div>` : ''}`}
 
             ${(doc.loadingFee !== undefined && doc.loadingFee > 0) ? `
               <div class="grand-total-row">
@@ -271,7 +293,7 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
                 <span>${formatMoney(doc.grandTotal - doc.loadingFee, currency)}</span>
               </div>` : `
               <div class="grand-total-row">
-                <span>NET À PAYER:</span>
+                <span>${docHasVat ? 'TOTAL TTC:' : 'NET À PAYER:'}</span>
                 <span class="grand-total-amount">${formatMoney(doc.grandTotal, currency)}</span>
               </div>`}
           </div>
