@@ -5,7 +5,7 @@
   import { t, currentLocale } from '../../lib/i18n';
   import { localTodayISO } from '../../lib/utils/date';
   import type { Category, CartItem, Product, Supplier, Unit } from '../../lib/types';
-  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates, unloadingFeesTotal, setLineUnloadingFee } from '../../lib/stores/cart';
+  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, saleFeeOverride, setSaleFeeOverride, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates, unloadingFeesTotal, setLineUnloadingFee } from '../../lib/stores/cart';
   import UnloadingFeeModal from '../../lib/components/UnloadingFeeModal.svelte';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
@@ -53,7 +53,7 @@
   import {
     ShoppingBag, ArrowRight, CheckCircle2, Settings2, Plus,
     Store, Sparkles, AlertCircle, ArrowUpDown, Tag, Percent, UserRound, ChevronDown, Truck,
-    Eye, EyeOff, TrendingUp
+    Eye, EyeOff, TrendingUp, Pencil
   } from 'lucide-svelte';
 
   let products: Product[] = [];
@@ -615,6 +615,20 @@
     if (line) setLineUnloadingFee(line, fee);
   }
 
+  // Sale-level fee (edited sales): the persisted lump fee loaded from the
+  // sale. The user may change it (300 → 500) or remove it (0) — checkout
+  // re-books the expense to EXACTLY this amount, nothing orphaned.
+  let isSaleFeeOpen = false;
+
+  function openSaleFeeEdit() {
+    isSaleFeeOpen = true;
+  }
+
+  function confirmSaleFee(fee: number) {
+    isSaleFeeOpen = false;
+    setSaleFeeOverride(fee);
+  }
+
   function handlePurchasePriceConfirm(price: number, salePriceEntered: number, qty = 1) {
     if (!purchasePriceTarget) return;
     // Buy at the entered cost (unit_price mirrors sale_price = cost here).
@@ -869,11 +883,29 @@
         tax_amount: i.tax_amount || 0,
         total_price: i.total_price,
         is_refund: i.is_refund || false,
+        // Packaging identity must survive the edit round-trip (spec #4):
+        // without it checkout persists sale_unit=NULL and stock moves lose
+        // the packaging conversion.
+        sale_unit: i.sale_unit || undefined,
+        base_quantity: i.base_quantity || undefined,
       }));
       clearCart();
       $cartItems = mergeCartDuplicates(mapped);
       if (sale.customer_id) $selectedCustomerId = sale.customer_id;
       originSaleId.set(sale.id);
+      // The fee is a LUMP persisted on the sale (one Déchargement expense
+      // row keyed by sale number) — reload it into the cart so the footer
+      // shows it and checkout re-books it UNCHANGED unless the user edits
+      // it explicitly (spec #11/#12/#15).
+      setSaleFeeOverride(null);
+      if (sale.sale_number) {
+        try {
+          const fee = await invoke<number>('get_sale_loading_fee', { saleNumber: sale.sale_number });
+          if (fee > 0) setSaleFeeOverride(fee);
+        } catch (feeErr) {
+          console.warn('Could not load sale loading fee:', feeErr);
+        }
+      }
     } catch (e) {
       console.error('Failed to load last sale for editing:', e);
     }
@@ -1060,6 +1092,10 @@
           tax_amount: i.tax_amount || 0,
           total_price: i.total_price,
           is_refund: i.is_refund || false,
+          // Historical packaging identity (spec #4): the persisted line must
+          // keep the unit label and the base-unit conversion it was sold in.
+          sale_unit: i.sale_unit,
+          base_quantity: i.base_quantity,
         })),
       };
 
@@ -1072,8 +1108,17 @@
       // reference (field bug: the fee was linked to VTE-… and became
       // unfindable by Sales History / deletion reversal).
       let persistedSaleNumber: string;
+      const feeTotal = get(unloadingFeesTotal);
       if (get(originSaleId)) {
-        persistedSaleNumber = await invoke<string>('replace_sale', { originalSaleId: get(originSaleId), input: saleInput });
+        // The edited sale's fee goes through replace_sale so Rust can
+        // re-book the Déchargement expense ATOMICALLY: the old rows are
+        // reversed and exactly one row is written for the new amount
+        // (0 = fee removed → none left behind, no double-booking).
+        persistedSaleNumber = await invoke<string>('replace_sale', {
+          originalSaleId: get(originSaleId),
+          input: saleInput,
+          unloadingFee: Math.max(0, Math.round(feeTotal)),
+        });
       } else {
         persistedSaleNumber = await invoke<string>('create_sale', { input: saleInput });
       }
@@ -1081,11 +1126,12 @@
         throw new Error('Sale saved but no receipt number returned — do not book the fee against a placeholder');
       }
 
-      // Unloading fees (déchargement): the driver's per-unit take leaves the
-      // drawer as an EXPENSE tied to the cash session — the sale itself stays
-      // at the goods total, the fee comes out of the collected cash.
-      const feeTotal = get(unloadingFeesTotal);
-      if (feeTotal > 0) {
+      // Unloading fees (déchargement) on a NEW sale: the driver's per-unit
+      // take leaves the drawer as an EXPENSE tied to the cash session — the
+      // sale itself stays at the goods total, the fee comes out of the
+      // collected cash. Edited sales just re-booked theirs inside
+      // replace_sale; booking here again would double the fee.
+      if (!get(originSaleId) && feeTotal > 0) {
         try {
           const feeCategoryId = await invoke<number>('get_unloading_expense_category_id');
           const feeDetail = $cartItems
@@ -1151,15 +1197,12 @@
               return;
             }
             const sale = res.sale;
-            const items = (res.items ?? []).map((it: any) => ({
-              name: it.name_fr || it.name_ar || 'Article',
-              quantity: it.quantity,
-              unitPrice: it.unit_price,
-              totalPrice: it.total_price,
-              discountPerUnit: it.discount_amount || 0,
-              sale_unit: it.sale_unit || undefined,
-              isRefund: it.is_refund || false,
-            }));
+            // printSale maps the RAW persisted rows (snake_case, straight
+            // from Rust) itself. Pre-converting to camelCase here made
+            // every mapper read `it.unit_price`/`it.total_price` as
+            // undefined → 0.00 P.U. / 0.00 Total on the printed receipt
+            // while the totals stayed correct (they come from the sale
+            // row). Pass the rows through untouched.
             void printService.printSale({
               sale_number: persistedSaleNumber,
               sale_date: sale.created_at,
@@ -1172,7 +1215,7 @@
               total_amount: sale.total_amount,
               paid_amount: sale.paid_amount,
               change_amount: sale.change_amount,
-            }, items, {
+            }, res.items ?? [], {
               isCredit: mode === 'credit',
               copyLabel: mode === 'credit' ? 'COPIE MAGASIN / STORE COPY' : mode === 'versement' ? 'VERSEMENT / تسبقة' : undefined,
             }).then((res2) => {
@@ -1841,10 +1884,22 @@
           {/if}
           {#if $unloadingFeesTotal !== 0 && $posMode === 'sale'}
             <!-- Unloading fees (déchargement): the driver's take — recorded
-                 as an expense at checkout, never part of the goods total. -->
+                 as an expense at checkout, never part of the goods total.
+                 An edited sale carries a FIXED sale-level fee (it must not
+                 rescale with quantities); the pencil edits/removes it. -->
             <div class="flex items-center justify-between pt-1 border-t border-amber-200/60 dark:border-amber-800/40 mt-1">
               <span class="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1">
                 <Truck class="w-3 h-3" /> {t('pos_unloading_line')}
+                {#if $saleFeeOverride !== null}
+                  <button
+                    type="button"
+                    on:click={openSaleFeeEdit}
+                    class="p-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 hover:bg-amber-200 cursor-pointer transition"
+                    title={t('pos_unloading_edit_sale_fee')}
+                  >
+                    <Pencil class="w-3 h-3" />
+                  </button>
+                {/if}
               </span>
               <span class="text-[11px] font-bold text-pos-muted">
                 <span class="font-mono text-amber-600 dark:text-amber-400">−{Math.abs($unloadingFeesTotal).toLocaleString()} DZD</span>
@@ -1912,6 +1967,18 @@
       isUnloadingFeeOpen = false;
       feeEditLine = null;
     }}
+  />
+
+  <!-- Sale-level unloading fee (edited sales): total for the whole
+       transaction, NOT per unit — change or remove the persisted lump. -->
+  <UnloadingFeeModal
+    mode="sale"
+    isOpen={isSaleFeeOpen}
+    productName={t('pos_unloading_sale_fee')}
+    defaultFee={$saleFeeOverride ?? 0}
+    isEdit={true}
+    onConfirm={confirmSaleFee}
+    onClose={() => (isSaleFeeOpen = false)}
   />
 
   <CategoryManagerModal

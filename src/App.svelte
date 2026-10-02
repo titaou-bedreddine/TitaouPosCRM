@@ -859,6 +859,8 @@
                 tax_amount: i.tax_amount || 0,
                 total_price: i.total_price,
                 is_refund: i.is_refund || false,
+                sale_unit: i.sale_unit || undefined,
+                base_quantity: i.base_quantity || undefined,
               }));
               const { clearCart, cartItems, posMode, mergeCartDuplicates } = await import('./lib/stores/cart');
               clearCart();

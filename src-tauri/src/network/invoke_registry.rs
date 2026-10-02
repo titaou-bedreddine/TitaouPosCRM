@@ -617,7 +617,13 @@ pub fn dispatch(ctx: &InvokeContext, command: &str, args: &Value) -> Result<Valu
         }
         "replace_sale" => {
             let input: CreateSaleInput = model(args, "input")?;
-            as_json(crate::services::sales_service::replace_sale(db, req_i64(args, "original_sale_id")?, input)?)?
+            // Explicit fee total from the editing terminal (snake- or
+            // camelCased depending on the bridge); None = leave expenses.
+            let unloading_fee = match opt_i64(args, "unloading_fee")? {
+                Some(v) => Some(v),
+                None => opt_i64(args, "unloadingFee")?,
+            };
+            as_json(crate::services::sales_service::replace_sale(db, req_i64(args, "original_sale_id")?, input, unloading_fee)?)?
         }
         "list_sales" => as_json(crate::services::sales_service::list_sales(
             db,

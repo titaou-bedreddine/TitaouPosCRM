@@ -25,6 +25,17 @@ export const posMode = writable<PosMode>('sale');
 // (duplicate) row.
 export const originSaleId = writable<number | null>(null);
 
+// Fixed transaction-level unloading fee (déchargement), in DZD. Set when a
+// sale is loaded for editing: the persisted fee is a LUMP on the sale (one
+// expenses row), so it must NOT rescale when the user changes quantities —
+// it stays as booked until explicitly changed (null = derive from the
+// per-line fees as usual).
+export const saleFeeOverride = writable<number | null>(null);
+
+export function setSaleFeeOverride(fee: number | null) {
+  saleFeeOverride.set(fee === null ? null : Math.max(0, Math.round(Number(fee) || 0)));
+}
+
 // Quantity-edit mode (F6): the cart line currently being edited, keyed by
 // "productId[_ref]". null = not editing.
 export const qtyEditTarget = writable<string | null>(null);
@@ -338,6 +349,7 @@ export function persistActiveCart() {
       discountValue: get(globalDiscountValue),
       customerId: get(selectedCustomerId),
       mode: get(posMode),
+      saleFeeOverride: get(saleFeeOverride),
       savedAt: Date.now(),
     });
     invoke('set_setting', { key: ACTIVE_CART_KEY, value: payload }).catch(() => {});
@@ -372,6 +384,12 @@ export async function restoreActiveCart() {
     if (parsed.mode === 'purchase' || parsed.mode === 'broken' || parsed.mode === 'sale') {
       posMode.set(parsed.mode);
     }
+    // An edited sale's lump fee survives a restart with the cart.
+    saleFeeOverride.set(
+      parsed.saleFeeOverride === null || parsed.saleFeeOverride === undefined
+        ? null
+        : Math.max(0, Math.round(Number(parsed.saleFeeOverride) || 0))
+    );
     return true;
   } catch (e) {
     console.warn('Could not restore active cart:', e);
@@ -391,6 +409,7 @@ function mirrorCartToDb() {
 cartItems.subscribe(() => mirrorCartToDb());
 globalDiscountMode.subscribe(() => mirrorCartToDb());
 globalDiscountValue.subscribe(() => mirrorCartToDb());
+saleFeeOverride.subscribe(() => mirrorCartToDb());
 
 export function clearCart() {
   isCartExplicitlyCleared = true;
@@ -402,6 +421,7 @@ export function clearCart() {
   isRefundMode.set(false);
   posMode.set('sale');
   originSaleId.set(null);
+  saleFeeOverride.set(null);
   stopQtyEdit();
   clearPersistedCart();
 }
@@ -586,8 +606,12 @@ export function lineUnloadingTotal(item: { unloading_fee_per_unit?: number; quan
   return item.is_refund ? -total : total;
 }
 
-export const unloadingFeesTotal = derived(cartItems, ($items) =>
-  $items.reduce((sum, item) => sum + lineUnloadingTotal(item), 0)
+// An explicit sale-level override wins over the per-line sum (edit mode:
+// the persisted fee is a lump and must not move with quantities).
+export const unloadingFeesTotal = derived(
+  [cartItems, saleFeeOverride],
+  ([$items, $override]) =>
+    $override !== null ? $override : $items.reduce((sum, item) => sum + lineUnloadingTotal(item), 0)
 );
 
 /** Unloading fee total for ONE line (signed: refunds give the fee back). */

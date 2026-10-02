@@ -203,6 +203,13 @@ export interface Sale {
   is_edited?: boolean;
   /** LAN: PC name of the terminal that recorded this sale. */
   terminal_name?: string;
+  /** Déchargement fee booked against THIS sale (expenses row keyed by the
+   * sale number). Attached by SalesView from get_loading_fees_summary. */
+  fee?: number;
+  /** total_amount − fee (attached by SalesView for the history column). */
+  net_encaisse?: number;
+  /** max(0, total_amount − paid_amount): the customer's remaining balance. */
+  credit?: number;
 }
 
 export interface Customer {

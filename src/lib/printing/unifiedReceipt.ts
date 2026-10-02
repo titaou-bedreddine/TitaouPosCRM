@@ -89,6 +89,7 @@ function proOptionsFromContext(c: UnifiedReceiptContext): ProReceiptOptions {
     subtotal: c.subtotal,
     discount: c.discount,
     grandTotal: c.grandTotal,
+    loadingFee: c.loadingFee,
     amountPaid: c.amountPaid,
     change: c.change,
     currency: s['default_currency'] || 'DA',

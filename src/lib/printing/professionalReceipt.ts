@@ -44,6 +44,9 @@ export interface ProReceiptOptions {
   subtotal: number;
   discount: number;
   grandTotal: number;
+  /** Déchargement fee booked against this sale — informational: the
+   * customer owes grandTotal; the fee reduces the drawer cash. */
+  loadingFee?: number;
   amountPaid?: number;
   change?: number;
   currency: string;
@@ -247,6 +250,20 @@ export function buildProfessionalReceiptHtml(o: ProReceiptOptions): string {
     totalsRow(t.subtotal, money(o.subtotal)),
     totalsRow(t.discount, money(o.discount)),
     totalsRow(t.total, money(o.grandTotal), true, true),
+    // Déchargement fee: the customer's debt stays grandTotal; the fee only
+    // explains what remains in the drawer (never merged into the total).
+    o.loadingFee !== undefined && o.loadingFee > 0
+      ? totalsRow(
+          o.lang === 'ar' ? 'رسوم التنزيل' : o.lang === 'en' ? 'UNLOADING FEE' : 'FRAIS DÉCHARGEMENT',
+          '-' + money(o.loadingFee)
+        )
+      : '',
+    o.loadingFee !== undefined && o.loadingFee > 0
+      ? totalsRow(
+          o.lang === 'ar' ? 'الصافي بالصندوق' : o.lang === 'en' ? 'NET CASH' : 'NET ENCAISSÉ (CAISSE)',
+          money(o.grandTotal - o.loadingFee)
+        )
+      : '',
     o.amountPaid !== undefined ? totalsRow(t.amountPaid, money(o.amountPaid)) : '',
     o.change !== undefined ? totalsRow(t.change, money(o.change)) : '',
     o.versementPaid !== undefined

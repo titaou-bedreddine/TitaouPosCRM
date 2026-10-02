@@ -12,7 +12,7 @@
   import { printHtmlSilently } from '../../lib/utils/printer';
   import { printService } from '../../lib/services/printService';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
-  import { originSaleId,  cartItems, clearCart, mergeCartDuplicates } from '../../lib/stores/cart';
+  import { originSaleId, cartItems, clearCart, mergeCartDuplicates, setSaleFeeOverride } from '../../lib/stores/cart';
   import { selectedCustomerId } from '../../lib/stores/customers';
   import {
     ShoppingBag, Search, Printer, Calendar, User as UserIcon,
@@ -63,7 +63,7 @@
 
   async function loadSales() {
     try {
-      sales = await invoke<Sale[]>('list_sales', {
+      const rows = await invoke<Sale[]>('list_sales', {
         startDate: startDate || null,
         endDate: endDate || null,
         userId: selectedCashier ? Number(selectedCashier) : null,
@@ -78,6 +78,18 @@
         feesBySale = summary?.by_sale ?? {};
         feesTotal = summary?.total ?? 0;
       } catch { feesBySale = {}; feesTotal = 0; }
+      // Each sale carries ITS OWN fee (expense row keyed by its sale
+      // number) — never a period aggregate (spec #10). Net encaissé and
+      // credit are derived per sale so the columns sort like real fields.
+      sales = rows.map((s) => {
+        const fee = feesBySale[s.sale_number] ?? 0;
+        return {
+          ...s,
+          fee,
+          net_encaisse: s.total_amount - fee,
+          credit: Math.max(0, s.total_amount - s.paid_amount),
+        } as Sale;
+      });
     } catch (e) {
       console.error(e);
     }
@@ -219,6 +231,8 @@
         tax_amount: i.tax_amount || 0,
         total_price: i.total_price,
         is_refund: i.is_refund || false,
+        sale_unit: i.sale_unit || undefined,
+        base_quantity: i.base_quantity || undefined,
       }));
       clearCart();
       $cartItems = mergeCartDuplicates(mapped);
@@ -226,6 +240,14 @@
       // Editing in place: the checkout updates this sale (tagged MODIFIED)
       // instead of inserting a duplicate row.
       originSaleId.set(sale.id);
+      // Load the sale's own persisted fee into the cart (lump — it must
+      // stay in the cart through the edit and re-book unchanged at
+      // checkout unless explicitly changed).
+      setSaleFeeOverride(null);
+      try {
+        const fee = await invoke<number>('get_sale_loading_fee', { saleNumber: sale.sale_number });
+        if (fee > 0) setSaleFeeOverride(fee);
+      } catch { /* no fee booked */ }
       isDetailModalOpen = false;
       onRequestPosRoute?.();
     } catch (e) {
@@ -424,8 +446,11 @@
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('user_name')}>{t('sales_cashier')} {sortIndicator('user_name')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('terminal_name')} title="PC / terminal that recorded the sale">{t('terminal')} {sortIndicator('terminal_name')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('customer_name')}>{t('customer')} {sortIndicator('customer_name')}</th>
-          <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('total_amount')}>{t('sales_total_amount')} {sortIndicator('total_amount')}</th>
+          <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('total_amount')} title="Marchandises avant frais (Σ lignes)">{t('sales_total_brut')} {sortIndicator('total_amount')}</th>
+          <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('fee')} title="Frais de déchargement de CETTE vente">{t('sales_frais')} {sortIndicator('fee')}</th>
+          <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('net_encaisse')} title="Total brut − frais (caisse)">{t('sales_net_encaisse')} {sortIndicator('net_encaisse')}</th>
           <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('paid_amount')}>{t('sales_paid_amount')} {sortIndicator('paid_amount')}</th>
+          <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('credit')} title="Reste dû par le client (brut − payé)">{t('sales_credit_due')} {sortIndicator('credit')}</th>
           <th class="p-3 text-center cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('lines_sold')} title="Distinct sale lines">{t('sales_lines_sold') || 'Lines'} {sortIndicator('lines_sold')}</th>
           <th class="p-3 text-center cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('units_sold')} title="Total quantities (Σ per-line qty)">{t('sales_units_sold') || 'Units'} {sortIndicator('units_sold')}</th>
           <th class="p-3 text-center">{t('sales_payment')}</th>
@@ -436,7 +461,7 @@
       <tbody class="divide-y divide-pos-border/40">
         {#if filteredSales.length === 0}
           <tr>
-            <td colspan="12" class="p-8 text-center text-pos-muted">{t('no_data')}</td>
+            <td colspan="15" class="p-8 text-center text-pos-muted">{t('no_data')}</td>
           </tr>
         {:else}
           {#each sortedSales as s}
@@ -460,8 +485,11 @@
                 {/if}
               </td>
               <td class="p-3 text-pos-muted">{s.customer_name || 'Client Comptoir'}</td>
-              <td class="p-3 text-end font-mono font-black text-pos-text">{s.total_amount.toLocaleString()} DZD</td>
-              <td class="p-3 text-end font-mono font-black text-emerald-600">{s.paid_amount.toLocaleString()} DZD</td>
+              <td class="p-3 text-end font-mono font-black text-pos-text">{(s.total_amount ?? 0).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-end font-mono font-bold text-amber-600 dark:text-amber-400">{(s.fee ?? 0) > 0 ? `−${(s.fee ?? 0).toLocaleString('fr-DZ')}` : '0'}</td>
+              <td class="p-3 text-end font-mono font-black text-emerald-600 dark:text-emerald-400">{(s.net_encaisse ?? s.total_amount).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-end font-mono font-bold text-sky-600 dark:text-sky-400">{(s.paid_amount ?? 0).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-end font-mono font-bold {(s.credit ?? 0) > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-pos-muted'}">{(s.credit ?? 0).toLocaleString('fr-DZ')}</td>
               <td class="p-3 text-center font-mono font-bold text-purple-600">{s.lines_sold ?? '—'}</td>
               <td class="p-3 text-center font-mono font-bold text-indigo-600">{s.units_sold ?? '—'}</td>
               <td class="p-3 text-center">
@@ -560,8 +588,35 @@
             <span class="font-black capitalize text-emerald-600">{selectedSale.payment_status}</span>
           </div>
           <div>
-            <span class="text-pos-muted font-bold block mb-0.5">Total Amount:</span>
-            <span class="font-black font-mono text-pos-text">{selectedSale.total_amount.toLocaleString()} DZD</span>
+            <span class="text-pos-muted font-bold block mb-0.5">{t('sales_total_brut')}:</span>
+            <span class="font-black font-mono text-pos-text">{selectedSale.total_amount.toLocaleString('fr-DZ')} DZD</span>
+          </div>
+        </div>
+
+        <!-- Financial identity of THIS sale (always shown, fee or not):
+             brut = Σ lignes; frais = Déchargement expense of this sale;
+             net encaissé = brut − frais; paid/credit = the customer's side.
+             The fee must never disappear from the summary (spec #9). -->
+        <div class="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl text-xs space-y-1">
+          <div class="flex items-center justify-between font-bold text-pos-text">
+            <span>{t('sales_total_brut')}</span>
+            <span class="font-mono">{selectedSale.total_amount.toLocaleString('fr-DZ')} DZD</span>
+          </div>
+          <div class="flex items-center justify-between font-bold text-rose-600">
+            <span>{t('sales_frais_dechargement')}</span>
+            <span class="font-mono">−{loadingFee.toLocaleString('fr-DZ')} DZD</span>
+          </div>
+          <div class="flex items-center justify-between font-black text-emerald-600 border-t border-amber-300 dark:border-amber-800 pt-1">
+            <span>{t('sales_net_encaisse')}</span>
+            <span class="font-mono">{(selectedSale.total_amount - loadingFee).toLocaleString('fr-DZ')} DZD</span>
+          </div>
+          <div class="flex items-center justify-between font-bold text-pos-text pt-1">
+            <span>{t('sales_paid_amount')}</span>
+            <span class="font-mono">{selectedSale.paid_amount.toLocaleString('fr-DZ')} DZD</span>
+          </div>
+          <div class="flex items-center justify-between font-bold {selectedSale.total_amount - selectedSale.paid_amount > 0 ? 'text-rose-600' : 'text-pos-muted'}">
+            <span>{t('sales_credit_due')}</span>
+            <span class="font-mono">{Math.max(0, selectedSale.total_amount - selectedSale.paid_amount).toLocaleString('fr-DZ')} DZD</span>
           </div>
         </div>
 
@@ -572,21 +627,22 @@
               <tr>
                 <th class="p-2.5 text-start">Item</th>
                 <th class="p-2.5 text-center">Qty</th>
+                <th class="p-2.5 text-center">{t('sales_unit')}</th>
                 <th class="p-2.5 text-end">Unit Price</th>
                 <th class="p-2.5 text-end">Line Total</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-pos-border/40">
               {#if !isLoadingItems && saleItems.length > 0}
-                <tr><td colspan="4" class="pb-1 text-[10px] font-bold text-pos-muted text-end">{saleItems.length} {t('pos_lines')} · {saleItems.reduce((u, i) => u + (i.quantity || 0), 0)} {t('units_total')}</td></tr>
+                <tr><td colspan="5" class="pb-1 text-[10px] font-bold text-pos-muted text-end">{saleItems.length} {t('pos_lines')} · {saleItems.reduce((u, i) => u + (i.quantity || 0), 0)} {t('units_total')}</td></tr>
               {/if}
               {#if isLoadingItems}
                 <tr>
-                  <td colspan="4" class="p-6 text-center text-pos-muted">Loading item details...</td>
+                  <td colspan="5" class="p-6 text-center text-pos-muted">Loading item details...</td>
                 </tr>
               {:else if saleItems.length === 0}
                 <tr>
-                  <td colspan="4" class="p-6 text-center text-pos-muted">No line items recorded for this sale.</td>
+                  <td colspan="5" class="p-6 text-center text-pos-muted">No line items recorded for this sale.</td>
                 </tr>
               {:else}
                 {#each saleItems as item}
@@ -596,6 +652,7 @@
                       <p class="text-[10px] text-pos-muted font-mono">{item.barcode || item.sku || '—'}</p>
                     </td>
                     <td class="p-2.5 text-center font-mono font-bold">{item.quantity}</td>
+                    <td class="p-2.5 text-center text-pos-muted">{item.sale_unit || t('sales_unit')}</td>
                     <td class="p-2.5 text-end font-mono text-pos-muted">{item.unit_price} DZD</td>
                     <td class="p-2.5 text-end font-mono font-black text-pos-text">{item.total_price} DZD</td>
                   </tr>
@@ -630,15 +687,6 @@
           <button on:click={() => (isDetailModalOpen = false)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">
             Close
           </button>
-          {#if loadingFee > 0}
-            <div class="w-full px-3 py-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-[11px] space-y-1">
-              <div class="flex items-center justify-between font-bold text-pos-text"><span>TOTAL BRUT</span><span class="font-mono">{selectedSale!.total_amount.toLocaleString('fr-DZ')} DA</span></div>
-              <div class="flex items-center justify-between font-bold text-rose-600"><span>FRAIS DE DÉCHARGEMENT</span><span class="font-mono">-{loadingFee.toLocaleString('fr-DZ')} DA</span></div>
-              <div class="flex items-center justify-between font-black text-emerald-600 border-t border-amber-300 dark:border-amber-800 pt-1"><span>NET ENCAISSÉ (CAISSE)</span><span class="font-mono">{(selectedSale!.total_amount - loadingFee).toLocaleString('fr-DZ')} DA</span></div>
-              <div class="flex items-center justify-between font-bold text-pos-text"><span>PAYÉ</span><span class="font-mono">{selectedSale!.paid_amount.toLocaleString('fr-DZ')} DA</span></div>
-              <div class="flex items-center justify-between font-bold {selectedSale!.total_amount - selectedSale!.paid_amount > 0 ? 'text-rose-600' : 'text-pos-muted'}"><span>CRÉDIT</span><span class="font-mono">{Math.max(0, selectedSale!.total_amount - selectedSale!.paid_amount).toLocaleString('fr-DZ')} DA</span></div>
-            </div>
-          {/if}
           <button
             on:click={() => printReceipt(selectedSale!)}
             class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"

@@ -1415,13 +1415,16 @@ pub fn list_employee_absences(
 }
 
 /// Re-checkout a sale edited from history in place (no duplicate row).
+/// `unloading_fee`: the cart's explicit fee total — Rust re-books the
+/// Déchargement expense(s) to EXACTLY this amount in the same transaction.
 #[tauri::command]
 pub fn replace_sale(
     db: State<'_, DbState>,
     original_sale_id: i64,
     input: CreateSaleInput,
+    unloading_fee: Option<i64>,
 ) -> Result<String, String> {
-    sales_service::replace_sale(&db, original_sale_id, input)
+    sales_service::replace_sale(&db, original_sale_id, input, unloading_fee)
 }
 
 #[tauri::command]

@@ -478,7 +478,7 @@ fn get_sale_by_query(
             .prepare(
                 "SELECT si.product_id, p.sku, '', p.name_ar, p.name_fr, p.name_en, p.image_path,
                         si.unit_price, si.quantity, si.discount_amount, si.tax_amount, si.total_price, si.is_refunded,
-                        si.sale_unit
+                        si.sale_unit, COALESCE(si.base_quantity, si.quantity)
                  FROM sale_items si
                  JOIN products p ON si.product_id = p.id
                  WHERE si.sale_id = ?1",
@@ -501,7 +501,7 @@ fn get_sale_by_query(
                     total_price: row.get(11)?,
                     is_refund: row.get(12)?,
                     sale_unit: row.get(13)?,
-                    base_quantity: 0.0,
+                    base_quantity: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -521,7 +521,7 @@ pub fn get_sale_items(db: &DbState, sale_id: i64) -> Result<Vec<CartItem>, Strin
         .prepare(
             "SELECT si.product_id, p.sku, '', p.name_ar, p.name_fr, p.name_en, p.image_path,
                     si.unit_price, si.quantity, si.discount_amount, si.tax_amount, si.total_price, si.is_refunded,
-                    si.sale_unit
+                    si.sale_unit, COALESCE(si.base_quantity, si.quantity)
              FROM sale_items si
              JOIN products p ON si.product_id = p.id
              WHERE si.sale_id = ?1",
@@ -545,7 +545,7 @@ pub fn get_sale_items(db: &DbState, sale_id: i64) -> Result<Vec<CartItem>, Strin
                 total_price: row.get(11)?,
                 is_refund: row.get(12)?,
                 sale_unit: row.get(13)?,
-                base_quantity: 0.0,
+                base_quantity: row.get(14)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -833,10 +833,17 @@ mod tests {
 /// tagged MODIFIED. Inventory movements and the drawer's cash_sale entry
 /// are reversed for the old contents and rebooked for the new ones, so the
 /// stock and register statistics always reflect the current cart.
+///
+/// `unloading_fee` (Some = the cart's explicit fee total, in DZD): the
+/// sale's Déchargement expenses are reversed and deleted, then EXACTLY ONE
+/// row is booked for the new amount inside the same transaction — 0 removes
+/// the fee entirely, 300→500 leaves one 500 row (never 300+500). `None`
+/// (legacy callers) leaves the expenses untouched.
 pub fn replace_sale(
     db: &DbState,
     original_sale_id: i64,
     input: CreateSaleInput,
+    unloading_fee: Option<i64>,
 ) -> Result<String, String> {
     let mut conn = db.conn.lock().unwrap();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -849,23 +856,31 @@ pub fn replace_sale(
         )
         .map_err(|e| format!("Original sale not found: {}", e))?;
 
-    // Reverse the old stock movements & sale items.
+    // Reverse the old stock movements & sale items. Stock lives in BASE
+    // units (bottles): reverse exactly what the original checkout moved —
+    // the line's base_quantity, signed (refund lines had ADDED stock).
     let old_items = {
         let mut stmt = tx
-            .prepare("SELECT product_id, quantity FROM sale_items WHERE sale_id = ?1")
+            .prepare(
+                "SELECT product_id, COALESCE(base_quantity, quantity), is_refunded
+                 FROM sale_items WHERE sale_id = ?1",
+            )
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([original_sale_id], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+                Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?, r.get::<_, bool>(2)?))
             })
             .map_err(|e| e.to_string())?;
         rows.filter_map(|x| x.ok()).collect::<Vec<_>>()
     };
-    for (pid, qty) in &old_items {
-        // Old sale took qty out of stock; put it back.
+    for (pid, base_qty, is_refund) in &old_items {
+        // Undo the original movement exactly: a sale line took base_qty OUT
+        // of stock (put it back), a refund line put base_qty IN (take it
+        // out again).
+        let restore = if *is_refund { -base_qty } else { *base_qty };
         let _ = tx.execute(
             "UPDATE products SET current_stock = current_stock + ?1 WHERE id = ?2",
-            rusqlite::params![qty, pid],
+            rusqlite::params![restore, pid],
         );
     }
     let _ = tx.execute("DELETE FROM inventory_movements WHERE reference_type = 'sale' AND reference_id = ?1", [original_sale_id]);
@@ -877,6 +892,16 @@ pub fn replace_sale(
         rusqlite::params![original_sale_id, session_id],
     );
     let _ = tx.execute("DELETE FROM cash_movements WHERE reference_type = 'sale' AND reference_id = ?1", [original_sale_id]);
+
+    // Same payment-status rule as a fresh checkout — an edit must not
+    // upgrade a partial/credit sale to 'paid' just because it was touched.
+    let payment_status = if input.paid_amount >= input.total_amount {
+        "paid"
+    } else if input.paid_amount > 0 {
+        "partial"
+    } else {
+        "credit"
+    };
 
     // Rewrite the sale row in place: same id/number/date, MODIFIED tag.
     tx.execute(
@@ -890,7 +915,7 @@ pub fn replace_sale(
             original_sale_id, input.session_id, input.user_id, input.customer_id,
             input.subtotal, input.discount_amount, input.discount_percentage, input.discount_reason,
             input.tax_amount, input.total_amount, input.paid_amount, input.change_amount,
-            "paid",
+            payment_status,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -907,7 +932,8 @@ pub fn replace_sale(
         .map(|v| v == "true")
         .unwrap_or(false);
 
-    // New items + movements.
+    // New items + movements. Stock math in BASE units, same as a fresh
+    // checkout (a 4-Fardeau line moves 4 base units, not the packaging qty).
     for item in &input.items {
         if !item.is_refund && !allow_negative_stock {
             let (curr_stock, prod_name): (f64, String) = tx
@@ -926,7 +952,8 @@ pub fn replace_sale(
             }
         }
 
-        let stock_change = if item.is_refund { item.quantity } else { -item.quantity };
+        let item_base = if item.base_quantity > 0.0 { item.base_quantity } else { item.quantity };
+        let stock_change = if item.is_refund { item_base } else { -item_base };
         tx.execute(
             "UPDATE products SET current_stock = current_stock + ?1 WHERE id = ?2",
             rusqlite::params![stock_change, item.product_id],
@@ -977,6 +1004,80 @@ pub fn replace_sale(
                 rusqlite::params![net_cash, input.session_id],
             )
             .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Déchargement fee re-booking (edit-sale spec #15/#16): reverse and
+    // delete the sale's existing fee expenses, then book EXACTLY ONE row
+    // for the new amount — same transaction as the sale rewrite, so an
+    // edit can never leave the old fee orphaned or stacked (300→500 is one
+    // 500 row, never 800; →0 removes the fee). The drawer impact of the
+    // fee follows the expense (cash → expected_cash − fee).
+    if let Some(explicit_fee) = unloading_fee {
+        let fee_ids: Vec<i64> = {
+            let mut stmt = tx
+                .prepare("SELECT id FROM expenses WHERE receipt_reference = ?1 AND category_id = 8")
+                .map_err(|e| e.to_string())?;
+            let mapped = stmt
+                .query_map([&sale_number], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            mapped.filter_map(|r| r.ok()).collect()
+        };
+        for fee_id in fee_ids {
+            // Give the drawer its money back before removing the row.
+            crate::services::expense_service::reverse_expense_cash(&tx, fee_id)?;
+            tx.execute("DELETE FROM expenses WHERE id = ?1", [fee_id])
+                .map_err(|e| e.to_string())?;
+        }
+
+        let fee = explicit_fee.max(0);
+        if fee > 0 {
+            tx.execute_batch(
+                "INSERT OR IGNORE INTO expense_categories (id, name_ar, name_fr, name_en, description, is_active)
+                 VALUES (8, 'تنزيل البضاعة', 'Déchargement', 'Unloading Fees',
+                         'Frais de déchargement des marchandises (chauffeur/livreur)', 1);",
+            )
+            .map_err(|e| e.to_string())?;
+            let category_id: i64 = tx
+                .query_row(
+                    "SELECT id FROM expense_categories WHERE name_en = 'Unloading Fees' OR name_fr = 'Déchargement' LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+
+            let now = chrono::Local::now();
+            let expense_number = format!("EXP-{}", now.format("%Y%m%d%H%M%S%3f"));
+            let fee_session = if input.session_id > 0 { Some(input.session_id) } else { None };
+            tx.execute(
+                "INSERT INTO expenses (expense_number, category_id, amount, payment_method, session_id, user_id, recipient, receipt_reference, date, notes, terminal_name)
+                 VALUES (?1, ?2, ?3, 'cash', ?4, ?5, NULL, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    expense_number, category_id, fee, fee_session, input.user_id,
+                    sale_number, now.format("%Y-%m-%d").to_string(),
+                    format!("Frais de déchargement (POS) — vente modifiée: {} DA", fee),
+                    crate::network::current_stamp_terminal()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            let expense_id = tx.last_insert_rowid();
+
+            if let Some(sid) = fee_session {
+                tx.execute(
+                    "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, reference_type, reference_id)
+                     VALUES (?1, ?2, 'expense_payment', ?3, ?4, 'expense', ?5)",
+                    rusqlite::params![
+                        sid, input.user_id, -fee,
+                        format!("Expense Payment / دفع مصروف {}", expense_number), expense_id
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                tx.execute(
+                    "UPDATE cash_sessions SET expected_cash = expected_cash - ?1 WHERE id = ?2",
+                    rusqlite::params![fee, sid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
     }
 
@@ -1091,11 +1192,181 @@ mod receipt_consistency_tests {
         let db = fresh_db("a");
         // checkout_test_sale loads product 987001 ('test') with a Fardeau line
         let (_, sale_id) = checkout_test_sale(&db);
+        // The product's CURRENT price must be irrelevant to the receipt
+        // (spec #21): change the master price after the sale.
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("UPDATE products SET sale_price = 9999 WHERE id = 987001", []).unwrap();
+        }
         let items = get_sale_items(&db, sale_id).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].quantity, 4.0);
+        assert_eq!(items[0].unit_price, 3000, "historical sale price, not the product's current price");
         assert_eq!(items[0].total_price, 12000);
         assert_eq!(items[0].sale_unit.as_deref(), Some("Fardeau"), "packaging label must round-trip to the receipt");
+        assert_eq!(items[0].base_quantity, 4.0, "base quantity must round-trip (stock weight)");
+    }
+
+    /// Edit-sale spec (#11–#16): an edited sale re-books its Déchargement
+    /// fee EXACTLY — keeping it leaves one 300 row, 300→500 leaves ONE 500
+    /// row (never 300+500), removing it leaves none; the drawer follows.
+    #[test]
+    fn replace_sale_rebooks_unloading_fee_exactly_once() {
+        let db = fresh_db("e");
+        let (sale_number, sale_id) = checkout_test_sale(&db);
+        let cat = crate::services::expense_service::unloading_expense_category_id(&db).unwrap();
+        // Booked at the original checkout exactly like the frontend does.
+        crate::services::expense_service::add_expense(
+            &db, cat, 300, "cash", Some(1), 1, None, Some(sale_number.clone()),
+            Some("Frais de déchargement (POS): 300 DA".into()), None,
+        )
+        .unwrap();
+
+        let fee_count = |db: &DbState, num: &str| -> i64 {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_reference = ?1 AND category_id = 8",
+                [num], |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let fee_total = |db: &DbState, num: &str| -> i64 {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE receipt_reference = ?1 AND category_id = 8",
+                [num], |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let expected_cash = |db: &DbState| -> i64 {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT expected_cash FROM cash_sessions WHERE id = 1", [], |r| r.get(0))
+                .unwrap()
+        };
+
+        assert_eq!(fee_count(&db, &sale_number), 1);
+        assert_eq!(fee_total(&db, &sale_number), 300);
+        // Drawer: +12000 sale cash − 300 fee.
+        assert_eq!(expected_cash(&db), 11700);
+
+        // Edit 1: quantity 4 → 2, fee KEPT at 300 (must not rescale/drop).
+        replace_sale(&db, sale_id, edit_test_sale_input(2.0, 2.0), Some(300)).unwrap();
+        assert_eq!(fee_count(&db, &sale_number), 1, "keeping the fee must not duplicate the expense");
+        assert_eq!(fee_total(&db, &sale_number), 300);
+        assert_eq!(expected_cash(&db), 6000 - 300);
+
+        // Edit 2: fee changed 300 → 500 → exactly ONE 500 row (never 800).
+        replace_sale(&db, sale_id, edit_test_sale_input(2.0, 2.0), Some(500)).unwrap();
+        assert_eq!(fee_count(&db, &sale_number), 1);
+        assert_eq!(fee_total(&db, &sale_number), 500);
+        assert_eq!(expected_cash(&db), 6000 - 500);
+
+        // Edit 3: fee removed → no row left behind, drawer keeps the goods.
+        replace_sale(&db, sale_id, edit_test_sale_input(2.0, 2.0), Some(0)).unwrap();
+        assert_eq!(fee_count(&db, &sale_number), 0, "removed fee must not stay orphaned");
+        assert_eq!(expected_cash(&db), 6000);
+    }
+
+    /// Spec #4: the edit round-trip moves stock in BASE units — a 2-packs-
+    /// of-6 line (qty 2, base 12) restores the old base and moves the new
+    /// base, and the persisted line keeps qty/unit/base for the receipt.
+    #[test]
+    fn replace_sale_keeps_packaging_identity_and_base_stock() {
+        let db = fresh_db("p");
+        let (sale_number, sale_id) = checkout_test_sale(&db);
+        let stock = |db: &DbState| -> f64 {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT current_stock FROM products WHERE id = 987001", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(stock(&db), 96.0, "checkout of base 4 must decrement base");
+
+        // Replace with 2 packs of 6 (qty 2, base 12), historical price kept.
+        replace_sale(&db, sale_id, edit_test_sale_input(2.0, 12.0), None).unwrap();
+        assert_eq!(stock(&db), 100.0 - 12.0, "restore old base 4, then move new base 12");
+
+        let items = get_sale_items(&db, sale_id).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].quantity, 2.0);
+        assert_eq!(items[0].base_quantity, 12.0);
+        assert_eq!(items[0].sale_unit.as_deref(), Some("Fardeau"));
+        assert_eq!(items[0].unit_price, 3000);
+        assert_eq!(items[0].total_price, 6000);
+        assert_eq!(sale_number.starts_with("POS-"), true);
+
+        let (total, status): (i64, String) = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT total_amount, payment_status FROM sales WHERE sale_number = ?1", [&sale_number], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+        };
+        assert_eq!(total, 6000);
+        assert_eq!(status, "paid");
+    }
+
+    /// Spec #20: an edit must not upgrade a partial payment to 'paid'.
+    #[test]
+    fn replace_sale_recomputes_payment_status() {
+        let db = fresh_db("s");
+        let (_sale_number, sale_id) = checkout_test_sale(&db);
+        let mut input = edit_test_sale_input(4.0, 4.0);
+        input.paid_amount = 2000;
+        input.payments = vec![SalePaymentInput {
+            payment_method: "cash".into(),
+            amount: 2000,
+            reference_code: None,
+        }];
+        replace_sale(&db, sale_id, input, None).unwrap();
+        let status: String = {
+            let conn = db.conn.lock().unwrap();
+            conn.query_row("SELECT payment_status FROM sales WHERE id = ?1", [sale_id], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(status, "partial", "an edited partial sale must stay partial");
+    }
+
+    /// One edited-checkout input for product 987001 at the SAME 3,000
+    /// historical price (qty/base configurable).
+    fn edit_test_sale_input(quantity: f64, base_quantity: f64) -> CreateSaleInput {
+        CreateSaleInput {
+            channel: None,
+            session_id: 1,
+            user_id: 1,
+            customer_id: None,
+            items: vec![CartItem {
+                sale_unit: Some("Fardeau".into()),
+                base_quantity,
+                product_id: 987001,
+                sku: Some("TEST-1".into()),
+                barcode: None,
+                name_ar: Some("تجربة".into()),
+                name_fr: Some("test".into()),
+                name_en: Some("test".into()),
+                image_path: None,
+                unit_price: 3000,
+                quantity,
+                discount_amount: 0,
+                tax_amount: 0,
+                total_price: (3000.0 * quantity) as i64,
+                is_refund: false,
+            }],
+            subtotal: (3000.0 * quantity) as i64,
+            discount_amount: 0,
+            discount_percentage: 0.0,
+            discount_reason: None,
+            tax_amount: 0,
+            total_amount: (3000.0 * quantity) as i64,
+            paid_amount: (3000.0 * quantity) as i64,
+            change_amount: 0,
+            payment_method: Some("cash".into()),
+            is_refund: Some(false),
+            notes: None,
+            skip_stock: false,
+            payments: vec![SalePaymentInput {
+                payment_method: "cash".into(),
+                amount: (3000.0 * quantity) as i64,
+                reference_code: None,
+            }],
+        }
     }
 
     /// Spec #14.10 + #8: the fee expense must be findable (and reversible)

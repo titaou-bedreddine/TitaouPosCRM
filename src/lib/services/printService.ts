@@ -227,6 +227,10 @@ class PrintService {
       };
     }
 
+    // `items` are the RAW persisted sale rows (snake_case, as returned by
+    // get_sale_items / get_last_sale / get_sale_by_number). This is the ONE
+    // place that converts them for printing — callers must not pre-map.
+    // `?? 0` only guards a missing FIELD; a persisted 0 price stays 0.
     const printableItems: PrintableItem[] = items.map((it) => ({
       id: it.product_id || it.id,
       sku: it.sku || '',
@@ -234,11 +238,12 @@ class PrintService {
       name: it.name_fr || it.name || it.product_name || 'Article',
       quantity: it.quantity || 1,
       unit: it.unit || it.sale_unit || '',
-      unitPrice: it.unit_price || 0,
+      unitPrice: it.unit_price ?? 0,
       discountPerUnit: it.discount_amount || 0,
       taxRate: it.tax_rate,
       taxAmount: it.tax_amount,
-      totalPrice: it.total_price || (it.quantity || 1) * (it.unit_price || 0),
+      // The persisted line total — never recomputed from today's prices.
+      totalPrice: it.total_price ?? 0,
       isRefund: it.is_refund || false,
     }));
 

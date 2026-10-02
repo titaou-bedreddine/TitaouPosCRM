@@ -9,6 +9,10 @@
   // current fee when reopening for an edit.
   export let defaultFee = 0;
   export let isEdit = false;
+  // 'line' (default): fee per unit × quantity. 'sale': a FIXED total for
+  // the whole transaction (edited sales — the persisted lump fee), entered
+  // and applied as-is.
+  export let mode: 'line' | 'sale' = 'line';
 
   export let onConfirm: (feePerUnit: number) => void = () => {};
   export let onSkip: () => void = () => {};
@@ -22,7 +26,7 @@
   }
 
   $: feeValue = Math.max(0, Math.round(Number(feeInput) || 0));
-  $: feeTotal = Math.round(feeValue * (Number(quantity) || 0));
+  $: feeTotal = mode === 'sale' ? feeValue : Math.round(feeValue * (Number(quantity) || 0));
 
   function confirm() {
     onConfirm(Math.max(0, Math.round(Number(feeInput) || 0)));
@@ -79,7 +83,7 @@
 
       <div>
         <label class="block text-xs font-bold text-pos-muted mb-1">
-          {t('pos_unloading_fee_per_unit')}
+          {mode === 'sale' ? t('pos_unloading_fee_total') : t('pos_unloading_fee_per_unit')}
         </label>
         <input
           use:autofocusSelect
@@ -98,7 +102,9 @@
           {t('pos_unloading_total')}
         </span>
         <span class="font-mono font-black text-sm text-amber-600 dark:text-amber-400">
-          {feeValue.toLocaleString()} × {quantity} = {feeTotal.toLocaleString()} DZD
+          {mode === 'sale'
+            ? `${feeTotal.toLocaleString()} DZD`
+            : `${feeValue.toLocaleString()} × ${quantity} = ${feeTotal.toLocaleString()} DZD`}
         </span>
       </div>
 
