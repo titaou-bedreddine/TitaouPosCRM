@@ -187,6 +187,7 @@
         total: it.total,
       }));
       editingPurchase = pur;
+      appliedInvoiceNumber = null;
       isCreateOpen = true;
       items = mapped;
       invoiceNumber = pur.invoice_number + '-C';
@@ -512,10 +513,37 @@
     return items.reduce((sum, i) => sum + tvaOfLine(i), 0);
   }
 
-  async function handleCreatePurchase() {
+  // Reactive aggregate (template + save): references items AND purchaseTva
+  // inline so both invalidate it — the function-call form above only
+  // tracked `items`, which froze the display until save + reopen.
+  $: itemsTva = items.reduce((sum, i) => {
+    const r = Math.max(0, i.tva_rate ?? purchaseTva);
+    return sum + Math.round((i.total * r) / (100 + r));
+  }, 0);
+
+  // Applied-state: after Apply (save without closing), re-saving with
+  // unchanged lines is a no-op; changed lines save a CORRECTED invoice
+  // (-C suffix), same as the Load-for-Correction flow.
+  let appliedInvoiceNumber: string | null = null;
+  let savedItemsSnapshot = '';
+  let applyMsg = '';
+  let itemsSignature = () =>
+    JSON.stringify(items.map((i) => [i.product_id, i.quantity, i.unit_cost, i.sale_price, i.tva_rate]));
+
+  async function handleCreatePurchase(keepOpen = false) {
     if (!selectedSupplierId || items.length === 0) {
       errorMsg = 'Please add products and select supplier / الرجاء إضافة منتجات واختيار المورد';
       return;
+    }
+    if (appliedInvoiceNumber && itemsSignature() === savedItemsSnapshot) {
+      applyMsg = `✅ ${t('invoice_saved_already')}: #${appliedInvoiceNumber}`;
+      setTimeout(() => (applyMsg = ''), 2500);
+      return;
+    }
+    if (appliedInvoiceNumber && itemsSignature() !== savedItemsSnapshot) {
+      // Lines changed since the Apply — this is a correction invoice.
+      invoiceNumber = invoiceNumber.replace(/-C\d*$/, '') + '-C';
+      appliedInvoiceNumber = null;
     }
     try {
       isSaving = true;
@@ -527,9 +555,9 @@
           supplier_id: selectedSupplierId,
           user_id: $currentUser?.id || 1,
           date: invoiceDate,
-          subtotal: total - itemsTvaTotal(),
+          subtotal: total - itemsTva,
           discount: 0,
-          tax: itemsTvaTotal(),
+          tax: itemsTva,
           total: total,
           paid_amount: paidAmount,
           payment_method: paymentMethod,
@@ -548,16 +576,41 @@
         }
       });
 
+      if (keepOpen) {
+        // Apply: committed, modal stays open for more edits / printing.
+        appliedInvoiceNumber = invNum;
+        savedItemsSnapshot = itemsSignature();
+        applyMsg = `✅ ${t('invoice_saved_apply')}: #${invNum}`;
+        setTimeout(() => (applyMsg = ''), 3000);
+        await loadData();
+        return;
+      }
       isCreateOpen = false;
       items = [];
       invoiceNumber = '';
       paidAmount = 0;
       paidManuallyEdited = false;
+      appliedInvoiceNumber = null;
       await loadData();
     } catch (e: any) {
       errorMsg = typeof e === 'string' ? e : e.message || 'Failed to save purchase';
     } finally {
       isSaving = false;
+    }
+  }
+
+  // Print from the create/edit modal: persist first (the printed document
+  // must be the saved one), then print the stored invoice.
+  async function handlePrintPurchase() {
+    await handleCreatePurchase(true);
+    const invNum = appliedInvoiceNumber;
+    if (!invNum) return;
+    await loadData();
+    const saved = purchases.find((p) => p.invoice_number === invNum);
+    if (saved) {
+      await printPurchaseInvoice(saved);
+    } else {
+      errorMsg = 'Invoice saved but not found for printing / الفاتورة محفوظة لكن غير موجودة للطباعة';
     }
   }
 
@@ -987,13 +1040,13 @@
           </div>
 
           <div class="text-end">
-            <div class="flex items-center justify-end gap-2 mb-1">
+            <p class="text-xs text-pos-muted font-bold">Total HT (hors TVA): <span class="font-mono font-black text-pos-text">{(total - itemsTva).toLocaleString()} DZD</span></p>
+            <div class="flex items-center justify-end gap-2 mb-1 mt-0.5">
               <span class="text-[10px] font-bold text-pos-muted">TVA %</span>
               <input type="number" min="0" max="100" bind:value={purchaseTva}
                 class="w-16 px-2 py-0.5 text-center bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-black font-mono text-pos-text outline-none" />
-              <span class="text-[10px] font-mono font-bold text-pos-muted">dont TVA: {itemsTvaTotal().toLocaleString()} DZD</span>
+              <span class="text-[10px] font-mono font-bold text-pos-muted">dont TVA: <span class="text-amber-600">{itemsTva.toLocaleString()}</span> DZD</span>
             </div>
-            <p class="text-xs text-pos-muted font-bold">Total HT (hors TVA): <span class="font-mono">{(total - itemsTvaTotal()).toLocaleString()} DZD</span></p>
             <p class="text-xs text-pos-muted font-bold">Total Invoice (TTC):</p>
             <p class="text-2xl font-black font-mono text-sky-600">{total.toLocaleString()} DZD</p>
             {#if estSaleValue > 0}
@@ -1020,11 +1073,32 @@
         </button>
 
         <div class="flex items-center gap-2">
-          <button on:click={() => (isCreateOpen = false)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">
+          {#if applyMsg}<span class="text-[10px] font-black text-emerald-600 me-1">{applyMsg}</span>{/if}
+          <button on:click={() => { isCreateOpen = false; appliedInvoiceNumber = null; }} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">
             Cancel
           </button>
           <button
-            on:click={handleCreatePurchase}
+            type="button"
+            on:click={() => handleCreatePurchase(true)}
+            disabled={isSaving}
+            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+            title="Save without closing — keep adjusting lines"
+          >
+            <CheckCircle2 class="w-4 h-4" />
+            <span>Apply (تطبيق)</span>
+          </button>
+          <button
+            type="button"
+            on:click={handlePrintPurchase}
+            disabled={isSaving || isPrintingPurchase}
+            class="px-4 py-2 bg-slate-600 hover:bg-slate-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+            title="Save (if needed) and print the invoice"
+          >
+            <Printer class="w-4 h-4" />
+            <span>{isPrintingPurchase ? 'Printing...' : 'Print (طباعة)'}</span>
+          </button>
+          <button
+            on:click={() => handleCreatePurchase()}
             disabled={isSaving}
             class="px-6 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
           >
@@ -1073,29 +1147,47 @@
               <th class="p-2.5 text-start">Product</th>
               <th class="p-2.5 text-center">Qty</th>
               <th class="p-2.5 text-end">Unit Cost</th>
+              <th class="p-2.5 text-end" title="VAT inside the line total">TVA</th>
               <th class="p-2.5 text-end">Line Total</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-pos-border/40">
             {#if !isLoadingPreview && previewItems.length > 0}
-              <tr><td colspan="4" class="pb-1 text-[10px] font-bold text-pos-muted text-end">{previewItems.length} {t('pos_lines')} · {previewItems.reduce((u, i) => u + (i.quantity || 0), 0)} {t('units_total')}</td></tr>
+              <tr><td colspan="5" class="pb-1 text-[10px] font-bold text-pos-muted text-end">{previewItems.length} {t('pos_lines')} · {previewItems.reduce((u, i) => u + (i.quantity || 0), 0)} {t('units_total')}</td></tr>
             {/if}
             {#if isLoadingPreview}
-              <tr><td colspan="4" class="p-6 text-center text-pos-muted">Loading items...</td></tr>
+              <tr><td colspan="5" class="p-6 text-center text-pos-muted">Loading items...</td></tr>
             {:else if previewItems.length === 0}
-              <tr><td colspan="4" class="p-6 text-center text-pos-muted">No line items recorded.</td></tr>
+              <tr><td colspan="5" class="p-6 text-center text-pos-muted">No line items recorded.</td></tr>
             {:else}
               {#each previewItems as it}
                 <tr>
                   <td class="p-2.5 font-bold text-pos-text">{it.product_name || it.product_name_ar || '#' + it.product_id}</td>
                   <td class="p-2.5 text-center font-mono font-bold">{it.quantity}</td>
                   <td class="p-2.5 text-end font-mono">{it.unit_cost.toLocaleString()} DZD</td>
+                  <td class="p-2.5 text-end font-mono text-amber-600">{(it.tax ?? 0).toLocaleString()} DZD</td>
                   <td class="p-2.5 text-end font-mono font-black">{it.total.toLocaleString()} DZD</td>
                 </tr>
               {/each}
             {/if}
           </tbody>
         </table>
+
+        <!-- Financial summary: HT → TVA → grand total (matches the create form) -->
+        <div class="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl text-xs space-y-1">
+          <div class="flex items-center justify-between font-bold text-pos-text">
+            <span>Total HT (hors TVA)</span>
+            <span class="font-mono">{(previewPurchase.subtotal ?? (previewPurchase.total - previewPurchase.tax)).toLocaleString()} DZD</span>
+          </div>
+          <div class="flex items-center justify-between font-bold text-amber-600">
+            <span>TVA (facture)</span>
+            <span class="font-mono">{(previewPurchase.tax ?? 0).toLocaleString()} DZD</span>
+          </div>
+          <div class="flex items-center justify-between font-black text-sky-600 border-t border-amber-300 dark:border-amber-800 pt-1">
+            <span>GRAND TOTAL (TTC)</span>
+            <span class="font-mono">{previewPurchase.total.toLocaleString()} DZD</span>
+          </div>
+        </div>
       </div>
 
       <div class="px-6 py-4 border-t border-pos-border bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between">

@@ -788,6 +788,8 @@
   "pack_default_units": "الكمية الافتراضية",
   "purch_choose_unit": "اختر وحدة هذا البند",
   "purch_cost_enter": "التكلفة: يجب إدخالها",
+  "invoice_saved_apply": "تم الحفظ (مفتوحة)",
+  "invoice_saved_already": "محفوظة مسبقًا — لا تغيير",
   "pem_units": "وحدات",
   "pack_abbrev": "اختصار",
   "pack_order": "الترتيب",

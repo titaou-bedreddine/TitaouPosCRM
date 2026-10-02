@@ -788,6 +788,8 @@
   "pack_default_units": "Default qty (prefill)",
   "purch_choose_unit": "Choose the unit for this line",
   "purch_cost_enter": "cost: type it",
+  "invoice_saved_apply": "Saved (still open)",
+  "invoice_saved_already": "Already saved — nothing changed",
   "pem_units": "units",
   "pack_abbrev": "Abbrev.",
   "pack_order": "Order",

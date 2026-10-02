@@ -788,6 +788,8 @@
   "pack_default_units": "Qté par défaut (préremplie)",
   "purch_choose_unit": "Choisir l’unité de cette ligne",
   "purch_cost_enter": "coût : à saisir",
+  "invoice_saved_apply": "Enregistrée (ouverte)",
+  "invoice_saved_already": "Déjà enregistrée — aucun changement",
   "pem_units": "unités",
   "pack_abbrev": "Abrév.",
   "pack_order": "Ordre",
