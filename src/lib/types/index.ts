@@ -95,6 +95,7 @@ export interface ProductInput {
     sale_price_per_unit: number;
     purchase_price?: number;
     packaging_type_id?: number | null;
+    unloading_fee?: number;
     is_default?: boolean;
   }>;
   barcodes: string[];

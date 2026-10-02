@@ -65,8 +65,10 @@
   // PRICING MODEL (refinement): the AUTHORITATIVE stored price is
   // `salePricePerUnit` — DZD per BASE unit sold through this packaging.
   // The per-package total is always CALCULATED (per_unit × contains),
-  // never entered. Margin is the same pricing aid as the base product:
-  // an editable DZD amount that recomputes the price (never locks it).
+  // never entered. Margin is the SAME pricing aid as the base product
+  // (same formulas, same rounding) with its own %/DZD mode per row.
+  // Each row also carries ITS OWN unloading (déchargement) fee — the
+  // global field above prices the base unit only.
   interface PackagingRow {
     packagingTypeId: number | null;
     name: string;
@@ -74,51 +76,108 @@
     unitsPerPackage: number;
     salePricePerUnit: number;
     purchasePrice: number;
+    unloadingFee: number;
+    marginMode: 'percent' | 'amount';
     isDefault: boolean;
   }
   let packagingRows: PackagingRow[] = [];
+  // The product's previously saved rows — the conversion of a packaging is
+  // PER PRODUCT, so re-adding a type prefills Qty from what it was before.
+  let savedPackagings: any[] = [];
 
-  // Margin (DZD per unit) is DERIVED from (price − purchase cost) for the
-  // row; editing it is an aid that back-computes the per-unit price — the
-  // same formula the base product uses, no second margin system.
-  function rowMargin(row: PackagingRow): number {
+  // Margin per row, in the row's active mode, derived from the CURRENT
+  // price and purchase cost (editing it back-computes the price — an aid,
+  // never a lock; the price input stays authoritative).
+  function rowMarginValue(row: PackagingRow): number {
+    if (row.marginMode === 'percent') {
+      if (!purchasePrice) return 0;
+      return Math.round(((row.salePricePerUnit - purchasePrice) / purchasePrice) * 10000) / 100;
+    }
     return Math.round((row.salePricePerUnit - Number(purchasePrice || 0)) * 100) / 100;
   }
-  function rowMarginPercent(row: PackagingRow): number {
-    if (!purchasePrice) return 0;
-    return Math.round(((row.salePricePerUnit - purchasePrice) / purchasePrice) * 1000) / 10;
+
+  function handleRowMarginInput(row: PackagingRow, margin: number) {
+    if (row.marginMode === 'percent') {
+      if (purchasePrice > 0) {
+        row.salePricePerUnit = roundToStep(purchasePrice * (1 + (Number(margin) || 0) / 100), priceRoundStep);
+      }
+    } else {
+      row.salePricePerUnit = roundToStep(Number(purchasePrice || 0) + (Number(margin) || 0), priceRoundStep);
+    }
+    packagingRows = [...packagingRows];
   }
-  function handleRowMarginChange(row: PackagingRow, margin: number) {
-    row.salePricePerUnit = Math.max(0, Math.round((Number(purchasePrice || 0) + Number(margin || 0)) * 100) / 100);
+
+  // Sync the row's margin display after a direct price edit: prices change
+  // → margins re-derive on the next render (they are computed, not stored).
+  function handleRowPriceInput(row: PackagingRow) {
+    packagingRows = [...packagingRows];
   }
+
   function rowPackageTotal(row: PackagingRow): number {
     return Math.round(row.salePricePerUnit * (row.unitsPerPackage || 0));
   }
 
-  // Active packaging TYPES (Settings) available for "+ Add sale price":
-  // excludes Unité (the mandatory base price above) and types already
-  // priced on this product (§27).
+  // A packaging type already priced on ANOTHER row is disabled in this
+  // row's dropdown (§7) — no silent overwrites; the backend rejects
+  // duplicates anyway.
+  function isTypeUsedByOther(row: PackagingRow, typeId: number): boolean {
+    return packagingRows.some((r) => r !== row && r.packagingTypeId === typeId);
+  }
+
+  // Active packaging TYPES (Settings) still unpriced on this product —
+  // drives the "+ Add sale price" button (§27: Unité is never offered, it
+  // is the mandatory base price above).
   $: availablePackTypes = (packTypes as any[]).filter(
     (t) =>
       t.is_active &&
       (t.name || '').toLowerCase() !== 'unité' &&
       (t.name || '').toLowerCase() !== 'unite' &&
-      !packagingRows.some((r) => r.name.toLowerCase() === (t.name || '').toLowerCase())
+      !packagingRows.some((r) => (r.packagingTypeId ?? -1) === t.id || r.name.toLowerCase() === (t.name || '').toLowerCase())
   );
 
-  function addSalePriceFor(type: any) {
+  // "+ Add sale price" adds ONE row: preselect the first free packaging
+  // type, prefill its Qty from the product's previous configuration for
+  // that type (conversion is per product), margins in % mode.
+  function addSalePriceRow() {
+    const type = availablePackTypes[0];
+    if (!type) return;
+    const previous = savedPackagings.find(
+      (sp) => sp.packaging_type_id === type.id || (sp.name || '').toLowerCase() === (type.name || '').toLowerCase()
+    );
     packagingRows = [
       ...packagingRows,
       {
         packagingTypeId: type.id ?? null,
         name: type.name || '',
         abbreviation: type.abbreviation || '',
-        unitsPerPackage: 0,
+        unitsPerPackage: previous ? Number(previous.units_per_package) || 0 : 0,
         salePricePerUnit: 0,
-        purchasePrice: 0,
+        purchasePrice: previous ? Number(previous.purchase_price ?? 0) : 0,
+        unloadingFee: previous ? Number(previous.unloading_fee ?? 0) : 0,
+        marginMode: 'percent',
         isDefault: false,
       },
     ];
+  }
+
+  // Packaging changed on a row: adopt the type identity, and prefill Qty /
+  // fee from the product's previous configuration for THAT type when one
+  // exists (never overwrites the price — the user sets pricing).
+  function handleRowTypeChange(row: PackagingRow, typeId: string) {
+    const type = (packTypes as any[]).find((t) => String(t.id) === typeId);
+    if (!type) return;
+    const previous = savedPackagings.find(
+      (sp) => sp.packaging_type_id === type.id || (sp.name || '').toLowerCase() === (type.name || '').toLowerCase()
+    );
+    row.packagingTypeId = type.id ?? null;
+    row.name = type.name || '';
+    row.abbreviation = type.abbreviation || '';
+    if (previous) {
+      row.unitsPerPackage = Number(previous.units_per_package) || row.unitsPerPackage;
+      row.unloadingFee = Number(previous.unloading_fee ?? 0);
+      row.purchasePrice = Number(previous.purchase_price ?? 0);
+    }
+    packagingRows = [...packagingRows];
   }
 
   function removePackagingRow(idx: number) {
@@ -140,6 +199,7 @@
   }
 
   function buildRowsFromTypes(saved: any[]) {
+    savedPackagings = saved;
     const rows: PackagingRow[] = [];
     for (const sp of saved) {
       const type = (packTypes as any[]).find(
@@ -158,6 +218,8 @@
         // package total was 0; otherwise the DB migration derived it.
         salePricePerUnit: perUnit || (units > 1 ? Math.round(Number(sp.sale_price ?? 0) / units) : 0),
         purchasePrice: Number(sp.purchase_price ?? 0),
+        unloadingFee: Number(sp.unloading_fee ?? 0),
+        marginMode: 'percent',
         isDefault: !!sp.is_default,
       });
     }
@@ -191,6 +253,7 @@
         sale_price_per_unit: r.salePricePerUnit,
         purchase_price: r.purchasePrice || 0,
         packaging_type_id: r.packagingTypeId,
+        unloading_fee: Math.max(0, Math.round(Number(r.unloadingFee) || 0)),
         is_default: r.isDefault,
       }));
   }
@@ -1358,42 +1421,74 @@
             </div>
           </div>
 
-          <!-- SALE PRICES: one row per packaging presentation -->
+          <!-- SALE PRICES: one row per packaging presentation, laid out as a
+               compact pricing TABLE — fixed column structure, every row
+               identical (Packaging · Qty · Sale/Unit · Margin %/DZD ·
+               Unloading · Package price · delete). "+ Add sale price" adds
+               ONE row whose packaging comes from Settings types; Qty prefills
+               from the product's previous configuration for that type
+               (conversion is per product). Package price is READ-ONLY:
+               Qty × Sale/Unit, recalculated live. -->
           <div class="p-3.5 bg-slate-50 dark:bg-slate-800/40 border border-pos-border rounded-2xl space-y-3">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-2">
                 <Package class="w-4 h-4 text-emerald-600" />
                 <span class="text-[11px] font-black text-pos-muted uppercase tracking-wider">{t('pem_sale_prices')}</span>
               </div>
-              {#if availablePackTypes.length > 0}
-                <div class="flex items-center gap-1.5">
-                  {#each availablePackTypes as type}
-                    <button
-                      type="button"
-                      on:click={() => addSalePriceFor(type)}
-                      class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black rounded-lg cursor-pointer"
-                      title={(type.abbreviation || type.name)}
-                    >
-                      {t('pem_add_sale_price')} · {type.name}{type.abbreviation ? ` (${type.abbreviation})` : ''}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
+              <button
+                type="button"
+                on:click={addSalePriceRow}
+                disabled={availablePackTypes.length === 0}
+                class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[10px] font-black rounded-lg cursor-pointer whitespace-nowrap flex items-center gap-1"
+                title={availablePackTypes.length === 0 ? 'All configured packaging types already have a price' : t('pem_add_sale_price')}
+              >
+                <Plus class="w-3 h-3" /> {t('pem_add_sale_price')}
+              </button>
             </div>
             <p class="text-[9px] text-pos-muted font-bold">
               {t('pem_price_per_unit')} × {t('pem_contains')} = {t('pem_package_price')} —
               ex : 190 DZD/unité × 112 = 21 280 DZD / palette. The stored price is per UNIT; the package total is calculated.
             </p>
 
-            {#if packagingRows.length === 0}
-              <p class="text-[10px] text-pos-muted text-center py-1.5">Sold by single units only — add a packaging sale price above.</p>
-            {:else}
-              <div class="space-y-2">
-                {#each packagingRows as row, idx}
-                  <div class="p-2.5 bg-white dark:bg-slate-900 border border-pos-border rounded-xl grid grid-cols-12 gap-1.5 items-end">
-                    <div class="col-span-12 md:col-span-3">
-                      <label class="block text-[9px] font-black text-pos-muted uppercase mb-0.5">{row.name}{row.abbreviation ? ` · ${row.abbreviation}` : ''}</label>
-                      <div class="flex items-center gap-1">
+            <div class="overflow-x-auto -mx-1 px-1">
+              <table class="w-full border-collapse">
+                <thead>
+                  <tr class="text-[9px] font-black text-pos-muted uppercase tracking-wider">
+                    <th class="text-start pb-1 pe-1 w-[22%] min-w-[130px]">{t('pem_col_packaging')}</th>
+                    <th class="text-start pb-1 px-1 w-[11%] min-w-[86px]">{t('pem_col_qty')}</th>
+                    <th class="text-start pb-1 px-1 w-[13%] min-w-[104px]">{t('pem_col_sale_unit')}</th>
+                    <th class="text-start pb-1 px-1 w-[17%] min-w-[124px]">{t('pem_margin')}</th>
+                    <th class="text-start pb-1 px-1 w-[13%] min-w-[104px]">{t('pem_col_unloading')}</th>
+                    <th class="text-start pb-1 px-1">{t('pem_package_price')}</th>
+                    <th class="pb-1 ps-1 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#if packagingRows.length === 0}
+                    <tr>
+                      <td colspan="7" class="py-3 text-[10px] text-pos-muted text-center font-bold">
+                        Sold by single units only — "+ Add sale price" adds a packaging price row.
+                      </td>
+                    </tr>
+                  {/if}
+                  {#each packagingRows as row, idx (idx)}
+                    <tr class="align-middle">
+                      <td class="py-1 pe-1">
+                        <select
+                          value={row.packagingTypeId ?? ''}
+                          on:change={(e) => handleRowTypeChange(row, e.currentTarget.value)}
+                          class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-bold text-pos-text outline-none focus:ring-2 focus:ring-sky-500 cursor-pointer"
+                        >
+                          {#each packTypes as type}
+                            {#if type.is_active && (type.name || '').toLowerCase() !== 'unité' && (type.name || '').toLowerCase() !== 'unite'}
+                              <option value={type.id} disabled={isTypeUsedByOther(row, type.id)}>
+                                {type.name}{type.abbreviation ? ` (${type.abbreviation})` : ''}
+                              </option>
+                            {/if}
+                          {/each}
+                        </select>
+                      </td>
+                      <td class="py-1 px-1">
                         <input
                           type="number"
                           min="2"
@@ -1404,55 +1499,84 @@
                           title={t('pem_contains')}
                           class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-mono font-black text-pos-text outline-none focus:ring-2 focus:ring-sky-500"
                         />
-                        <span class="text-[10px] font-bold text-pos-muted whitespace-nowrap">{t('pem_units')}</span>
-                      </div>
-                    </div>
-                    <div class="col-span-6 md:col-span-2">
-                      <label class="block text-[9px] font-black text-pos-muted uppercase mb-0.5">{t('pem_price_per_unit')}</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        bind:value={row.salePricePerUnit}
-                        on:wheel={noWheelScroll}
-                        placeholder="190"
-                        class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-mono font-black text-sky-600 outline-none focus:ring-2 focus:ring-sky-500"
-                      />
-                    </div>
-                    <div class="col-span-6 md:col-span-2">
-                      <label class="block text-[9px] font-black text-pos-muted uppercase mb-0.5">{t('pem_margin_unit')}</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={rowMargin(row)}
-                        on:input={(e) => handleRowMarginChange(row, Number(e.currentTarget.value))}
-                        on:wheel={noWheelScroll}
-                        class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-mono font-bold text-emerald-600 outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                      {#if purchasePrice > 0}
-                        <p class="text-[9px] text-pos-muted mt-0.5">{rowMarginPercent(row)}%</p>
-                      {/if}
-                    </div>
-                    <div class="col-span-9 md:col-span-4">
-                      <label class="block text-[9px] font-black text-pos-muted uppercase mb-0.5">{t('pem_package_price')}</label>
-                      <p class="px-2 py-1.5 font-mono text-[11px] font-black text-pos-text truncate" title={`${row.salePricePerUnit} × ${row.unitsPerPackage}`}>
-                        {row.salePricePerUnit.toLocaleString()} × {row.unitsPerPackage} = {rowPackageTotal(row).toLocaleString()} DZD
-                      </p>
-                    </div>
-                    <div class="col-span-3 md:col-span-1 flex justify-end">
-                      <button
-                        type="button"
-                        on:click={() => removePackagingRow(idx)}
-                        class="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg cursor-pointer"
-                        title="Remove this packaging price (the packaging type stays in Settings)"
-                      >
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            {/if}
+                      </td>
+                      <td class="py-1 px-1">
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          bind:value={row.salePricePerUnit}
+                          on:input={() => handleRowPriceInput(row)}
+                          on:wheel={noWheelScroll}
+                          placeholder="190"
+                          title={t('pem_price_per_unit')}
+                          class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-mono font-black text-sky-600 outline-none focus:ring-2 focus:ring-sky-500"
+                        />
+                      </td>
+                      <td class="py-1 px-1">
+                        <div class="flex items-stretch gap-1">
+                          <input
+                            type="number"
+                            step="any"
+                            value={rowMarginValue(row)}
+                            on:input={(e) => handleRowMarginInput(row, Number(e.currentTarget.value))}
+                            on:wheel={noWheelScroll}
+                            title={row.marginMode === 'percent' ? t('pem_margin') + ' %' : t('pem_margin') + ' DZD'}
+                            class="w-full min-w-0 px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-mono font-bold text-emerald-600 outline-none focus:ring-2 focus:ring-emerald-500"
+                          />
+                          <div class="flex items-center bg-slate-200 dark:bg-slate-700 rounded-lg p-0.5 text-[9px] font-black shrink-0">
+                            <button
+                              type="button"
+                              on:click={() => { row.marginMode = 'percent'; packagingRows = [...packagingRows]; }}
+                              class="px-1.5 py-1 rounded {row.marginMode === 'percent' ? 'bg-emerald-600 text-white' : 'text-pos-muted cursor-pointer'}"
+                              title="% of purchase cost"
+                            >%</button>
+                            <button
+                              type="button"
+                              on:click={() => { row.marginMode = 'amount'; packagingRows = [...packagingRows]; }}
+                              class="px-1.5 py-1 rounded {row.marginMode === 'amount' ? 'bg-emerald-600 text-white' : 'text-pos-muted cursor-pointer'}"
+                              title="DZD per unit"
+                            >DZD</button>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="py-1 px-1">
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          bind:value={row.unloadingFee}
+                          on:wheel={noWheelScroll}
+                          placeholder="0"
+                          title={t('pem_unloading_fee')}
+                          class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-mono font-black text-amber-600 outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </td>
+                      <td class="py-1 px-1">
+                        <p
+                          class="px-2 py-1.5 font-mono text-[11px] font-black text-pos-text whitespace-nowrap"
+                          title={`${row.salePricePerUnit} × ${row.unitsPerPackage}`}
+                        >
+                          {row.unitsPerPackage} × {row.salePricePerUnit.toLocaleString()} =
+                          <span class="text-sky-600 dark:text-sky-400">{rowPackageTotal(row).toLocaleString()}</span>
+                          <span class="text-[9px] font-bold text-pos-muted">DZD</span>
+                        </p>
+                      </td>
+                      <td class="py-1 ps-1 text-end">
+                        <button
+                          type="button"
+                          on:click={() => removePackagingRow(idx)}
+                          class="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg cursor-pointer"
+                          title="Remove this sale price (the packaging type stays in Settings)"
+                        >
+                          <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
           </div>
         {:else if activeTab === 'packaging'}
           <!-- LEGACY Packaging tab — HIDDEN from the tab bar (SHOW_LEGACY_TABS).

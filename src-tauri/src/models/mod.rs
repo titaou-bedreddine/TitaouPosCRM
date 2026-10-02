@@ -700,6 +700,10 @@ pub struct ProductPackaging {
     pub sale_price_per_unit: i64,
     #[serde(default)]
     pub packaging_type_id: Option<i64>,
+    /// Unloading (déchargement) fee DZD per sale unit OF THIS PACKAGING —
+    /// each packaging carries its own fee (POS-local, never synced).
+    #[serde(default)]
+    pub unloading_fee: i64,
     pub is_default: bool,
 }
 
@@ -721,6 +725,9 @@ pub struct PackagingInput {
     /// Legacy rows may send null — they are then matched by name.
     #[serde(default)]
     pub packaging_type_id: Option<i64>,
+    /// This packaging's own unloading fee (DZD per sold unit); 0 = none.
+    #[serde(default)]
+    pub unloading_fee: i64,
     #[serde(default)]
     pub is_default: bool,
 }

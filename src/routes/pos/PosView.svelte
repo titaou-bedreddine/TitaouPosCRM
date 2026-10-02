@@ -607,7 +607,11 @@
 
   function requestAddToCart(product: Product, quantity = 1, packaging?: any) {
     const fee = (product as any).unloading_fee ?? 0;
-    if (fee > 0 && !$isRefundMode && $posMode === 'sale') {
+    // Each packaging carries ITS OWN fee (Palette 112 → 50, Palette 150 →
+    // 80…); the product-level field prices the base unit. The dialog still
+    // lets the cashier adjust it per sale.
+    const feePrefill = packaging ? (packaging.unloading_fee ?? fee) : fee;
+    if (feePrefill > 0 && !$isRefundMode && $posMode === 'sale') {
       const wantedUnit = packaging ? packaging.name : undefined;
       const lineExists = $cartItems.some(
         (i) =>
@@ -621,7 +625,7 @@
         return;
       }
       pendingFeeTarget = { product, quantity, packaging };
-      unloadingFeeInput = fee;
+      unloadingFeeInput = feePrefill;
       isUnloadingFeeOpen = true;
       return;
     }

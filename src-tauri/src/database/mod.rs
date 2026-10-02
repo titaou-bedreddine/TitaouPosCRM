@@ -287,6 +287,10 @@ impl DbState {
         // semantics) keeps working unchanged. Additive + idempotent only.
         let _ = conn.execute("ALTER TABLE product_packagings ADD COLUMN packaging_type_id INTEGER;", []);
         let _ = conn.execute("ALTER TABLE product_packagings ADD COLUMN sale_price_per_unit INTEGER DEFAULT 0;", []);
+        // Per-packaging unloading (déchargement) fee, DZD per sale unit of
+        // THIS packaging (Palette 112 → 50, Palette 150 → 80…). POS-local
+        // like products.unloading_fee — never synced to the CRM.
+        let _ = conn.execute("ALTER TABLE product_packagings ADD COLUMN unloading_fee INTEGER DEFAULT 0;", []);
         let _ = conn.execute("ALTER TABLE packaging_types ADD COLUMN is_system INTEGER DEFAULT 0;", []);
         // The base Unité is a protected system packaging: pricing and stock
         // semantics depend on it — re-seed if absent, then lock it.

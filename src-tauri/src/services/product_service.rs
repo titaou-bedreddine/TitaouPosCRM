@@ -659,7 +659,7 @@ pub fn list_packagings(db: &DbState, product_id: i64) -> Result<Vec<ProductPacka
     let mut stmt = conn
         .prepare(
             "SELECT id, product_id, name, units_per_package, sale_price,
-                    COALESCE(sale_price_per_unit, 0), packaging_type_id, COALESCE(is_default, 0)
+                    COALESCE(sale_price_per_unit, 0), packaging_type_id, COALESCE(unloading_fee, 0), COALESCE(is_default, 0)
              FROM product_packagings WHERE product_id = ?1 ORDER BY units_per_package ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -673,7 +673,8 @@ pub fn list_packagings(db: &DbState, product_id: i64) -> Result<Vec<ProductPacka
                 sale_price: row.get(4)?,
                 sale_price_per_unit: row.get(5)?,
                 packaging_type_id: row.get(6)?,
-                is_default: row.get::<_, i64>(7)? == 1,
+                unloading_fee: row.get(7)?,
+                is_default: row.get::<_, i64>(8)? == 1,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -723,6 +724,12 @@ pub(crate) fn write_packagings_tx(
                 name, name
             ));
         }
+        if input.unloading_fee < 0 {
+            return Err(format!(
+                "Packaging '{}' has an invalid unloading fee / رسوم تنزيل غير صالحة للتغليف {}",
+                name, name
+            ));
+        }
         if let Some(tid) = input.packaging_type_id {
             let known: Option<i64> = tx
                 .query_row(
@@ -762,8 +769,8 @@ pub(crate) fn write_packagings_tx(
         };
         let derived_total = input.sale_price_per_unit * input.units_per_package;
         tx.execute(
-            "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price, sale_price_per_unit, purchase_price, packaging_type_id, is_default)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price, sale_price_per_unit, purchase_price, packaging_type_id, unloading_fee, is_default)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 product_id,
                 name,
@@ -772,6 +779,7 @@ pub(crate) fn write_packagings_tx(
                 input.sale_price_per_unit,
                 input.purchase_price,
                 type_id,
+                input.unloading_fee.max(0),
                 if input.is_default { 1 } else { 0 }
             ],
         )
@@ -991,6 +999,7 @@ mod save_product_tests {
             sale_price_per_unit: 190,
             purchase_price: 0,
             packaging_type_id: Some(4), // Palette seed
+            unloading_fee: 50,
             is_default: false,
         }]);
         let id = save_product(&db, input, None, Some(1)).unwrap();
@@ -999,6 +1008,7 @@ mod save_product_tests {
         assert_eq!(packs[0].sale_price_per_unit, 190, "authoritative per-base-unit price");
         assert_eq!(packs[0].sale_price, 21280, "per-package total must be DERIVED 190×112");
         assert_eq!(packs[0].packaging_type_id, Some(4));
+        assert_eq!(packs[0].unloading_fee, 50, "per-packaging unloading fee round-trips");
     }
 
     /// Atomic save (pricing spec §23): a packaging row sent with the product
@@ -1014,6 +1024,7 @@ mod save_product_tests {
             sale_price: 0,
             sale_price_per_unit: 195,
             purchase_price: 0,
+            unloading_fee: 0,
             packaging_type_id: Some(3),
             is_default: false,
         }]);
@@ -1033,6 +1044,7 @@ mod save_product_tests {
             sale_price: 0,
             sale_price_per_unit: 0,
             purchase_price: 0,
+            unloading_fee: 0,
             packaging_type_id: Some(5),
             is_default: false,
         }]);
@@ -1055,6 +1067,7 @@ mod save_product_tests {
             sale_price: 0,
             sale_price_per_unit: per_unit,
             purchase_price: 0,
+            unloading_fee: 0,
             packaging_type_id: Some(3),
             is_default: false,
         };
