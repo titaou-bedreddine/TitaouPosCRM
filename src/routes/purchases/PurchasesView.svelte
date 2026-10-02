@@ -73,7 +73,11 @@
   }
 
   // TVA (TTC pricing): the stored tax is the VAT INSIDE the TTC total.
-  let purchaseTva = 0; // default from settings (0 = no VAT); editable per invoice
+  // Invoice-level TVA rate, % — null = EMPTY (a new invoice starts blank;
+  // it is never auto-filled from settings or from the previous invoice).
+  // Line rates are SEPARATE values (tva_rate per line, empty line = follow
+  // the invoice rate, the pre-existing business rule).
+  let purchaseTva: number | null = null;
 
   let items: ItemRow[] = [];
   let allPacks: Array<{ id: number; product_id: number; name: string; units_per_package: number; purchase_price: number }> = [];
@@ -176,18 +180,28 @@
   async function editPurchaseInvoice(pur: Purchase) {
     try {
       const savedItems = await invoke<any[]>('get_purchase_items', { purchaseId: pur.id });
-      const mapped = savedItems.map((it) => ({
-        product_id: it.product_id,
-        name: it.product_name || it.product_name_ar || '#' + it.product_id,
-        barcode: '',
-        quantity: it.quantity,
-        unit_cost: it.unit_cost,
-        sale_price: it.sale_price || it.unit_cost,
-        tva_rate: null,
-        total: it.total,
-      }));
+      // Restore each line's OWN rate from the saved amounts (tax = HT ×
+      // rate/100, total = HT + tax), and the invoice blend rate for the
+      // invoice field — an edited invoice displays what was saved (field
+      // spec §8), lines keep their individual rates.
+      const mapped = savedItems.map((it) => {
+        const vat = it.tax ?? 0;
+        const ht = (it.total ?? 0) - vat;
+        const rate = ht > 0 && vat > 0 ? Math.round((vat / ht) * 1000) / 10 : 0;
+        return {
+          product_id: it.product_id,
+          name: it.product_name || it.product_name_ar || '#' + it.product_id,
+          barcode: '',
+          quantity: it.quantity,
+          unit_cost: it.unit_cost,
+          sale_price: it.sale_price || it.unit_cost,
+          tva_rate: rate,
+          total: it.total,
+        };
+      });
       editingPurchase = pur;
       appliedInvoiceNumber = null;
+      purchaseTva = pur.subtotal > 0 && pur.tax > 0 ? Math.round((pur.tax / pur.subtotal) * 1000) / 10 : 0;
       isCreateOpen = true;
       items = mapped;
       invoiceNumber = pur.invoice_number + '-C';
@@ -489,22 +503,17 @@
     paidManuallyEdited = true;
   }
 
-  onMount(async () => {
-    try {
-      const st = await invoke<Record<string, string>>('get_all_settings');
-      const r = parseFloat(st?.default_tva_purchase ?? '0');
-      if (!isNaN(r)) purchaseTva = r;
-    } catch {}
-  });
+  // NOTE: intentionally NO settings/previous-invoice auto-fill here — a new
+  // purchase invoice always opens with an EMPTY invoice TVA (field spec).
 
   function tvaOf(ttc: number): number {
-    const r = Math.max(0, purchaseTva);
+    const r = Math.max(0, purchaseTva ?? 0);
     return Math.round((ttc * r) / (100 + r));
   }
 
   // Per-line TVA: a line's own rate when set, otherwise the invoice rate.
   function tvaOfLine(i: ItemRow): number {
-    const r = i.tva_rate ?? purchaseTva;
+    const r = i.tva_rate ?? purchaseTva ?? 0;
     return Math.round((i.total * Math.max(0, r)) / (100 + Math.max(0, r)));
   }
 
@@ -519,7 +528,7 @@
   // the old function-call form only tracked `items` and froze until
   // save + reopen.)
   $: lineTotals = items.map((i) => {
-    const r = Math.max(0, i.tva_rate ?? purchaseTva);
+    const r = Math.max(0, i.tva_rate ?? purchaseTva ?? 0);
     const ht = Math.round(i.quantity * i.unit_cost);
     const tva = Math.round((ht * r) / 100);
     return { ht, tva, ttc: ht + tva };
@@ -527,6 +536,25 @@
   $: subtotal = lineTotals.reduce((sum, l) => sum + l.ht, 0);
   $: itemsTva = lineTotals.reduce((sum, l) => sum + l.tva, 0);
   $: total = subtotal + itemsTva;
+
+  // Dedicated fresh state for a NEW purchase invoice (never a spread of
+  // the previous invoice): TVA EMPTY, supplier/dates/lines clean.
+  function resetInvoiceForm() {
+    items = [];
+    selectedSupplierId = null;
+    invoiceNumber = '';
+    invoiceDate = localTodayISO();
+    purchaseTva = null;
+    paidAmount = 0;
+    paidManuallyEdited = false;
+    notes = '';
+    paymentMethod = 'cash';
+    appliedInvoiceNumber = null;
+    savedItemsSnapshot = '';
+    applyMsg = '';
+    errorMsg = '';
+    editingPurchase = null;
+  }
 
   // Applied-state: after Apply (save without closing), re-saving with
   // unchanged lines is a no-op; changed lines save a CORRECTED invoice
@@ -593,11 +621,7 @@
         return;
       }
       isCreateOpen = false;
-      items = [];
-      invoiceNumber = '';
-      paidAmount = 0;
-      paidManuallyEdited = false;
-      appliedInvoiceNumber = null;
+      resetInvoiceForm();
       await loadData();
     } catch (e: any) {
       errorMsg = typeof e === 'string' ? e : e.message || 'Failed to save purchase';
@@ -726,12 +750,10 @@
     <button
       type="button"
       on:click={() => {
+        // Fresh state every time — no TVA/lines/number/supplier carryover
+        // from the previous invoice (field spec).
+        resetInvoiceForm();
         isCreateOpen = true;
-        errorMsg = '';
-        // Each new invoice starts empty — no leftovers from the last one.
-        items = [];
-        paidManuallyEdited = false;
-        paidAmount = 0;
       }}
       class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-black transition shadow-xs flex items-center gap-2 cursor-pointer active:scale-95"
     >
@@ -831,7 +853,7 @@
             <p class="text-xs text-pos-muted">Scan products, edit quantities, and auto-print shelf barcode tags</p>
           </div>
         </div>
-        <button on:click={() => (isCreateOpen = false)} class="text-pos-muted hover:text-pos-text p-1.5 rounded-xl cursor-pointer">
+        <button on:click={() => { isCreateOpen = false; resetInvoiceForm(); }} class="text-pos-muted hover:text-pos-text p-1.5 rounded-xl cursor-pointer">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -1000,7 +1022,7 @@
                         min="0"
                         max="100"
                         inputmode="numeric"
-                        placeholder={String(purchaseTva)}
+                        placeholder="TVA %"
                         title="Empty = invoice rate"
                         bind:value={item.tva_rate}
                         on:input={updateTotals}
@@ -1052,7 +1074,7 @@
             <p class="text-xs text-pos-muted font-bold">TOTAL HT (hors TVA): <span class="font-mono font-black text-pos-text">{subtotal.toLocaleString()} DZD</span></p>
             <div class="flex items-center justify-end gap-2 mb-1 mt-0.5">
               <span class="text-[10px] font-bold text-pos-muted">TVA %</span>
-              <input type="number" min="0" max="100" bind:value={purchaseTva}
+              <input type="number" min="0" max="100" bind:value={purchaseTva} placeholder="TVA %"
                 class="w-16 px-2 py-0.5 text-center bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-black font-mono text-pos-text outline-none" />
               <span class="text-[10px] font-mono font-bold text-pos-muted">TOTAL TVA: <span class="text-amber-600 font-black">{itemsTva.toLocaleString()}</span> DZD</span>
             </div>
@@ -1083,7 +1105,7 @@
 
         <div class="flex items-center gap-2">
           {#if applyMsg}<span class="text-[10px] font-black text-emerald-600 me-1">{applyMsg}</span>{/if}
-          <button on:click={() => { isCreateOpen = false; appliedInvoiceNumber = null; }} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-pos-text font-black text-xs rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5">
+          <button on:click={() => { isCreateOpen = false; resetInvoiceForm(); }} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-pos-text font-black text-xs rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5">
             Cancel
           </button>
           <button
