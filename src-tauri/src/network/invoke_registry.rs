@@ -567,7 +567,8 @@ pub fn dispatch(ctx: &InvokeContext, command: &str, args: &Value) -> Result<Valu
             let conn = db.conn.lock().unwrap();
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, old_purchase_price, new_purchase_price, old_sale_price, new_sale_price, user_id, created_at
+                    "SELECT id, old_purchase_price, new_purchase_price, old_sale_price, new_sale_price,
+                            packagings_old, packagings_new, user_id, created_at
                      FROM product_price_history WHERE product_id = ?1 ORDER BY id DESC LIMIT 100",
                 )
                 .map_err(|e| e.to_string())?;
@@ -579,8 +580,10 @@ pub fn dispatch(ctx: &InvokeContext, command: &str, args: &Value) -> Result<Valu
                         new_purchase_price: row.get(2)?,
                         old_sale_price: row.get(3)?,
                         new_sale_price: row.get(4)?,
-                        user_id: row.get(5)?,
-                        created_at: row.get(6)?,
+                        packagings_old: row.get(5)?,
+                        packagings_new: row.get(6)?,
+                        user_id: row.get(7)?,
+                        created_at: row.get(8)?,
                     })
                 })
                 .map_err(|e| e.to_string())?;

@@ -623,6 +623,11 @@ pub struct PriceHistoryEntry {
     pub new_purchase_price: i64,
     pub old_sale_price: i64,
     pub new_sale_price: i64,
+    /// Per-packaging price snapshots around this change (JSON, see
+    /// packagings_snapshot): [{"name","per_unit","fee"}…]. NULL on rows
+    /// recorded before the pricing refinement.
+    pub packagings_old: Option<String>,
+    pub packagings_new: Option<String>,
     pub user_id: Option<i64>,
     pub created_at: String,
 }

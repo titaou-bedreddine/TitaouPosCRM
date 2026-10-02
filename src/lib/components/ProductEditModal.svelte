@@ -136,8 +136,9 @@
   );
 
   // "+ Add sale price" adds ONE row: preselect the first free packaging
-  // type, prefill its Qty from the product's previous configuration for
-  // that type (conversion is per product), margins in % mode.
+  // type and prefill Qty from the product's previous configuration for that
+  // type, falling back to the type's DEFAULT conversion from Settings
+  // (default_units) — still editable per product. Margins start in % mode.
   function addSalePriceRow() {
     const type = availablePackTypes[0];
     if (!type) return;
@@ -150,7 +151,9 @@
         packagingTypeId: type.id ?? null,
         name: type.name || '',
         abbreviation: type.abbreviation || '',
-        unitsPerPackage: previous ? Number(previous.units_per_package) || 0 : 0,
+        unitsPerPackage: previous
+          ? Number(previous.units_per_package) || 0
+          : Number((type as any).default_units) || 0,
         salePricePerUnit: 0,
         purchasePrice: previous ? Number(previous.purchase_price ?? 0) : 0,
         unloadingFee: previous ? Number(previous.unloading_fee ?? 0) : 0,
@@ -160,9 +163,10 @@
     ];
   }
 
-  // Packaging changed on a row: adopt the type identity, and prefill Qty /
+  // Packaging changed on a row: adopt the type identity and prefill Qty /
   // fee from the product's previous configuration for THAT type when one
-  // exists (never overwrites the price — the user sets pricing).
+  // exists, else the type's default conversion — never the price (pricing
+  // is the user's call).
   function handleRowTypeChange(row: PackagingRow, typeId: string) {
     const type = (packTypes as any[]).find((t) => String(t.id) === typeId);
     if (!type) return;
@@ -176,6 +180,8 @@
       row.unitsPerPackage = Number(previous.units_per_package) || row.unitsPerPackage;
       row.unloadingFee = Number(previous.unloading_fee ?? 0);
       row.purchasePrice = Number(previous.purchase_price ?? 0);
+    } else if (Number((type as any).default_units) > 0) {
+      row.unitsPerPackage = Number((type as any).default_units);
     }
     packagingRows = [...packagingRows];
   }
@@ -259,12 +265,17 @@
   }
 
   // Client-side mirror of the server validation (§24) so mistakes surface
-  // before the save attempt: a conversion without a price is an error.
+  // before the save attempt: a conversion without a price is an error, and
+  // the SAME floor as the unit price applies — a per-unit sale price below
+  // the purchase cost is rejected.
   function validatePricingRows(): string | null {
     const seen = new Set<string>();
     for (const r of packagingRows) {
       if (!r.name.trim() || r.unitsPerPackage <= 1) continue;
       if (r.unitsPerPackage > 1 && r.salePricePerUnit > 0) {
+        if (Number(purchasePrice) > 0 && r.salePricePerUnit < Number(purchasePrice)) {
+          return `Sale price per unit for ${r.name} (${r.salePricePerUnit}) cannot be less than the purchase cost (${purchasePrice} DZD) / سعر البيع للوحدة لا يمكن أن يكون أقل من سعر الشراء`;
+        }
         const key = r.packagingTypeId != null ? `t${r.packagingTypeId}` : r.name.toLowerCase();
         if (seen.has(key)) return `Duplicate packaging price for ${r.name}`;
         seen.add(key);
@@ -418,17 +429,51 @@
   let printLabelInitialQty = 1;
   let printProductObj: Product | null = null;
 
-  // Price history (persisted by the backend on every price change)
+  // Price history (persisted by the backend on every price change —
+  // including per-packaging price snapshots around each change)
   interface PriceHistoryEntry {
     id: number;
     old_purchase_price: number;
     new_purchase_price: number;
     old_sale_price: number;
     new_sale_price: number;
+    packagings_old?: string | null;
+    packagings_new?: string | null;
     user_id?: number | null;
     created_at: string;
   }
   let priceHistory: PriceHistoryEntry[] = [];
+
+  // "Palette (PL112): 190→195 · Fardeau: —→195" — per-packaging diff for a
+  // history row. Snapshots are [{"name","per_unit","fee"}…] from the backend.
+  function packagingPriceDiff(oldJson?: string | null, newJson?: string | null): string {
+    if (!oldJson && !newJson) return '';
+    const parse = (s?: string | null): Map<string, { per_unit: number; fee: number }> => {
+      const map = new Map<string, { per_unit: number; fee: number }>();
+      try {
+        for (const it of JSON.parse(s || '[]') as any[]) {
+          map.set(String(it.name), { per_unit: Number(it.per_unit) || 0, fee: Number(it.fee) || 0 });
+        }
+      } catch { /* legacy row without snapshots */ }
+      return map;
+    };
+    const oldMap = parse(oldJson);
+    const newMap = parse(newJson);
+    const names = new Set<string>([...oldMap.keys(), ...newMap.keys()]);
+    const parts: string[] = [];
+    for (const name of names) {
+      const o = oldMap.get(name);
+      const n = newMap.get(name);
+      const oPrice = o ? o.per_unit : null;
+      const nPrice = n ? n.per_unit : null;
+      let part = `${name}: ${oPrice === null ? '—' : oPrice.toLocaleString()}→${nPrice === null ? '—' : nPrice.toLocaleString()}`;
+      const oFee = o ? o.fee : null;
+      const nFee = n ? n.fee : null;
+      if (oFee !== nFee) part += ` (${oFee === null ? '—' : oFee}→${nFee === null ? '—' : nFee})`;
+      if (oPrice !== nPrice || oFee !== nFee || o === undefined || n === undefined) parts.push(part);
+    }
+    return parts.join(' · ');
+  }
 
   // Quantity history (every stock movement: sale, purchase, refund, manual
   // adjustment, broken — old → new with delta, user, timestamp).
@@ -1510,8 +1555,13 @@
                           on:wheel={noWheelScroll}
                           placeholder="190"
                           title={t('pem_price_per_unit')}
-                          class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] font-mono font-black text-sky-600 outline-none focus:ring-2 focus:ring-sky-500"
+                          class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border rounded-lg text-[11px] font-mono font-black outline-none focus:ring-2 {purchasePrice > 0 && row.salePricePerUnit > 0 && row.salePricePerUnit < purchasePrice
+                            ? 'border-rose-400 text-rose-600 focus:ring-rose-400'
+                            : 'border-pos-border text-sky-600 focus:ring-sky-500'}"
                         />
+                        {#if purchasePrice > 0 && row.salePricePerUnit > 0 && row.salePricePerUnit < purchasePrice}
+                          <p class="text-[9px] font-bold text-rose-500 mt-0.5">&lt; {t('pem_purchase_cost')}</p>
+                        {/if}
                       </td>
                       <td class="py-1 px-1">
                         <div class="flex items-stretch gap-1">
@@ -1717,6 +1767,7 @@
                         <th class="text-start py-1.5 font-black uppercase">{t('qh_date')}</th>
                         <th class="text-start py-1.5 font-black uppercase">{t('pem_purchase_cost')}</th>
                         <th class="text-start py-1.5 font-black uppercase">{t('pem_sale_price')}</th>
+                        <th class="text-start py-1.5 font-black uppercase">{t('pem_col_packaging')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1730,6 +1781,9 @@
                           <td class="py-1.5 font-mono">
                             {h.old_sale_price.toLocaleString()} →
                             <span class="font-black text-sky-600">{h.new_sale_price.toLocaleString()}</span>
+                          </td>
+                          <td class="py-1.5 font-mono text-pos-muted">
+                            {packagingPriceDiff(h.packagings_old, h.packagings_new) || '—'}
                           </td>
                         </tr>
                       {/each}

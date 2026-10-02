@@ -88,6 +88,81 @@
     } catch {
       allPacks = [];
     }
+    try {
+      // Settings packaging TYPES (with their default conversion) extend the
+      // per-line unit dropdown for products without their own rows yet.
+      packTypes = await invoke<any[]>('get_packaging_types', { activeOnly: true });
+    } catch {
+      packTypes = [];
+    }
+  }
+
+  // ── Unit prompt + options (pricing refinement): adding a line ASKS for
+  // the unit like the POS presentation picker — Unité or a configured
+  // packaging (product conversion first, else the type's default) — while
+  // the per-line dropdown stays available afterwards. ──
+  interface UnitOption {
+    name: string;
+    units: number;
+    cost: number; // per-option prefill (0 = user types it)
+    fromType: boolean;
+  }
+  let packTypes: any[] = [];
+  let unitChoiceTarget: { product: Product; options: UnitOption[] } | null = null;
+
+  function isBaseName(name: string): boolean {
+    const n = (name || '').toLowerCase();
+    return n === 'unité' || n === 'unite' || n === 'unit' || n === 'bouteille';
+  }
+
+  function unitOptionsFor(productId: number, baseCost: number): UnitOption[] {
+    const opts: UnitOption[] = [{ name: 'BASE', units: 1, cost: baseCost, fromType: false }];
+    const productPacks = packsFor(productId);
+    const covered = new Set<string>();
+    for (const pk of productPacks) {
+      covered.add((pk.name || '').toLowerCase());
+      opts.push({ name: pk.name, units: pk.units_per_package, cost: pk.purchase_price, fromType: false });
+    }
+    for (const type of packTypes) {
+      if (!type.is_active || isBaseName(type.name) || covered.has((type.name || '').toLowerCase())) continue;
+      const units = Number(type.default_units) || 0;
+      if (units <= 1) continue; // a packaging without any conversion isn't offerable
+      opts.push({ name: type.name, units, cost: 0, fromType: true });
+    }
+    return opts;
+  }
+
+  function resolveLineUnit(item: ItemRow, name: string) {
+    if (name === 'BASE') {
+      const basePrice = Math.round(item.unit_cost / (item.units_per_package || 1));
+      item.sale_unit = undefined;
+      item.units_per_package = undefined;
+      item.unit_cost = basePrice;
+      item.total = item.quantity * item.unit_cost;
+      items = [...items];
+      return;
+    }
+    const productPack = packsFor(item.product_id).find((pp) => pp.name === name);
+    if (productPack) {
+      item.sale_unit = productPack.name;
+      item.units_per_package = productPack.units_per_package;
+      item.unit_cost = productPack.purchase_price > 0
+        ? productPack.purchase_price
+        : Math.round(item.unit_cost * productPack.units_per_package);
+    } else {
+      const type = packTypes.find((pt) => pt.name === name);
+      const units = Math.max(1, Number(type?.default_units) || 1);
+      item.sale_unit = name;
+      item.units_per_package = units;
+      item.unit_cost = Math.round(item.unit_cost * units);
+    }
+    item.total = item.quantity * item.unit_cost;
+    items = [...items];
+  }
+
+  function unitChoiceLabel(o: UnitOption): string {
+    if (o.name === 'BASE') return `${t('sales_unit')} — 1 ${t('pem_units')}`;
+    return `${o.name} — ${o.units} ${t('pem_units')}`;
   }
   let isSaving = false;
   let errorMsg = '';
@@ -268,23 +343,30 @@
   async function selectProductFromSearch(p: Product) {
     searchQuery = '';
     isSearchDropdownOpen = false;
-    await addItemAndFocus(p);
+    await requestAddPurchaseLine(p);
   }
 
-  async function addItemAndFocus(p: Product) {
+  // Ask for the unit FIRST when the product has sellable presentations.
+  async function requestAddPurchaseLine(p: Product) {
+    const options = unitOptionsFor(p.id, p.purchase_price);
+    if (options.length > 1) {
+      unitChoiceTarget = { product: p, options };
+      return;
+    }
+    await addItemAndFocus(p, null);
+  }
+
+  async function addItemAndFocus(p: Product, chosen?: UnitOption | null) {
     const existingIndex = items.findIndex(i => i.product_id === p.id);
     let targetIndex = 0;
-    if (existingIndex > -1) {
+    if (existingIndex > -1 && !chosen) {
       items[existingIndex].quantity += 1;
       items[existingIndex].total = items[existingIndex].quantity * items[existingIndex].unit_cost;
       items = [...items];
       targetIndex = existingIndex;
     } else {
-      const packs = packsFor(p.id);
-      const pack = packs.length > 0 ? packs[0] : null; // largest first
-      const startUnitCost = pack && pack.purchase_price > 0
-        ? pack.purchase_price
-        : p.purchase_price;
+      const usePack = chosen && chosen.name !== 'BASE' ? chosen : null;
+      const startUnitCost = usePack && usePack.cost > 0 ? usePack.cost : p.purchase_price;
       items = [...items, {
         product_id: p.id,
         name: p.name_fr || p.name_ar,
@@ -293,8 +375,8 @@
         unit_cost: startUnitCost,
         sale_price: p.sale_price,
         total: startUnitCost,
-        sale_unit: pack ? pack.name : undefined,
-        units_per_package: pack ? pack.units_per_package : undefined,
+        sale_unit: usePack ? usePack.name : undefined,
+        units_per_package: usePack ? usePack.units : undefined,
         tva_rate: null,
       }];
       targetIndex = items.length - 1;
@@ -547,7 +629,7 @@
       if (matched) {
         searchQuery = '';
         isSearchDropdownOpen = false;
-        await addItemAndFocus(matched);
+        await requestAddPurchaseLine(matched);
       }
     } catch (e) {
       console.error('Purchase scan lookup failed:', e);
@@ -803,33 +885,15 @@
                       {/if}
                     </td>
                     <td class="p-2.5 text-center">
-                      {#if packsFor(item.product_id).length > 0}
+                      {#if unitOptionsFor(item.product_id, 0).length > 1}
                         <select
-                          class="w-20 mb-1 px-1 py-0.5 text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-pos-text outline-none cursor-pointer"
+                          class="w-24 mb-1 px-1 py-0.5 text-[10px] font-black bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-pos-text outline-none cursor-pointer"
                           value={item.sale_unit ?? 'BASE'}
-                          on:change={(e) => {
-                            const name = e.currentTarget.value;
-                            const packs = packsFor(item.product_id);
-                            const pack = name === 'BASE' ? null : packs.find((pp) => pp.name === name);
-                            if (pack) {
-                              item.sale_unit = pack.name;
-                              item.units_per_package = pack.units_per_package;
-                              item.unit_cost = pack.purchase_price > 0 ? pack.purchase_price : Math.round(item.unit_cost * pack.units_per_package);
-                              item.total = item.quantity * item.unit_cost;
-                              items = [...items];
-                            } else if (name === 'BASE') {
-                              const basePrice = Math.round(item.unit_cost / (item.units_per_package || 1));
-                              item.sale_unit = undefined;
-                              item.units_per_package = undefined;
-                              item.unit_cost = basePrice;
-                              item.total = item.quantity * item.unit_cost;
-                              items = [...items];
-                            }
-                          }}
+                          on:change={(e) => resolveLineUnit(item, e.currentTarget.value)}
                         >
-                          <option value="BASE">Bouteille</option>
-                          {#each packsFor(item.product_id) as pp (pp.id)}
-                            <option value={pp.name}>{pp.name} ({pp.units_per_package})</option>
+                          <option value="BASE">{t('sales_unit')}</option>
+                          {#each unitOptionsFor(item.product_id, 0).filter((o) => o.name !== 'BASE') as o (o.name)}
+                            <option value={o.name}>{o.name} ({o.units})</option>
                           {/each}
                         </select>
                       {/if}
@@ -1149,3 +1213,31 @@
   </div>
 {/if}
 
+
+<!-- Unit prompt (pricing refinement): adding a purchase line asks for the
+     unit — Unité or a configured packaging — exactly like the POS
+     presentation picker. Cancel adds the plain base-unit line. -->
+{#if unitChoiceTarget}
+  <div class="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" on:mousedown|self={() => { const tgt = unitChoiceTarget; unitChoiceTarget = null; if (tgt) addItemAndFocus(tgt.product, null); }} role="presentation">
+    <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl w-full max-w-sm p-4 space-y-2" role="dialog" tabindex="-1">
+      <h3 class="font-black text-sm text-pos-text truncate">{unitChoiceTarget.product.name_fr || unitChoiceTarget.product.name_ar}</h3>
+      <p class="text-[10px] font-bold text-pos-muted mb-1">{t('purch_choose_unit')}</p>
+      {#each unitChoiceTarget.options as o (o.name)}
+        <button
+          type="button"
+          on:click={async () => { const tgt = unitChoiceTarget!; unitChoiceTarget = null; await addItemAndFocus(tgt.product, o); }}
+          class="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-pos-border bg-slate-50 dark:bg-slate-800/60 hover:border-sky-500 hover:shadow-sm transition cursor-pointer"
+        >
+          <span class="text-xs font-black text-pos-text">{unitChoiceLabel(o)}</span>
+          <span class="text-[10px] font-bold font-mono text-emerald-600">
+            {o.name === 'BASE'
+              ? `${o.cost.toLocaleString()} DZD / ${t('pem_units')}`
+              : o.cost > 0
+                ? `${o.cost.toLocaleString()} DZD / ${o.name}`
+                : t('purch_cost_enter')}
+          </span>
+        </button>
+      {/each}
+    </div>
+  </div>
+{/if}

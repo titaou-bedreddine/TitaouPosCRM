@@ -50,7 +50,10 @@
 
 {#if isOpen && product}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="fixed inset-0 z-[60] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4" on:mousedown={onClose}>
+  <!-- |self: only a click on the BACKDROP closes — without it a mousedown on
+       a card closed the modal before onPick ran and nothing was added to
+       the cart (field-reported bug). -->
+  <div class="fixed inset-0 z-[60] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4" on:mousedown|self={onClose}>
     <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150" role="dialog" tabindex="-1">
       <!-- Header -->
       <div class="flex items-center justify-between px-5 py-3.5 border-b border-pos-border bg-slate-50 dark:bg-slate-800/60 shrink-0">

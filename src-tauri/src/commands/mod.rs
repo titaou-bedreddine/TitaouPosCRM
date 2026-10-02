@@ -350,9 +350,10 @@ pub fn save_packaging_type(
     abbreviation: Option<String>,
     display_order: Option<i64>,
     is_active: Option<bool>,
+    default_units: Option<i64>,
     admin_password: String,
 ) -> Result<i64, String> {
-    product_service::save_packaging_type(&db, id, name, abbreviation.unwrap_or_default(), display_order.unwrap_or(0), is_active.unwrap_or(true), admin_password)
+    product_service::save_packaging_type(&db, id, name, abbreviation.unwrap_or_default(), display_order.unwrap_or(0), is_active.unwrap_or(true), default_units.unwrap_or(0), admin_password)
 }
 
 #[tauri::command]
@@ -887,7 +888,8 @@ pub fn get_price_history(db: State<'_, DbState>, product_id: i64) -> Result<Vec<
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn
         .prepare(
-            "SELECT id, old_purchase_price, new_purchase_price, old_sale_price, new_sale_price, user_id, created_at
+            "SELECT id, old_purchase_price, new_purchase_price, old_sale_price, new_sale_price,
+                    packagings_old, packagings_new, user_id, created_at
              FROM product_price_history WHERE product_id = ?1 ORDER BY id DESC LIMIT 100",
         )
         .map_err(|e| e.to_string())?;
@@ -900,8 +902,10 @@ pub fn get_price_history(db: State<'_, DbState>, product_id: i64) -> Result<Vec<
                 new_purchase_price: row.get(2)?,
                 old_sale_price: row.get(3)?,
                 new_sale_price: row.get(4)?,
-                user_id: row.get(5)?,
-                created_at: row.get(6)?,
+                packagings_old: row.get(5)?,
+                packagings_new: row.get(6)?,
+                user_id: row.get(7)?,
+                created_at: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?;

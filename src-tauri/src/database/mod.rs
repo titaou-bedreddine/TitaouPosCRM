@@ -291,6 +291,19 @@ impl DbState {
         // THIS packaging (Palette 112 → 50, Palette 150 → 80…). POS-local
         // like products.unloading_fee — never synced to the CRM.
         let _ = conn.execute("ALTER TABLE product_packagings ADD COLUMN unloading_fee INTEGER DEFAULT 0;", []);
+        // Packaging types carry a DEFAULT conversion (prefill): picking
+        // 'Palette 112' in a pricing row or a purchase line suggests its
+        // configured contains — still overridable per product.
+        let _ = conn.execute("ALTER TABLE packaging_types ADD COLUMN default_units INTEGER DEFAULT 0;", []);
+        let _ = conn.execute_batch("
+            UPDATE packaging_types SET default_units = 1
+             WHERE is_system = 1 OR id = 1
+                OR lower(trim(name)) IN ('unité', 'unite', 'unit');
+        ");
+        // Price history gains per-packaging price snapshots so a change to
+        // PL112/Fardeau prices is recorded like the unit price is.
+        let _ = conn.execute("ALTER TABLE product_price_history ADD COLUMN packagings_old TEXT;", []);
+        let _ = conn.execute("ALTER TABLE product_price_history ADD COLUMN packagings_new TEXT;", []);
         let _ = conn.execute("ALTER TABLE packaging_types ADD COLUMN is_system INTEGER DEFAULT 0;", []);
         // The base Unité is a protected system packaging: pricing and stock
         // semantics depend on it — re-seed if absent, then lock it.
