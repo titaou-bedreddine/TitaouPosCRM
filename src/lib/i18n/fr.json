@@ -138,7 +138,7 @@
   "pos_total_qty": "Quantité Totale",
   "pos_remise_applied": "Remise appliquée",
   "pos_checkout_cash": "Encaisser",
-  "pos_other_product": "Produit Hors Liste (Divers)",
+  "pos_other_product": "Autre Produit",
   "pos_payment_cash": "Espèces",
   "pos_payment_tpe": "Carte TPE",
   "pos_payment_credit": "Crédit",

@@ -138,7 +138,7 @@
   "pos_total_qty": "الكمية الكلية",
   "pos_remise_applied": "تخفيض مطبق",
   "pos_checkout_cash": "الدفع",
-  "pos_other_product": "منتج حر (Divers)",
+  "pos_other_product": "منتج آخر",
   "pos_payment_cash": "نقد",
   "pos_payment_tpe": "بطاقة",
   "pos_payment_credit": "دين",

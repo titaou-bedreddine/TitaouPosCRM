@@ -138,7 +138,7 @@
   "pos_total_qty": "Total Quantity",
   "pos_remise_applied": "Discount applied",
   "pos_checkout_cash": "Checkout",
-  "pos_other_product": "Other Product (Divers)",
+  "pos_other_product": "Other Product",
   "pos_payment_cash": "Cash",
   "pos_payment_tpe": "TPE Card",
   "pos_payment_credit": "Credit",
