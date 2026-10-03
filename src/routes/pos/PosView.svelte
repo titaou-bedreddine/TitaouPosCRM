@@ -5,7 +5,7 @@
   import { t, currentLocale } from '../../lib/i18n';
   import { localTodayISO } from '../../lib/utils/date';
   import type { Category, CartItem, Product, Supplier, Unit } from '../../lib/types';
-  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, saleFeeOverride, setSaleFeeOverride, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates, unloadingFeesTotal, setLineUnloadingFee } from '../../lib/stores/cart';
+  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates, unloadingFeesTotal, setLineUnloadingFee, applySaleLevelFee } from '../../lib/stores/cart';
   import UnloadingFeeModal from '../../lib/components/UnloadingFeeModal.svelte';
   import ProductPresentationModal from '../../lib/components/ProductPresentationModal.svelte';
   import { currentUser } from '../../lib/stores/auth';
@@ -661,9 +661,11 @@
     if (line) setLineUnloadingFee(line, fee);
   }
 
-  // Sale-level fee (edited sales): the persisted lump fee loaded from the
-  // sale. The user may change it (300 → 500) or remove it (0) — checkout
-  // re-books the expense to EXACTLY this amount, nothing orphaned.
+  // Sale-level fee (edited sales / legacy receipts): the user enters a TOTAL
+  // and it is DISTRIBUTED across the current lines as per-unit fees — the
+  // cart's fee total then always derives from its lines (qty changes
+  // rescale it, removing a line removes its fee). Checkout re-books the
+  // expense to EXACTLY the derived amount, nothing orphaned.
   let isSaleFeeOpen = false;
 
   function openSaleFeeEdit() {
@@ -672,7 +674,7 @@
 
   function confirmSaleFee(fee: number) {
     isSaleFeeOpen = false;
-    setSaleFeeOverride(fee);
+    applySaleLevelFee(fee);
   }
 
   function handlePurchasePriceConfirm(price: number, salePriceEntered: number, qty = 1) {
@@ -814,6 +816,10 @@
       const stamp = Date.now().toString().slice(-8);
       if (mode === 'purchase') {
         // Stock-in purchase from the selected supplier at cart line prices.
+        // With the shared-register setting ON, the cash paid books a
+        // purchase_payment drawer movement INSIDE create_purchase (same
+        // transaction) — no separate supplier-payment call here, or the
+        // drawer would move twice for the same buy.
         const total = $cartItems.reduce((s, i) => s + Math.round(i.unit_price * i.quantity), 0);
         await invoke('create_purchase', {
           input: {
@@ -827,6 +833,7 @@
             total,
             paid_amount: total,
             payment_method: 'cash',
+            session_id: $activeSession?.id ?? null,
             items: $cartItems.map((i) => ({
               product_id: i.product_id,
               quantity: i.quantity,
@@ -838,24 +845,6 @@
             notes: 'POS Purchase Mode (شراء)',
           },
         });
-
-        // The purchase is paid cash from the drawer: book the supplier
-        // payment as a cash movement so the register and stats reflect the
-        // money leaving (previously the drawer never moved for POS buys —
-        // "cash out on purchase mode didn't work").
-        if ($activeSession?.id) {
-          await invoke('record_supplier_debt_payment', {
-            input: {
-              supplier_id: $selectedSupplierId ?? 1,
-              amount: total,
-              payment_method: 'cash',
-              reference: 'ACH-' + stamp,
-              session_id: $activeSession.id,
-              user_id: $currentUser?.id || 1,
-              notes: 'POS purchase paid cash / دفع شراء نقدي من الصندوق',
-            },
-          }).catch(() => {});
-        }
       } else {
         // Broken: quantity leaves stock and the value becomes an expense
         // per line (negative-quantity purchase = write-off movement).
@@ -934,20 +923,24 @@
         // the packaging conversion.
         sale_unit: i.sale_unit || undefined,
         base_quantity: i.base_quantity || undefined,
+        // Per-line unloading fee — persisted on sale_items since v0.10.11,
+        // so the fee belongs to the line again (shows on the item, rescales
+        // with quantity) instead of a frozen cart-level lump.
+        unloading_fee_per_unit: i.unloading_fee_per_unit || 0,
       }));
       clearCart();
       $cartItems = mergeCartDuplicates(mapped);
       if (sale.customer_id) $selectedCustomerId = sale.customer_id;
       originSaleId.set(sale.id);
-      // The fee is a LUMP persisted on the sale (one Déchargement expense
-      // row keyed by sale number) — reload it into the cart so the footer
-      // shows it and checkout re-books it UNCHANGED unless the user edits
-      // it explicitly (spec #11/#12/#15).
-      setSaleFeeOverride(null);
+      // Legacy receipts (saved before per-line fee persistence) hold the fee
+      // as ONE Déchargement expense row keyed by sale number: reload it and
+      // distribute it across the lines so the item rows and the footer both
+      // show it and quantities rescale it (spec: fee belongs to the lines).
       if (sale.sale_number) {
         try {
           const fee = await invoke<number>('get_sale_loading_fee', { saleNumber: sale.sale_number });
-          if (fee > 0) setSaleFeeOverride(fee);
+          const hasLineFee = $cartItems.some((i) => (i.unloading_fee_per_unit ?? 0) > 0);
+          if (fee > 0 && !hasLineFee) applySaleLevelFee(fee);
         } catch (feeErr) {
           console.warn('Could not load sale loading fee:', feeErr);
         }
@@ -1142,6 +1135,9 @@
           // keep the unit label and the base-unit conversion it was sold in.
           sale_unit: i.sale_unit,
           base_quantity: i.base_quantity,
+          // Per-line déchargement fee: persisted on the line so editing the
+          // receipt later restores the exact fee structure (fee × qty).
+          unloading_fee_per_unit: i.unloading_fee_per_unit || 0,
         })),
       };
 
@@ -1931,21 +1927,19 @@
           {#if $unloadingFeesTotal !== 0 && $posMode === 'sale'}
             <!-- Unloading fees (déchargement): the driver's take — recorded
                  as an expense at checkout, never part of the goods total.
-                 An edited sale carries a FIXED sale-level fee (it must not
-                 rescale with quantities); the pencil edits/removes it. -->
+                 Always the SUM of the line fees; the pencil re-distributes a
+                 sale-level total across the lines (or removes it with 0). -->
             <div class="flex items-center justify-between pt-1 border-t border-amber-200/60 dark:border-amber-800/40 mt-1">
               <span class="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1">
                 <Truck class="w-3 h-3" /> {t('pos_unloading_line')}
-                {#if $saleFeeOverride !== null}
-                  <button
-                    type="button"
-                    on:click={openSaleFeeEdit}
-                    class="p-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 hover:bg-amber-200 cursor-pointer transition"
-                    title={t('pos_unloading_edit_sale_fee')}
-                  >
-                    <Pencil class="w-3 h-3" />
-                  </button>
-                {/if}
+                <button
+                  type="button"
+                  on:click={openSaleFeeEdit}
+                  class="p-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 hover:bg-amber-200 cursor-pointer transition"
+                  title={t('pos_unloading_edit_sale_fee')}
+                >
+                  <Pencil class="w-3 h-3" />
+                </button>
               </span>
               <span class="text-[11px] font-bold text-pos-muted">
                 <span class="font-mono text-amber-600 dark:text-amber-400">−{Math.abs($unloadingFeesTotal).toLocaleString()} DZD</span>
@@ -2026,13 +2020,14 @@
     }}
   />
 
-  <!-- Sale-level unloading fee (edited sales): total for the whole
-       transaction, NOT per unit — change or remove the persisted lump. -->
+  <!-- Sale-level unloading fee (déchargement): the cashier enters a TOTAL
+       for the whole transaction; on confirm it is distributed across the
+       cart lines as per-unit fees (0 removes the fee from every line). -->
   <UnloadingFeeModal
     mode="sale"
     isOpen={isSaleFeeOpen}
     productName={t('pos_unloading_sale_fee')}
-    defaultFee={$saleFeeOverride ?? 0}
+    defaultFee={Math.abs($unloadingFeesTotal)}
     isEdit={true}
     onConfirm={confirmSaleFee}
     onClose={() => (isSaleFeeOpen = false)}
@@ -2114,6 +2109,7 @@
   <CreditCustomerModal
     isOpen={isCreditCustomerOpen}
     totalAmount={$cartGrandTotal}
+    initialCustomerId={$selectedCustomerId}
     onClose={() => (isCreditCustomerOpen = false)}
     onConfirmCredit={(cId, cName, paid, remaining) => {
       $selectedCustomerId = cId;
@@ -2124,6 +2120,7 @@
   <VersementCustomerModal
     isOpen={isVersementOpen}
     totalAmount={$cartGrandTotal}
+    initialCustomerId={$selectedCustomerId}
     onClose={() => (isVersementOpen = false)}
     onConfirmVersement={(cId, cName, paid, remaining) => {
       // Versement reserves the cart for the customer: their selection follows
@@ -2136,6 +2133,7 @@
   <CheckoutModal
     isOpen={isCheckoutOpen}
     totalAmount={$cartGrandTotal}
+    initialCustomerId={$selectedCustomerId}
     onClose={() => (isCheckoutOpen = false)}
     onConfirmCheckout={handleCheckoutConfirm}
   />

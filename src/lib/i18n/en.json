@@ -754,7 +754,7 @@
   "trucks_r_other": "Other",
   "trucks_history": "Trip history",
   "trucks_date": "Date",
-  "trucks_status": "Status",
+  "trucks_status": "Current status",
   "trucks_audit": "Trip audit",
   "trucks_deposit": "Deposit to register",
   "trucks_need_session": "Open a cash session to deposit",
@@ -797,5 +797,17 @@
   "pack_active": "Active",
   "contains": "Contains (base units)",
   "nav_hide_direct": "Pre-Sale-only screens are hidden in Direct Sale mode.",
-  "trucks_sales_mode_current": "Current mode"
+  "trucks_sales_mode_current": "Current mode",
+  "trucks_delete": "Delete Truck",
+  "trucks_delete_archive_msg": "This truck has recorded trips. It will be ARCHIVED: it disappears from the active list, historical trips and records are fully preserved.",
+  "trucks_delete_hard_msg": "This truck has no trips or loads. It will be permanently deleted. Delete truck?",
+  "trucks_delete_confirm": "Confirm",
+  "trucks_archived_ok": "✅ Truck archived — history preserved",
+  "trucks_show_archived": "Show archived trucks",
+  "trucks_all_sellers": "All sellers",
+  "trucks_all_trucks": "All trucks (history)",
+  "trucks_edited": "EDITED",
+  "trucks_no_active_trip": "No active trip for this truck.",
+  "trucks_already_closed": "This trip is already CLOSED — open the audit from the history table.",
+  "trucks_need_reconcile": "This trip must be IN RECONCILIATION before close & settle — reopen reconciliation first."
 }

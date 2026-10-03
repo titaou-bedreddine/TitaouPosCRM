@@ -956,8 +956,9 @@ pub fn activate_online(db: State<'_, DbState>) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn factory_reset(db: State<'_, DbState>, reset_type: String, admin_password: String) -> Result<(), String> {
+pub fn factory_reset(db: State<'_, DbState>, reset_type: String, admin_password: String) -> Result<serde_json::Value, String> {
     // Destructive: requires the admin password, not just the UI confirmation.
+    // Returns post-reset row counts so the UI can show the clean-install proof.
     if !crate::auth::verify_admin_password(&db, &admin_password)? {
         return Err("Mot de passe administrateur incorrect / Incorrect admin password".into());
     }

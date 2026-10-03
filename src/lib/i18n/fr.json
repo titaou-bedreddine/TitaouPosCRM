@@ -754,7 +754,7 @@
   "trucks_r_other": "Autre",
   "trucks_history": "Historique des tournées",
   "trucks_date": "Date",
-  "trucks_status": "Statut",
+  "trucks_status": "Statut actuel",
   "trucks_audit": "Audit de la tournée",
   "trucks_deposit": "Déposer en caisse",
   "trucks_need_session": "Ouvrez une session de caisse pour déposer",
@@ -797,5 +797,17 @@
   "pack_active": "Actif",
   "contains": "Contient (unités de base)",
   "nav_hide_direct": "Les écrans de prévente sont masqués en mode Vente directe.",
-  "trucks_sales_mode_current": "Mode actuel"
+  "trucks_sales_mode_current": "Mode actuel",
+  "trucks_delete": "Supprimer le camion",
+  "trucks_delete_archive_msg": "Ce camion a des tournées enregistrées. Il sera ARCHIVÉ : il disparaît de la liste active, les tournées et l'historique sont intégralement conservés.",
+  "trucks_delete_hard_msg": "Ce camion n'a ni tournée ni chargement. Il sera définitivement supprimé. Supprimer le camion ?",
+  "trucks_delete_confirm": "Confirmer",
+  "trucks_archived_ok": "✅ Camion archivé — historique conservé",
+  "trucks_show_archived": "Afficher les camions archivés",
+  "trucks_all_sellers": "Tous les vendeurs",
+  "trucks_all_trucks": "Tous les camions (historique)",
+  "trucks_edited": "MODIFIÉ",
+  "trucks_no_active_trip": "Aucune tournée active pour ce camion.",
+  "trucks_already_closed": "Cette tournée est déjà CLÔTURÉE — ouvrez l'audit depuis l'historique.",
+  "trucks_need_reconcile": "Cette tournée doit être EN RÉCONCILIATION avant la clôture — rouvrez la réconciliation d'abord."
 }

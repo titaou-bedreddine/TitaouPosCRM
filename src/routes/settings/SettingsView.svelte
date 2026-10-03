@@ -46,6 +46,7 @@
   let currentTab: SettingsTab = 'general';
   let settings: Record<string, any> = {
     purchase_packaging_mode: 'unit', // purchase invoices: 'unit' | 'all'
+    register_shared_purchases: false, // purchases pay from the SAME drawer as sales
     shop_name_ar: 'سوبرماركت تيتاو',
     shop_name_fr: 'Titaou One Supermarché',
     shop_phone: '0553444057 / 021654321',
@@ -302,9 +303,28 @@
   }
   async function doFactoryReset() {
     try {
-      await invoke('factory_reset', { resetType, adminPassword: resetPassword });
+      const counts: Record<string, number> = await invoke('factory_reset', { resetType, adminPassword: resetPassword });
+      // Full reset also wipes the CRM-side business data the local DB cannot
+      // reach: promotions live in the cloud (best-effort — offline resets
+      // still succeed locally, the wipe runs on the next full reset).
+      let promoNote = '';
+      if (resetType === 'full_reset') {
+        try {
+          const deleted = await invoke<number>('cloud_promotions_reset');
+          promoNote = deleted > 0 ? ` • ${deleted} promotion(s) removed` : '';
+        } catch (e) {
+          console.warn('Cloud promotions wipe skipped:', e);
+          promoNote = ' • promotions wipe skipped (offline?)';
+        }
+      }
+      const proof = counts && typeof counts === 'object'
+        ? ' — ' + Object.entries(counts)
+            .filter(([, v]) => v >= 0)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(', ')
+        : '';
       resetConfirm = '';
-      resetResult = { ok: true, text: '✅ Reset completed — the app reloads in 2 seconds… / تمت إعادة الضبط' };
+      resetResult = { ok: true, text: `✅ Reset completed${proof}${promoNote} — the app reloads in 2 seconds… / تمت إعادة الضبط` };
       setTimeout(() => window.location.reload(), 2000);
     } catch (e) {
       console.error(e);
@@ -507,6 +527,7 @@
   const BOOLEAN_KEYS = new Set([
     'auto_cut_paper',
     'open_drawer_on_sale',
+    'register_shared_purchases',
     'scale_enabled',
     'scale_auto_sync',
     'notify_daily_summary',
@@ -1688,6 +1709,17 @@
               <option value="all">All packaging (كل التغليف)</option>
             </select>
           </div>
+          <!-- Shared cash register: ON = purchases paid in cash take the money
+               out of the SAME drawer as the sales (register shows Paid /
+               Unpaid purchase cards for the session); OFF = purchases use
+               separate accounting and never touch the sales drawer. -->
+          <label class="flex items-center justify-between gap-3 mb-3 p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-pos-border cursor-pointer">
+            <span>
+              <span class="block text-[11px] font-black text-pos-text">Same cash register for purchases and sales / نفس الصندوق للمشتريات والمبيعات</span>
+              <span class="block text-[10px] text-pos-muted">Purchases paid in cash leave the sales drawer — the register shows Paid / Unpaid Purchases for the session.</span>
+            </span>
+            <input type="checkbox" bind:checked={settings.register_shared_purchases} on:change={autoSaveSettings} class="w-4 h-4 rounded accent-amber-600 shrink-0" />
+          </label>
           <div class="space-y-1.5">
             {#each packagingTypes as pt (pt.id)}
               <div class="flex items-center gap-2">
@@ -3942,7 +3974,7 @@
               <input type="radio" bind:group={resetType} value="full_reset" class="mt-0.5 text-rose-600" />
               <div class="flex-1">
                 <span class="text-xs font-black text-rose-700 dark:text-rose-300 block">Full Factory Reset (Comprehensive) / إعادة ضبط المصنع بالكامل</span>
-                <span class="text-[11px] text-rose-600/80 dark:text-rose-400/80">Complete system wipe: purges all products, resets families to Default, resets units to standard, clears sales, customers, suppliers, and extra users.</span>
+                <span class="text-[11px] text-rose-600/80 dark:text-rose-400/80">Complete system wipe: permanently removes all business data — products, packaging prices, promotions (cloud), clients, suppliers, sales, purchases, payments, debts, cash sessions, expenses, inventory, employees and extra users. Settings, printers, units and the walk-in account are preserved.</span>
               </div>
             </label>
           </div>

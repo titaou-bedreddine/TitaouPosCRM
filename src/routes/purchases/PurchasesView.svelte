@@ -623,6 +623,9 @@
       isSaving = true;
       errorMsg = '';
       const invNum = invoiceNumber || `PUR-${Date.now().toString().slice(-6)}`;
+      // With the shared-register setting ON, the cash paid portion books a
+      // drawer movement inside create_purchase (same transaction).
+      const { activeSession } = await import('../../lib/stores/session');
       await invoke('create_purchase', {
         input: {
           invoice_number: invNum,
@@ -635,6 +638,7 @@
           total: total,
           paid_amount: paidAmount,
           payment_method: paymentMethod,
+          session_id: get(activeSession)?.id ?? null,
           notes: notes || 'Facture Achat',
           items: items.map((i, idx2) => ({
             product_id: i.product_id,

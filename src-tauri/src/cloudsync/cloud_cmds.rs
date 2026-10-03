@@ -905,6 +905,34 @@ pub fn cloud_promotion_delete(id: String) -> Result<(), String> {
     client.delete("promotions", &[("id", format!("eq.{id}"))])
 }
 
+/// Wipe ALL promotions of the organization (Factory Reset step): promotions
+/// live in the CRM database, so the local reset cannot remove them. Returns
+/// the number of deleted rows. Admin RLS governs the delete; call errors
+/// surface to the caller.
+#[tauri::command]
+pub fn cloud_promotions_reset() -> Result<i64, String> {
+    let client = cloud::ensure_session()?;
+    let org = cloud::auth::fetch_profile(&client)?["organization_id"]
+        .as_str()
+        .ok_or("no org")?
+        .to_string();
+    // Count first, then delete — PostgREST DELETE returns no representation
+    // here, and the count is what the reset report shows.
+    let existing = client.select(
+        "promotions",
+        "id",
+        &[("organization_id", format!("eq.{org}"))],
+    )?;
+    let count = existing.len() as i64;
+    if count > 0 {
+        client.delete(
+            "promotions",
+            &[("organization_id", format!("eq.{org}"))],
+        )?;
+    }
+    Ok(count)
+}
+
 /// Active promotions for the field apps' consumption + POS visibility.
 #[tauri::command]
 pub fn cloud_promotions_active() -> Result<Value, String> {

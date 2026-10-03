@@ -754,7 +754,7 @@
   "trucks_r_other": "أخرى",
   "trucks_history": "سجل الجولات",
   "trucks_date": "التاريخ",
-  "trucks_status": "الحالة",
+  "trucks_status": "الحالة الحالية",
   "trucks_audit": "تدقيق الجولة",
   "trucks_deposit": "إيداع في الصندوق",
   "trucks_need_session": "افتح جلسة الصندوق للإيداع",
@@ -797,5 +797,17 @@
   "pack_active": "نشط",
   "contains": "يحتوي (وحدات أساس)",
   "nav_hide_direct": "شاشات الطلب المسبق مخفية في وضع البيع المباشر.",
-  "trucks_sales_mode_current": "الوضع الحالي"
+  "trucks_sales_mode_current": "الوضع الحالي",
+  "trucks_delete": "حذف الشاحنة",
+  "trucks_delete_archive_msg": "لهذه الشاحنة جولات مسجلة. ستُؤرشف: تختفي من القائمة النشطة مع الحفظ الكامل للجولات والسجلات.",
+  "trucks_delete_hard_msg": "لا توجد جولات أو شحنات لهذه الشاحنة. سيتم حذفها نهائياً. حذف الشاحنة؟",
+  "trucks_delete_confirm": "تأكيد",
+  "trucks_archived_ok": "✅ تمت أرشفة الشاحنة — السجل محفوظ",
+  "trucks_show_archived": "عرض الشاحنات المؤرشفة",
+  "trucks_all_sellers": "كل البائعين",
+  "trucks_all_trucks": "كل الشاحنات (السجل)",
+  "trucks_edited": "معدّلة",
+  "trucks_no_active_trip": "لا توجد جولة نشطة لهذه الشاحنة.",
+  "trucks_already_closed": "هذه الجولة مُغلقة بالفعل — افتح التدقيق من جدول السجل.",
+  "trucks_need_reconcile": "يجب أن تكون الجولة في مرحلة الجرد قبل الإغلاق — أعد فتح الجرد أولاً."
 }

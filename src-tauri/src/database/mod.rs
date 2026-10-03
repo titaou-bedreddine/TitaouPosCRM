@@ -456,6 +456,13 @@ impl DbState {
         // Persisted selling presentation (Fardeau/Palette/Unité…) — receipts
         // must show the unit AT SALE TIME even if packagings change later.
         let _ = conn.execute("ALTER TABLE sale_items ADD COLUMN sale_unit TEXT;", []);
+        // Per-line unloading fee (déchargement) in DZD per SALE unit — edited
+        // receipts restore the fee structure line by line (not as a lump),
+        // so quantity changes rescale it exactly like a fresh sale.
+        let _ = conn.execute(
+            "ALTER TABLE sale_items ADD COLUMN unloading_fee_per_unit REAL DEFAULT 0;",
+            [],
+        );
         let _ = conn.execute("ALTER TABLE purchase_items ADD COLUMN base_quantity REAL;", []);
         let _ = conn.execute(
             "ALTER TABLE product_packagings ADD COLUMN purchase_price INTEGER DEFAULT 0;",

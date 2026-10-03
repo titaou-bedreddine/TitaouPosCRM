@@ -87,13 +87,13 @@ pub fn process_sale(db: &DbState, input: CreateSaleInput) -> Result<String, Stri
         }
 
         tx.execute(
-            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity, base_quantity, sale_unit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity, base_quantity, sale_unit, unloading_fee_per_unit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 sale_id, item.product_id, item.quantity, item.unit_price,
                 item.discount_amount, item.tax_amount, item.total_price,
                 item.is_refund, if item.is_refund { item.quantity } else { 0.0 },
-                base_of(item), item.sale_unit
+                base_of(item), item.sale_unit, item.unloading_fee_per_unit
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -478,7 +478,7 @@ fn get_sale_by_query(
             .prepare(
                 "SELECT si.product_id, p.sku, '', p.name_ar, p.name_fr, p.name_en, p.image_path,
                         si.unit_price, si.quantity, si.discount_amount, si.tax_amount, si.total_price, si.is_refunded,
-                        si.sale_unit, COALESCE(si.base_quantity, si.quantity)
+                        si.sale_unit, COALESCE(si.base_quantity, si.quantity), COALESCE(si.unloading_fee_per_unit, 0)
                  FROM sale_items si
                  JOIN products p ON si.product_id = p.id
                  WHERE si.sale_id = ?1",
@@ -502,6 +502,7 @@ fn get_sale_by_query(
                     is_refund: row.get(12)?,
                     sale_unit: row.get(13)?,
                     base_quantity: row.get(14)?,
+                    unloading_fee_per_unit: row.get(15)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -521,7 +522,7 @@ pub fn get_sale_items(db: &DbState, sale_id: i64) -> Result<Vec<CartItem>, Strin
         .prepare(
             "SELECT si.product_id, p.sku, '', p.name_ar, p.name_fr, p.name_en, p.image_path,
                     si.unit_price, si.quantity, si.discount_amount, si.tax_amount, si.total_price, si.is_refunded,
-                    si.sale_unit, COALESCE(si.base_quantity, si.quantity)
+                    si.sale_unit, COALESCE(si.base_quantity, si.quantity), COALESCE(si.unloading_fee_per_unit, 0)
              FROM sale_items si
              JOIN products p ON si.product_id = p.id
              WHERE si.sale_id = ?1",
@@ -546,6 +547,7 @@ pub fn get_sale_items(db: &DbState, sale_id: i64) -> Result<Vec<CartItem>, Strin
                 is_refund: row.get(12)?,
                 sale_unit: row.get(13)?,
                 base_quantity: row.get(14)?,
+                unloading_fee_per_unit: row.get(15)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -765,6 +767,7 @@ mod tests {
                 name_en: None, image_path: None,
                 unit_price: 100, quantity: 1.0, discount_amount: 0,
                 tax_amount: 0, total_price: 100, is_refund: false,
+                unloading_fee_per_unit: 0.0,
             }],
             subtotal: 100,
             discount_amount: 0,
@@ -974,13 +977,13 @@ pub fn replace_sale(
         // history). Persisted values only: the receipt must reflect what was
         // sold, at sale time (incl. the packaging label).
         tx.execute(
-            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity, base_quantity, sale_unit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount_amount, tax_amount, total_price, is_refunded, refunded_quantity, base_quantity, sale_unit, unloading_fee_per_unit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 original_sale_id, item.product_id, item.quantity, item.unit_price,
                 item.discount_amount, item.tax_amount, item.total_price,
                 item.is_refund, if item.is_refund { item.quantity } else { 0.0 },
-                if item.base_quantity > 0.0 { item.base_quantity } else { item.quantity }, item.sale_unit
+                if item.base_quantity > 0.0 { item.base_quantity } else { item.quantity }, item.sale_unit, item.unloading_fee_per_unit
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -1348,6 +1351,7 @@ mod receipt_consistency_tests {
                 tax_amount: 0,
                 total_price: (3000.0 * quantity) as i64,
                 is_refund: false,
+                unloading_fee_per_unit: 0.0,
             }],
             subtotal: (3000.0 * quantity) as i64,
             discount_amount: 0,
@@ -1445,6 +1449,7 @@ mod receipt_consistency_tests {
                 tax_amount: 0,
                 total_price: 12000,
                 is_refund: false,
+                unloading_fee_per_unit: 0.0,
             }],
             subtotal: 12000,
             discount_amount: 0,

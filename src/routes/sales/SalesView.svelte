@@ -12,7 +12,7 @@
   import { printHtmlSilently } from '../../lib/utils/printer';
   import { printService } from '../../lib/services/printService';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
-  import { originSaleId, cartItems, clearCart, mergeCartDuplicates, setSaleFeeOverride } from '../../lib/stores/cart';
+  import { originSaleId, cartItems, clearCart, mergeCartDuplicates, applySaleLevelFee } from '../../lib/stores/cart';
   import { selectedCustomerId } from '../../lib/stores/customers';
   import {
     ShoppingBag, Search, Printer, Calendar, User as UserIcon,
@@ -233,6 +233,7 @@
         is_refund: i.is_refund || false,
         sale_unit: i.sale_unit || undefined,
         base_quantity: i.base_quantity || undefined,
+        unloading_fee_per_unit: i.unloading_fee_per_unit || 0,
       }));
       clearCart();
       $cartItems = mergeCartDuplicates(mapped);
@@ -240,13 +241,13 @@
       // Editing in place: the checkout updates this sale (tagged MODIFIED)
       // instead of inserting a duplicate row.
       originSaleId.set(sale.id);
-      // Load the sale's own persisted fee into the cart (lump — it must
-      // stay in the cart through the edit and re-book unchanged at
-      // checkout unless explicitly changed).
-      setSaleFeeOverride(null);
+      // Legacy receipts (saved before per-line fee persistence) hold the fee
+      // as one Déchargement expense: distribute it across the lines so the
+      // item rows and footer both show it and quantities rescale it.
       try {
         const fee = await invoke<number>('get_sale_loading_fee', { saleNumber: sale.sale_number });
-        if (fee > 0) setSaleFeeOverride(fee);
+        const hasLineFee = $cartItems.some((i) => (i.unloading_fee_per_unit ?? 0) > 0);
+        if (fee > 0 && !hasLineFee) applySaleLevelFee(fee);
       } catch { /* no fee booked */ }
       isDetailModalOpen = false;
       onRequestPosRoute?.();

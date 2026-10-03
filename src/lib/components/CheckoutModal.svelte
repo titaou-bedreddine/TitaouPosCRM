@@ -7,6 +7,9 @@
 
   export let isOpen = false;
   export let totalAmount = 0;
+  // The customer ALREADY selected in the cart dropdown — the modal must open
+  // with them (never silently reset to Walk-in).
+  export let initialCustomerId: number | null = null;
   export let onClose: () => void;
   export let onConfirmCheckout: (result: {
     customerId: number;
@@ -55,9 +58,14 @@
   async function loadCustomers() {
     try {
       customers = await invoke<Customer[]>('list_customers');
+      // Prefer the cart's selection; fall back to walk-in only when the cart
+      // had no customer (or it no longer exists).
       if (customers.length > 0 && !selectedCustomerId) {
+        const fromCart = initialCustomerId
+          ? customers.find(c => c.id === initialCustomerId)
+          : undefined;
         const walkin = customers.find(c => c.id === 1);
-        const pick = walkin || customers[0];
+        const pick = fromCart || walkin || customers[0];
         selectedCustomerId = pick.id;
         selectedCustomerName = pick.name;
       }
@@ -71,7 +79,16 @@
   });
 
   $: if (isOpen) {
-    // Default the tendered amount to the exact total: the common case.
+    // Every open re-syncs from the cart's selection (the cashier may have
+    // changed the client after the modal was last used) and resets the
+    // tendered amount to the exact total: the common case.
+    selectedCustomerId = initialCustomerId ?? null;
+    selectedCustomerName = customers.find(c => c.id === selectedCustomerId)?.name || '';
+    if (!selectedCustomerId) {
+      const walkin = customers.find(c => c.id === 1);
+      selectedCustomerId = walkin?.id ?? null;
+      selectedCustomerName = walkin?.name || '';
+    }
     paidAmount = totalAmount;
     goodsStayAtShop = false;
     showQuickAdd = false;

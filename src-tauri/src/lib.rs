@@ -233,6 +233,7 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             cloudsync::cloud_cmds::cloud_promotions_list,
             cloudsync::cloud_cmds::cloud_promotion_save,
             cloudsync::cloud_cmds::cloud_promotion_delete,
+            cloudsync::cloud_cmds::cloud_promotions_reset,
             cloudsync::cloud_cmds::cloud_promotions_active,
             cloudsync::cloud_cmds::cloud_products_for_promos,
             cloudsync::cloud_cmds::cloud_routable_orders,

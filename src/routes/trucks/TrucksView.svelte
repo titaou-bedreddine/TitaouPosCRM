@@ -5,10 +5,12 @@
   import {
     Truck, Plus, RefreshCw, X, Pencil, Play, ClipboardList, Lock, Wallet,
     Package, Search, CircleDollarSign, TrendingDown, CheckCircle2, Fuel,
+    Trash2, Archive, Printer,
   } from 'lucide-svelte';
   import { printService } from '../../lib/services/printService';
   import { currentUser } from '../../lib/stores/auth';
   import { activeSession } from '../../lib/stores/session';
+  import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
 
   let trucks: any[] = [];
   let staff: any[] = [];
@@ -20,12 +22,33 @@
   let msg = '';
   let busy = false;
   let selectedId = '';
+  // Archived trucks disappear from the active list but stay reachable:
+  // historical trips keep referencing them (soft-delete, no data loss).
+  let showArchived = false;
 
   $: selected = trucks.find((x) => x.id === selectedId) ?? null;
+  $: visibleTrucks = showArchived ? trucks : trucks.filter((x) => x.is_active !== false);
   $: sellerName = (id: string | null) => staff.find((s) => s.id === id)?.full_name ?? '—';
-  $: truckTrips = trips.filter((tp) => tp.out_truck_id === selectedId);
+  // Trip history filters (req: quick date filters + custom range + seller,
+  // combinable, read-only). The truck dimension: selected truck, or ALL.
+  let histFrom = '';
+  let histTo = '';
+  let histSeller = ''; // staff id or '' = all sellers
+  let histAllTrucks = false;
+  $: truckTrips = trips.filter((tp) =>
+    (histAllTrucks || tp.out_truck_id === selectedId) &&
+    (histSeller === '' || tp.out_seller_name === sellerName(histSeller))
+  );
   $: activeTrip = loads.find((l) => l.truck_id === selectedId && ['loaded', 'in_progress', 'reconciling'].includes(l.status)) ?? null;
   $: activeStats = activeTrip ? (trips.find((tp) => tp.out_load_id === activeTrip.id) ?? null) : null;
+  // A trip that was modified after creation (update_truck_load touches
+  // updated_at) is visibly marked EDITED — the original figures stay in the
+  // audit trail, the badge just says the manifest changed.
+  $: editedLoads = new Set(
+    loads
+      .filter((l) => l.updated_at && l.created_at && l.updated_at > l.created_at)
+      .map((l) => l.id)
+  );
 
   // CRM money is integer centimes everywhere.
   const fmt = (v: number | null | undefined) =>
@@ -39,12 +62,22 @@
         invoke<any[]>('cloud_list_trucks').catch(() => []),
         invoke<any[]>('cloud_field_staff').catch(() => []),
         invoke<any[]>('cloud_products_for_promos').catch(() => []),
-        invoke<any[]>('cloud_stats_truck_trips', { fromDate: null, toDate: null }).catch(() => []),
+        invoke<any[]>('cloud_stats_truck_trips', { fromDate: histFrom || null, toDate: histTo || null }).catch(() => []),
         invoke<any[]>('cloud_truck_loads').catch(() => []),
       ]);
       if (!selectedId && trucks.length > 0) selectedId = trucks[0].id;
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Date/seller filter changes only need the stats re-queried (read-only).
+  async function reloadTrips() {
+    loading = true;
+    try {
+      trips = await invoke<any[]>('cloud_stats_truck_trips', { fromDate: histFrom || null, toDate: histTo || null }).catch(() => []);
     } finally {
       loading = false;
     }
@@ -208,7 +241,12 @@
     if (!activeTrip) return;
     busy = true; error = '';
     try { await invoke('cloud_start_truck_trip', { loadId: activeTrip.id }); await load(); msg = '✅'; }
-    catch (e: any) { error = typeof e === 'string' ? e : e?.message || 'Failed'; }
+    catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+      // Another terminal may have moved the trip meanwhile — resync so the
+      // UI state and the server state machine agree again.
+      if (String(error).includes('invalid transition')) await load();
+    }
     finally { busy = false; }
   }
 
@@ -216,7 +254,10 @@
     if (!activeTrip) return;
     busy = true; error = '';
     try { await invoke('cloud_open_truck_reconciliation', { loadId: activeTrip.id }); await load(); msg = '✅'; }
-    catch (e: any) { error = typeof e === 'string' ? e : e?.message || 'Failed'; }
+    catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+      if (String(error).includes('invalid transition')) await load();
+    }
     finally { busy = false; }
   }
 
@@ -233,12 +274,31 @@
   );
 
   function openClose() {
-    physical = {};
-    reasons = {};
-    for (const r of stockRows) physical[r.product_id] = r.expected;
-    actualCash = Math.round(previewExpectedCash / 100) * 100 > 0 ? Math.round(previewExpectedCash) : 0;
-    cashReason = '';
-    showClose = true;
+    // Guard the state machine: re-sync BEFORE offering the wizard. If the
+    // trip was already closed (another terminal, stale panel), the server
+    // would reject the close with "invalid transition" — show the real
+    // status instead of attempting an illegal transition.
+    void (async () => {
+      busy = true;
+      try {
+        await load();
+      } finally {
+        busy = false;
+      }
+      const trip = activeTrip;
+      if (!trip) { error = t('trucks_no_active_trip'); return; }
+      if (trip.status === 'closed') { error = t('trucks_already_closed'); return; }
+      if (trip.status !== 'reconciling') {
+        error = t('trucks_need_reconcile');
+        return;
+      }
+      physical = {};
+      reasons = {};
+      for (const r of stockRows) physical[r.product_id] = r.expected;
+      actualCash = Math.round(previewExpectedCash / 100) * 100 > 0 ? Math.round(previewExpectedCash) : 0;
+      cashReason = '';
+      showClose = true;
+    })();
   }
 
   async function confirmClose() {
@@ -266,9 +326,78 @@
       msg = '✅';
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
+      // The trip state moved underneath us (already closed elsewhere):
+      // resync instead of letting the user retry into the same wall.
+      if (String(error).includes('invalid transition')) {
+        showClose = false;
+        await load();
+      }
     } finally {
       busy = false;
     }
+  }
+
+  // ── Delete / Archive truck (soft delete, history preserved) ────────────────
+  let deleteTarget: any = null;
+
+  function openDeleteTruck(tr: any) {
+    error = '';
+    deleteTarget = tr;
+  }
+
+  async function confirmDeleteTruck() {
+    const tr = deleteTarget;
+    if (!tr) return;
+    busy = true; error = '';
+    try {
+      if (loads.some((l) => l.truck_id === tr.id)) {
+        // Trips/loads exist: ARCHIVE (soft delete) — the truck disappears
+        // from the active list but every historical record stays intact.
+        await invoke('cloud_save_truck', {
+          id: tr.id,
+          name: tr.name ?? '',
+          plate: tr.plate ?? '',
+          driverName: tr.driver_name ?? '',
+          sellerId: tr.seller_id ?? null,
+          isActive: false,
+          notes: tr.notes ?? null,
+        });
+        msg = t('trucks_archived_ok');
+      } else {
+        await invoke('cloud_delete_truck', { id: tr.id });
+        msg = '✅';
+      }
+      if (selectedId === tr.id) selectedId = '';
+      deleteTarget = null;
+      await load();
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally { busy = false; }
+  }
+
+  // Print one historical trip's manifest (loaded quantities) from history.
+  async function printHistoryTrip(tp: any) {
+    const loadRow = loads.find((l) => l.id === tp.out_load_id);
+    if (!loadRow) { error = t('trucks_pick'); return; }
+    const result = await printService.printDocument({
+      id: loadRow.id,
+      documentNumber: 'TRIP-' + String(loadRow.id).slice(0, 8),
+      documentType: 'stock_operation',
+      title: 'BON DE CHARGEMENT - TOURNEE',
+      date: String(loadRow.route_date || tp.out_route_date || new Date().toISOString()).slice(0, 10),
+      party: { name: (tp.out_truck_name || '') + ' - ' + (loadRow.driver_name || ''), type: 'employee' },
+      items: (loadRow.items ?? []).map((it: any) => ({
+        name: it.product?.name ?? '—',
+        quantity: Number(it.quantity ?? 0),
+        unitPrice: 0,
+        totalPrice: 0,
+        notes: 'Charge: ' + Number(it.quantity ?? 0) + ' (base)',
+      })),
+      subtotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0,
+      notes: 'Vendeur: ' + (tp.out_seller_name || '—') + ' - Chauffeur: ' + (loadRow.driver_name || '-'),
+      footerNote: 'Exemplaire depot / Warehouse copy',
+    });
+    if (!result.ok && result.mode !== 'disabled') error = result.message;
   }
 
   // ── Trip expenses (explicit amounts only) ──────────────────────────────────
@@ -368,7 +497,7 @@
   <div class="grid gap-4 lg:grid-cols-[280px_1fr]">
     <!-- Trucks list -->
     <div class="space-y-2">
-      {#each trucks as tr (tr.id)}
+      {#each visibleTrucks as tr (tr.id)}
         {@const at = loads.find((l) => l.truck_id === tr.id && ['loaded', 'in_progress', 'reconciling'].includes(l.status))}
         <button type="button" on:click={() => (selectedId = tr.id)}
           class="w-full text-start p-3 rounded-2xl border cursor-pointer transition {selectedId === tr.id ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/30' : 'border-pos-border bg-white dark:bg-slate-900 hover:border-pos-muted'} {tr.is_active === false ? 'opacity-50' : ''}">
@@ -382,9 +511,13 @@
           <p class="text-[10px] text-pos-muted">👤 {tr.driver_name || '—'} · 🛒 {sellerName(tr.seller_id)}</p>
         </button>
       {/each}
-      {#if !loading && trucks.length === 0}
+      {#if !loading && visibleTrucks.length === 0}
         <p class="text-center text-pos-muted text-xs py-8">🚚 {t('trucks_empty')}</p>
       {/if}
+      <label class="flex items-center gap-2 px-1 py-1 text-[11px] font-bold text-pos-muted cursor-pointer">
+        <input type="checkbox" bind:checked={showArchived} class="w-4 h-4 rounded accent-sky-600" />
+        <span>{t('trucks_show_archived')}</span>
+      </label>
     </div>
 
     <!-- Truck detail -->
@@ -394,9 +527,13 @@
           <div>
             <p class="text-sm font-black text-pos-text">{selected.name} <span class="font-mono text-[10px] text-pos-muted">{selected.plate}</span></p>
             <p class="text-[10px] text-pos-muted">👤 {selected.driver_name || '—'} · 🛒 {sellerName(selected.seller_id)} · {selected.is_active === false ? '📦 ARCHIVED / ARCHIVÉ' : '✓ Active'}</p>
+            <p class="text-[10px] text-pos-muted mt-0.5">{t('trucks_status')}: {activeTrip ? activeTrip.status : (selected.is_active === false ? 'archived' : 'idle')}</p>
           </div>
           <div class="flex gap-1.5">
             <button type="button" on:click={() => openEditTruck(selected)} class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" title="Modifier"><Pencil class="w-3.5 h-3.5" /></button>
+            <button type="button" on:click={() => openDeleteTruck(selected)}
+              class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+              title={t('trucks_delete')}><Trash2 class="w-3.5 h-3.5" /></button>
             {#if !activeTrip && selected.is_active !== false}
               <button type="button" on:click={() => { tripSeller = selected.seller_id ?? ''; tripDate = new Date().toISOString().slice(0, 10); tripItems = []; tripName = ''; showTripForm = true; }}
                 class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer">
@@ -481,17 +618,54 @@
           </div>
         {/if}
 
-        <!-- Trip history -->
+        <!-- Trip history — read-only, filterable: quick dates / custom range
+             / seller / all trucks (combinable). Filtering never changes any
+             record; it only queries stats_truck_trips. -->
         <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border">
-          <p class="text-[10px] font-black text-pos-muted uppercase mb-2">{t('trucks_history')}</p>
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-[10px] font-black text-pos-muted uppercase">{t('trucks_history')}</p>
+            <button type="button" on:click={reloadTrips} disabled={loading}
+              class="p-1 text-pos-muted hover:text-pos-text cursor-pointer"><RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" /></button>
+          </div>
+
+          <div class="mb-3 space-y-2">
+            <DateQuickFilters bind:startDate={histFrom} bind:endDate={histTo} onChange={reloadTrips} />
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-2 items-end">
+              <label>
+                <span class="block text-[9px] font-black text-pos-muted uppercase mb-0.5">{t('from_date')}</span>
+                <input type="date" bind:value={histFrom} on:change={reloadTrips}
+                  class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] text-pos-text font-bold outline-none" />
+              </label>
+              <label>
+                <span class="block text-[9px] font-black text-pos-muted uppercase mb-0.5">{t('to_date')}</span>
+                <input type="date" bind:value={histTo} on:change={reloadTrips}
+                  class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] text-pos-text font-bold outline-none" />
+              </label>
+              <label>
+                <span class="block text-[9px] font-black text-pos-muted uppercase mb-0.5">{t('tl_seller')}</span>
+                <select bind:value={histSeller} on:change={() => {}}
+                  class="w-full px-2 py-1.5 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[11px] text-pos-text font-bold outline-none cursor-pointer">
+                  <option value="">{t('trucks_all_sellers')}</option>
+                  {#each staff as s (s.id)}<option value={s.id}>{s.full_name}</option>{/each}
+                </select>
+              </label>
+              <label class="flex items-center gap-2 text-[11px] font-bold text-pos-muted cursor-pointer select-none md:col-span-3">
+                <input type="checkbox" bind:checked={histAllTrucks} class="w-4 h-4 rounded accent-sky-600" />
+                <span>{t('trucks_all_trucks')}</span>
+              </label>
+            </div>
+          </div>
+
           {#if truckTrips.length === 0}
             <p class="text-[11px] text-pos-muted">—</p>
           {:else}
             <div class="overflow-x-auto">
               <table class="w-full text-[10px]">
                 <thead><tr class="text-pos-muted font-black uppercase">
+                  {#if histAllTrucks}<th class="p-1.5 text-start">{t('trucks_name')}</th>{/if}
                   <th class="p-1.5 text-start">{t('trucks_date')}</th>
                   <th class="p-1.5 text-start">{t('trucks_status')}</th>
+                  <th class="p-1.5 text-start">{t('tl_seller')}</th>
                   <th class="p-1.5 text-end">{t('trucks_gross')}</th>
                   <th class="p-1.5 text-end">{t('trucks_cash')}</th>
                   <th class="p-1.5 text-end">{t('trucks_expenses')}</th>
@@ -503,15 +677,23 @@
                 <tbody>
                   {#each truckTrips as tp (tp.out_load_id)}
                     <tr class="border-t border-pos-border">
-                      <td class="p-1.5 font-bold">{String(tp.out_route_date).slice(0, 10)}</td>
+                      {#if histAllTrucks}<td class="p-1.5 font-bold">{tp.out_truck_name || '—'}</td>{/if}
+                      <td class="p-1.5 font-bold">
+                        {String(tp.out_route_date).slice(0, 10)}
+                        {#if editedLoads.has(tp.out_load_id)}
+                          <span class="ms-1 text-[8px] font-black px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">{t('trucks_edited')}</span>
+                        {/if}
+                      </td>
                       <td class="p-1.5"><span class="font-black px-1.5 py-0.5 rounded-full {statusBadge[tp.out_status] ?? ''}">{tp.out_status}</span></td>
+                      <td class="p-1.5">{tp.out_seller_name || '—'}</td>
                       <td class="p-1.5 text-end font-mono">{fmt(tp.out_sales_value)}</td>
                       <td class="p-1.5 text-end font-mono">{fmt(tp.out_cash_value)}</td>
                       <td class="p-1.5 text-end font-mono text-rose-600">{fmt(tp.out_expenses)}</td>
                       <td class="p-1.5 text-end font-mono">{fmt(tp.out_expected_cash)}</td>
                       <td class="p-1.5 text-end font-mono">{tp.out_actual_cash === null ? '—' : fmt(tp.out_actual_cash)}</td>
                       <td class="p-1.5 text-end font-mono font-black {tp.out_cash_difference === null ? '' : tp.out_cash_difference < 0 ? 'text-rose-600' : 'text-emerald-600'}">{tp.out_cash_difference === null ? '—' : fmt(tp.out_cash_difference)}</td>
-                      <td class="p-1.5 text-end space-x-1">
+                      <td class="p-1.5 text-end space-x-1 whitespace-nowrap">
+                        <button type="button" on:click={() => printHistoryTrip(tp)} class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" title="Print / Imprimer"><Printer class="w-3 h-3" /></button>
                         {#if tp.out_status === 'closed'}
                           <button type="button" on:click={() => viewAudit(tp)} class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" title="Audit"><Lock class="w-3 h-3" /></button>
                           {#if (tp.out_actual_cash ?? 0) > 0}
@@ -798,6 +980,31 @@
         <button type="button" on:click={() => (showExpense = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
         <button type="button" on:click={addExpense} disabled={busy || expAmount <= 0}
           class="px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">OK</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete / Archive truck confirmation (destructive action guard) -->
+{#if deleteTarget}
+  <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (deleteTarget = null)} role="presentation">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-sm p-5 space-y-3" on:click|stopPropagation>
+      <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
+        <Trash2 class="w-4 h-4 text-rose-500" />
+        {t('trucks_delete')} — {deleteTarget.name}
+      </h3>
+      <p class="text-[11px] text-pos-muted font-bold">
+        {loads.some((l) => l.truck_id === deleteTarget.id)
+          ? t('trucks_delete_archive_msg')
+          : t('trucks_delete_hard_msg')}
+      </p>
+      <div class="flex justify-end gap-2 pt-1">
+        <button type="button" on:click={() => (deleteTarget = null)}
+          class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
+        <button type="button" on:click={confirmDeleteTruck} disabled={busy}
+          class="px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer flex items-center gap-1.5">
+          <Archive class="w-3.5 h-3.5" />{t('trucks_delete_confirm')}
+        </button>
       </div>
     </div>
   </div>

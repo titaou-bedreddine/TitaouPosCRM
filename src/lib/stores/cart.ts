@@ -25,17 +25,6 @@ export const posMode = writable<PosMode>('sale');
 // (duplicate) row.
 export const originSaleId = writable<number | null>(null);
 
-// Fixed transaction-level unloading fee (déchargement), in DZD. Set when a
-// sale is loaded for editing: the persisted fee is a LUMP on the sale (one
-// expenses row), so it must NOT rescale when the user changes quantities —
-// it stays as booked until explicitly changed (null = derive from the
-// per-line fees as usual).
-export const saleFeeOverride = writable<number | null>(null);
-
-export function setSaleFeeOverride(fee: number | null) {
-  saleFeeOverride.set(fee === null ? null : Math.max(0, Math.round(Number(fee) || 0)));
-}
-
 // Quantity-edit mode (F6): the cart line currently being edited, keyed by
 // "productId[_ref]". null = not editing.
 export const qtyEditTarget = writable<string | null>(null);
@@ -349,7 +338,6 @@ export function persistActiveCart() {
       discountValue: get(globalDiscountValue),
       customerId: get(selectedCustomerId),
       mode: get(posMode),
-      saleFeeOverride: get(saleFeeOverride),
       savedAt: Date.now(),
     });
     invoke('set_setting', { key: ACTIVE_CART_KEY, value: payload }).catch(() => {});
@@ -384,12 +372,13 @@ export async function restoreActiveCart() {
     if (parsed.mode === 'purchase' || parsed.mode === 'broken' || parsed.mode === 'sale') {
       posMode.set(parsed.mode);
     }
-    // An edited sale's lump fee survives a restart with the cart.
-    saleFeeOverride.set(
-      parsed.saleFeeOverride === null || parsed.saleFeeOverride === undefined
-        ? null
-        : Math.max(0, Math.round(Number(parsed.saleFeeOverride) || 0))
-    );
+    // Legacy carts saved before the per-line fee model carried a lump
+    // saleFeeOverride with fee-less lines: distribute it onto the lines so
+    // it keeps rescaling with quantities instead of staying a frozen lump.
+    const legacyOverride = Math.max(0, Math.round(Number(parsed.saleFeeOverride) || 0));
+    if (legacyOverride > 0 && !parsed.items.some((i: any) => (Number(i?.unloading_fee_per_unit) || 0) > 0)) {
+      applySaleLevelFee(legacyOverride);
+    }
     return true;
   } catch (e) {
     console.warn('Could not restore active cart:', e);
@@ -409,7 +398,6 @@ function mirrorCartToDb() {
 cartItems.subscribe(() => mirrorCartToDb());
 globalDiscountMode.subscribe(() => mirrorCartToDb());
 globalDiscountValue.subscribe(() => mirrorCartToDb());
-saleFeeOverride.subscribe(() => mirrorCartToDb());
 
 export function clearCart() {
   isCartExplicitlyCleared = true;
@@ -421,7 +409,6 @@ export function clearCart() {
   isRefundMode.set(false);
   posMode.set('sale');
   originSaleId.set(null);
-  saleFeeOverride.set(null);
   stopQtyEdit();
   clearPersistedCart();
 }
@@ -593,10 +580,32 @@ export const cartGrandTotal = derived(
 );
 
 // ---------------------------------------------------------------------------
+// Sale-level unloading fee (déchargement): the user enters a TOTAL for the
+// whole transaction (e.g. restoring a legacy receipt whose fee was stored as
+// one lump) and it is DISTRIBUTED across the current cart lines as per-unit
+// fees (fee ÷ total units). The aggregate fee ALWAYS derives from the lines
+// afterwards — quantities rescale it, removing a line removes its fee, and
+// no orphan cart-level amount can survive its lines.
+// ---------------------------------------------------------------------------
+export function applySaleLevelFee(feeTotal: number) {
+  const fee = Math.max(0, Math.round(Number(feeTotal) || 0));
+  cartItems.update((items) => {
+    if (items.length === 0 || fee === 0) {
+      return items.map((i) => ({ ...i, unloading_fee_per_unit: fee === 0 ? 0 : i.unloading_fee_per_unit }));
+    }
+    const totalUnits = items.reduce((s, i) => s + Math.max(0, i.quantity), 0);
+    if (totalUnits <= 0) return items;
+    const perUnit = Math.round((fee / totalUnits) * 100) / 100;
+    return items.map((i) => ({ ...i, unloading_fee_per_unit: perUnit }));
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Unloading fees (déchargement): per-line fee × quantity, deducted for the
 // shop's view of the cash — recorded as an EXPENSE at checkout, never part
 // of the sale's goods total. A refund line contributes NEGATIVE (the fee
-// comes back).
+// comes back). The aggregate is ALWAYS the sum of the current lines — there
+// is no independent cart-level fee state left behind by edits or removals.
 // ---------------------------------------------------------------------------
 
 export function lineUnloadingTotal(item: { unloading_fee_per_unit?: number; quantity: number; is_refund?: boolean }): number {
@@ -606,12 +615,9 @@ export function lineUnloadingTotal(item: { unloading_fee_per_unit?: number; quan
   return item.is_refund ? -total : total;
 }
 
-// An explicit sale-level override wins over the per-line sum (edit mode:
-// the persisted fee is a lump and must not move with quantities).
 export const unloadingFeesTotal = derived(
-  [cartItems, saleFeeOverride],
-  ([$items, $override]) =>
-    $override !== null ? $override : $items.reduce((sum, item) => sum + lineUnloadingTotal(item), 0)
+  cartItems,
+  ($items) => $items.reduce((sum, item) => sum + lineUnloadingTotal(item), 0)
 );
 
 /** Unloading fee total for ONE line (signed: refunds give the fee back). */

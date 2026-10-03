@@ -139,40 +139,53 @@ pub fn activate_online_github(
     Ok(true)
 }
 
-pub fn factory_reset(db: &DbState, reset_type: &str) -> Result<(), String> {
+/// Destructive data wipe. Every delete is checked — a failed DELETE aborts
+/// the whole reset (transaction) instead of silently leaving half the data.
+/// Returns the post-reset row counts of the main business tables so the UI
+/// can PROVE the clean-install state (products = 0, sales = 0, …).
+pub fn factory_reset(db: &DbState, reset_type: &str) -> Result<serde_json::Value, String> {
     let mut conn = db.conn.lock().unwrap();
-    
+
     // Disable foreign keys temporarily during data wipe
     conn.execute("PRAGMA foreign_keys = OFF;", []).map_err(|e| e.to_string())?;
 
-    let result = (|| -> Result<(), rusqlite::Error> {
-        let tx = conn.transaction()?;
+    let result = (|| -> Result<(), String> {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        macro_rules! wipe {
+            ($table:expr) => {
+                tx.execute(concat!("DELETE FROM ", $table), [])
+                    .map_err(|e| format!("factory_reset: deleting {} failed: {}", $table, e))?;
+            };
+        }
 
         match reset_type {
             "products_only" => {
                 // Clear all products and related child data
-                let _ = tx.execute("DELETE FROM sale_items", []);
-                let _ = tx.execute("DELETE FROM purchase_items", []);
-                let _ = tx.execute("DELETE FROM inventory_movements", []);
-                let _ = tx.execute("DELETE FROM scale_sync_logs", []);
-                let _ = tx.execute("DELETE FROM product_price_history", []);
-                let _ = tx.execute("DELETE FROM product_bundle_items", []);
-                let _ = tx.execute("DELETE FROM product_barcodes", []);
-                let _ = tx.execute("DELETE FROM products", []);
+                wipe!("sale_items");
+                wipe!("purchase_items");
+                wipe!("inventory_movements");
+                wipe!("scale_sync_logs");
+                wipe!("product_price_history");
+                wipe!("product_bundle_items");
+                wipe!("product_barcodes");
+                wipe!("product_packagings");
+                wipe!("products");
             }
             "categories_only" => {
                 // Reset categories back to default
-                let _ = tx.execute("DELETE FROM categories", []);
-                let _ = tx.execute(
+                wipe!("categories");
+                tx.execute(
                     "INSERT INTO categories (id, name_ar, name_fr, name_en, color, is_active) VALUES (1, 'افتراضي (Default)', 'Général / Default', 'Default', '#0284c7', 1)",
                     [],
-                );
-                let _ = tx.execute("UPDATE products SET category_id = 1", []);
+                )
+                .map_err(|e| e.to_string())?;
+                tx.execute("UPDATE products SET category_id = 1", []).map_err(|e| e.to_string())?;
             }
             "units_only" => {
                 // Reset units back to standard system units
-                let _ = tx.execute("DELETE FROM units", []);
-                let _ = tx.execute(
+                wipe!("units");
+                tx.execute(
                     "INSERT INTO units (id, name, short_name, allow_decimals) VALUES
                      (1, 'Piece / Pièce / قطعة', 'pcs', 0),
                      (2, 'Kilogram / Kilogramme / كيلوغرام', 'kg', 1),
@@ -180,94 +193,113 @@ pub fn factory_reset(db: &DbState, reset_type: &str) -> Result<(), String> {
                      (4, 'Pack / Paquet / علبة', 'pck', 0),
                      (5, 'Box / Carton / كرتون', 'box', 0)",
                     [],
-                );
-                let _ = tx.execute("UPDATE products SET unit_id = 1", []);
+                )
+                .map_err(|e| e.to_string())?;
+                tx.execute("UPDATE products SET unit_id = 1", []).map_err(|e| e.to_string())?;
             }
             "customers_only" => {
                 // Reset customers and customer debts
-                let _ = tx.execute("DELETE FROM customer_debt_payments", []);
-                let _ = tx.execute("DELETE FROM customers WHERE id > 1", []);
-                let _ = tx.execute("UPDATE customers SET balance = 0 WHERE id = 1", []);
+                wipe!("customer_debt_payments");
+                tx.execute("DELETE FROM customers WHERE id > 1", []).map_err(|e| e.to_string())?;
+                tx.execute("UPDATE customers SET balance = 0 WHERE id = 1", []).map_err(|e| e.to_string())?;
             }
             "suppliers_only" => {
                 // Reset suppliers and supplier debts
-                let _ = tx.execute("DELETE FROM supplier_debt_payments", []);
-                let _ = tx.execute("DELETE FROM purchase_items", []);
-                let _ = tx.execute("DELETE FROM purchases", []);
-                let _ = tx.execute("DELETE FROM suppliers", []);
+                wipe!("supplier_debt_payments");
+                wipe!("purchase_items");
+                wipe!("purchases");
+                wipe!("suppliers");
             }
             "transactions_only" => {
                 // Clear transaction tables
-                let _ = tx.execute("DELETE FROM sale_payments", []);
-                let _ = tx.execute("DELETE FROM sale_items", []);
-                let _ = tx.execute("DELETE FROM sales", []);
-                let _ = tx.execute("DELETE FROM held_sales", []);
-                let _ = tx.execute("DELETE FROM cash_movements", []);
-                let _ = tx.execute("DELETE FROM cash_sessions", []);
-                let _ = tx.execute("DELETE FROM customer_debt_payments", []);
-                let _ = tx.execute("DELETE FROM supplier_debt_payments", []);
-                let _ = tx.execute("DELETE FROM purchase_items", []);
-                let _ = tx.execute("DELETE FROM purchases", []);
-                let _ = tx.execute("DELETE FROM expenses", []);
-                let _ = tx.execute("DELETE FROM salary_advances", []);
-                let _ = tx.execute("DELETE FROM payrolls", []);
-                let _ = tx.execute("DELETE FROM inventory_movements", []);
-                let _ = tx.execute("DELETE FROM scale_sync_logs", []);
-                let _ = tx.execute("DELETE FROM product_price_history", []);
-                let _ = tx.execute("DELETE FROM notification_queue", []);
-                let _ = tx.execute("DELETE FROM sync_outbox", []);
-                let _ = tx.execute("DELETE FROM debt_clear_log", []);
+                wipe!("sale_payments");
+                wipe!("sale_items");
+                wipe!("sales");
+                wipe!("held_sales");
+                wipe!("cash_movements");
+                wipe!("cash_sessions");
+                wipe!("customer_debt_payments");
+                wipe!("supplier_debt_payments");
+                wipe!("purchase_items");
+                wipe!("purchases");
+                wipe!("expenses");
+                wipe!("salary_advances");
+                wipe!("payrolls");
+                wipe!("inventory_movements");
+                wipe!("scale_sync_logs");
+                wipe!("product_price_history");
+                wipe!("notification_queue");
+                wipe!("sync_outbox");
+                wipe!("debt_clear_log");
+                wipe!("payroll_reminder_log");
 
                 // Reset customer and supplier balances
-                let _ = tx.execute("UPDATE customers SET balance = 0", []);
-                let _ = tx.execute("UPDATE suppliers SET balance = 0", []);
+                tx.execute("UPDATE customers SET balance = 0", []).map_err(|e| e.to_string())?;
+                tx.execute("UPDATE suppliers SET balance = 0", []).map_err(|e| e.to_string())?;
 
                 // Ensure default open cash session exists
-                let _ = tx.execute(
+                tx.execute(
                     "INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status) VALUES (1, 1, 0, 0, 'open')",
                     [],
-                );
+                )
+                .map_err(|e| e.to_string())?;
             }
             "full_reset" => {
-                // Wipe everything back to clean state
-                let _ = tx.execute("DELETE FROM sale_payments", []);
-                let _ = tx.execute("DELETE FROM sale_items", []);
-                let _ = tx.execute("DELETE FROM sales", []);
-                let _ = tx.execute("DELETE FROM held_sales", []);
-                let _ = tx.execute("DELETE FROM cash_movements", []);
-                let _ = tx.execute("DELETE FROM cash_sessions", []);
-                let _ = tx.execute("DELETE FROM customer_debt_payments", []);
-                let _ = tx.execute("DELETE FROM supplier_debt_payments", []);
-                let _ = tx.execute("DELETE FROM purchase_items", []);
-                let _ = tx.execute("DELETE FROM purchases", []);
-                let _ = tx.execute("DELETE FROM expenses", []);
-                let _ = tx.execute("DELETE FROM salary_advances", []);
-                let _ = tx.execute("DELETE FROM payrolls", []);
-                let _ = tx.execute("DELETE FROM employees", []);
-                let _ = tx.execute("DELETE FROM inventory_movements", []);
-                let _ = tx.execute("DELETE FROM scale_sync_logs", []);
-                let _ = tx.execute("DELETE FROM product_price_history", []);
-                let _ = tx.execute("DELETE FROM notification_queue", []);
-                let _ = tx.execute("DELETE FROM product_bundle_items", []);
-                let _ = tx.execute("DELETE FROM product_barcodes", []);
-                let _ = tx.execute("DELETE FROM products", []);
-                let _ = tx.execute("DELETE FROM suppliers", []);
-                let _ = tx.execute("DELETE FROM sync_outbox", []);
-                let _ = tx.execute("DELETE FROM debt_clear_log", []);
-                let _ = tx.execute("DELETE FROM customers WHERE id > 1", []);
-                let _ = tx.execute("UPDATE customers SET balance = 0 WHERE id = 1", []);
-                let _ = tx.execute("DELETE FROM users WHERE id > 1", []);
+                // Wipe everything back to clean-install state. Business data
+                // only: configuration (app_settings, printers, registers),
+                // auth/roles, audit logs and reference tables (units,
+                // packaging types, expense categories) are preserved — the
+                // walk-in customer (id 1) and the generic supplier (id 1)
+                // are protected defaults.
+                wipe!("sale_payments");
+                wipe!("sale_items");
+                wipe!("sales");
+                wipe!("held_sales");
+                wipe!("cash_movements");
+                wipe!("cash_sessions");
+                wipe!("customer_debt_payments");
+                wipe!("supplier_debt_payments");
+                wipe!("purchase_items");
+                wipe!("purchases");
+                wipe!("expenses");
+                wipe!("salary_advances");
+                wipe!("employee_advances");
+                wipe!("employee_absences");
+                wipe!("payrolls");
+                wipe!("payroll_reminder_log");
+                wipe!("employees");
+                wipe!("inventory_movements");
+                wipe!("scale_sync_logs");
+                wipe!("product_price_history");
+                wipe!("notification_queue");
+                wipe!("product_bundle_items");
+                wipe!("product_barcodes");
+                wipe!("product_packagings");
+                wipe!("products");
+                wipe!("suppliers");
+                wipe!("sync_outbox");
+                wipe!("debt_clear_log");
+                // Read-only mirrors of CRM field orders (business data
+                // snapshots) — wiped with everything else. The pull cursor
+                // is deliberately KEPT: resetting it would replay historical
+                // order stock movements on the next sync.
+                wipe!("crm_order_items");
+                wipe!("crm_orders");
+                tx.execute("DELETE FROM customers WHERE id > 1", []).map_err(|e| e.to_string())?;
+                tx.execute("UPDATE customers SET balance = 0 WHERE id = 1", []).map_err(|e| e.to_string())?;
+                tx.execute("DELETE FROM users WHERE id > 1", []).map_err(|e| e.to_string())?;
 
                 // Reset categories to default
-                let _ = tx.execute("DELETE FROM categories", []);
-                let _ = tx.execute(
+                wipe!("categories");
+                tx.execute(
                     "INSERT INTO categories (id, name_ar, name_fr, name_en, color, is_active) VALUES (1, 'افتراضي (Default)', 'Général / Default', 'Default', '#0284c7', 1)",
                     [],
-                );
+                )
+                .map_err(|e| e.to_string())?;
 
                 // Reset units to standard
-                let _ = tx.execute("DELETE FROM units", []);
-                let _ = tx.execute(
+                wipe!("units");
+                tx.execute(
                     "INSERT INTO units (id, name, short_name, allow_decimals) VALUES
                      (1, 'Piece / Pièce / قطعة', 'pcs', 0),
                      (2, 'Kilogram / Kilogramme / كيلوغرام', 'kg', 1),
@@ -275,25 +307,58 @@ pub fn factory_reset(db: &DbState, reset_type: &str) -> Result<(), String> {
                      (4, 'Pack / Paquet / علبة', 'pck', 0),
                      (5, 'Box / Carton / كرتون', 'box', 0)",
                     [],
-                );
+                )
+                .map_err(|e| e.to_string())?;
+
+                // An in-progress cart is business data too: a reset must not
+                // resurrect the pre-reset cart on the next app start.
+                tx.execute(
+                    "DELETE FROM app_settings WHERE key = 'active_cart_json'",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
 
                 // Ensure default open cash session exists
-                let _ = tx.execute(
+                tx.execute(
                     "INSERT INTO cash_sessions (register_id, user_id, opening_amount, expected_cash, status) VALUES (1, 1, 0, 0, 'open')",
                     [],
-                );
+                )
+                .map_err(|e| e.to_string())?;
             }
-            _ => return Err(rusqlite::Error::InvalidParameterName(format!("factory_reset: unknown reset type '{}'", reset_type))),
+            _ => return Err(format!("factory_reset: unknown reset type '{}'", reset_type)),
         }
 
-        tx.commit()?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     })();
 
     // Re-enable foreign keys
     let _ = conn.execute("PRAGMA foreign_keys = ON;", []);
 
-    result.map_err(|e| e.to_string())
+    result?;
+
+    // Post-reset verification: the caller shows these counts, proving the
+    // clean-install state instead of trusting the UI. (conn is the
+    // MutexGuard; it releases when the function returns.)
+    let mut counts = serde_json::Map::new();
+    for table in [
+        "products",
+        "customers",
+        "suppliers",
+        "sales",
+        "purchases",
+        "expenses",
+        "cash_movements",
+        "inventory_movements",
+    ] {
+        let n: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {}", table), [], |r| r.get(0))
+            .unwrap_or(-1);
+        counts.insert(table.to_string(), serde_json::json!(n));
+    }
+    drop(conn);
+
+    Ok(serde_json::Value::Object(counts))
 }
 
 pub fn backup_database(destination_path: &str) -> Result<String, String> {

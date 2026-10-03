@@ -72,6 +72,46 @@ pub fn create_purchase(db: &DbState, input: CreatePurchaseInput) -> Result<Strin
         .map_err(|e| e.to_string())?;
     }
 
+    // Shared cash register (setting `register_shared_purchases`): a purchase
+    // paid in CASH takes the money out of the SAME drawer as the sales, in
+    // this same transaction — the register balance always reflects actual
+    // cash leaving. Unpaid/credit parts never touch the drawer; with the
+    // setting OFF purchases use separate accounting (no movement).
+    let shared_register: bool = tx
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'register_shared_purchases'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let cash_paid = if input.payment_method == "cash" {
+        input.paid_amount.clamp(0, input.total)
+    } else {
+        0
+    };
+    if shared_register && cash_paid > 0 {
+        if let Some(sid) = input.session_id {
+            if sid > 0 {
+                tx.execute(
+                    "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, reference_type, reference_id)
+                     VALUES (?1, ?2, 'purchase_payment', ?3, ?4, 'purchase', ?5)",
+                    rusqlite::params![
+                        sid, input.user_id, -cash_paid,
+                        format!("Purchase paid cash / دفع شراء نقدي {}", input.invoice_number),
+                        purchase_id
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                tx.execute(
+                    "UPDATE cash_sessions SET expected_cash = expected_cash - ?1 WHERE id = ?2",
+                    rusqlite::params![cash_paid, sid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
     // Cloud sync outbox (same transaction): purchase → CRM bon_achat.
     {
         let items_json: Vec<serde_json::Value> = input
@@ -227,6 +267,38 @@ pub fn delete_purchase(db: &DbState, purchase_id: i64, user_id: Option<i64>) -> 
         tx.execute(
             "UPDATE suppliers SET balance = balance - ?1 WHERE id = ?2",
             rusqlite::params![remaining, supplier_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Reverse the drawer movement booked when the purchase was paid from the
+    // shared register — deleting the invoice must give the drawer its money
+    // back (same rule as sale deletion).
+    {
+        let rows: Vec<(i64, Option<i64>)> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT amount, session_id FROM cash_movements
+                     WHERE reference_type = 'purchase' AND reference_id = ?1",
+                )
+                .map_err(|e| e.to_string())?;
+            let mapped = stmt
+                .query_map([purchase_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| e.to_string())?;
+            mapped.filter_map(|r| r.ok()).collect()
+        };
+        for (amount, session) in rows {
+            if let Some(sid) = session {
+                tx.execute(
+                    "UPDATE cash_sessions SET expected_cash = expected_cash - ?1 WHERE id = ?2",
+                    rusqlite::params![amount, sid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.execute(
+            "DELETE FROM cash_movements WHERE reference_type = 'purchase' AND reference_id = ?1",
+            [purchase_id],
         )
         .map_err(|e| e.to_string())?;
     }

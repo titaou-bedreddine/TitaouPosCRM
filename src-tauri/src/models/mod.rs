@@ -218,6 +218,11 @@ pub struct CartItem {
     /// quantity (base-unit sale).
     #[serde(default)]
     pub base_quantity: f64,
+    /// Per-line unloading fee (déchargement) in DZD per SALE unit. Persisted
+    /// on sale_items so an edited receipt restores the fee line by line and
+    /// quantity changes rescale it (fee total = fee × quantity).
+    #[serde(default)]
+    pub unloading_fee_per_unit: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -447,6 +452,11 @@ pub struct CreatePurchaseInput {
     pub items: Vec<PurchaseItemInput>,
     #[serde(default)]
     pub notes: Option<String>,
+    /// Open cash session the purchase was paid from. With the
+    /// `register_shared_purchases` setting ON, a cash paid amount books a
+    /// `purchase_payment` drawer movement in the SAME transaction.
+    #[serde(default)]
+    pub session_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -48,18 +48,12 @@ impl SupabaseClient {
             .send()
             .map_err(|e| format!("network: {e}"))?;
         let status = resp.status();
-        // Void RPCs (returns void) answer 204/200 with an EMPTY body — that is
-        // a SUCCESS, not a decoding error. Treat empty as JSON null so every
-        // error response still decodes through the same contract.
-        let text = resp
-            .text()
-            .map_err(|e| format!("bad response from {fn_name}: {e}"))?;
-        let body: Value = if text.trim().is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_str(&text)
-                .map_err(|e| format!("bad json from {fn_name}: {e}"))?
-        };
+        let body = decode_body(
+            fn_name,
+            status,
+            &resp.text()
+                .map_err(|e| format!("bad response from {fn_name}: {e}"))?,
+        )?;
         if !status.is_success() {
             return Err(rpc_error(fn_name, status, &body));
         }
@@ -83,14 +77,13 @@ impl SupabaseClient {
             .send()
             .map_err(|e| format!("network: {e}"))?;
         let status = resp.status();
-        let body: Value = resp
-            .json()
-            .map_err(|e| format!("bad json from {table}: {e}"))?;
+        let body = decode_body(table, status, &resp.text().map_err(|e| format!("bad response from {table}: {e}"))?)?;
         if !status.is_success() {
             return Err(rpc_error(table, status, &body));
         }
         match body {
             Value::Array(rows) => Ok(rows),
+            Value::Null => Ok(vec![]),
             other => Ok(vec![other]),
         }
     }
@@ -109,9 +102,7 @@ impl SupabaseClient {
             .send()
             .map_err(|e| format!("network: {e}"))?;
         let status = resp.status();
-        let body: Value = resp
-            .json()
-            .map_err(|e| format!("bad json from {table}: {e}"))?;
+        let body = decode_body(table, status, &resp.text().map_err(|e| format!("bad response from {table}: {e}"))?)?;
         if !status.is_success() {
             return Err(rpc_error(table, status, &body));
         }
@@ -172,13 +163,31 @@ impl SupabaseClient {
             .send()
             .map_err(|e| format!("network: {e}"))?;
         let status = resp.status();
-        let body: Value = resp
-            .json()
-            .map_err(|e| format!("bad json from function {name}: {e}"))?;
+        let body = decode_body(name, status, &resp.text().map_err(|e| format!("bad response from function {name}: {e}"))?)?;
         if !status.is_success() {
             return Err(rpc_error(name, status, &body));
         }
         Ok(body)
+    }
+}
+
+/// Unified response decoding: read the body as TEXT first, treat an empty
+/// body as `null` (a legal 204 from void RPCs/updates), and — when the body
+/// is not JSON — fail with the HTTP status AND a body snippet instead of
+/// reqwest's opaque "error decoding response body" (the gateway/proxy can
+/// answer HTML or an empty 5xx; the operator needs to see that).
+fn decode_body(ctx: &str, status: reqwest::StatusCode, text: &str) -> Result<Value, String> {
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    match serde_json::from_str(text) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            let snippet: String = text.chars().take(200).collect();
+            Err(format!(
+                "bad json from {ctx} (HTTP {status}): {e} — body: {snippet}"
+            ))
+        }
     }
 }
 

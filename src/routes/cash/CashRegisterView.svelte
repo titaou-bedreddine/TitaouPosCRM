@@ -90,6 +90,12 @@
   let totalUnpaidDebt = 0;
   let totalPaidDebt = 0;
   let totalVersement = 0;
+  // Shared-register purchase KPIs (setting register_shared_purchases):
+  // money paid for purchases out of THIS session's drawer, and purchases
+  // recorded this session still unpaid (credit).
+  let sharedRegister = false;
+  let paidPurchases = 0;
+  let unpaidPurchases = 0;
 
   async function loadDebtKpis() {
     try {
@@ -97,11 +103,36 @@
       // Unpaid debt = sum of what customers still owe.
       totalUnpaidDebt = customers.reduce((s, c) => s + Math.max(0, c.balance || 0), 0);
       // Paid debt: debt repayments recorded in the active session.
+      // (The movement field is `type_name` — filtering the legacy `type`
+      // field, which is always undefined, made this card show 0 forever.)
       totalPaidDebt = $activeSession
         ? movements
-            .filter((m: any) => m.type === 'customer_debt_payment')
+            .filter((m: any) => (m.type_name ?? m.type) === 'customer_debt_payment')
             .reduce((s: number, m: any) => s + Math.abs(m.amount || 0), 0)
         : 0;
+      // Paid purchases this session: every purchase payment that left the
+      // drawer (invoice-time payment + later supplier debt payments).
+      paidPurchases = $activeSession
+        ? movements
+            .filter((m: any) => ['purchase_payment', 'supplier_debt_payment'].includes(m.type_name ?? m.type))
+            .reduce((s: number, m: any) => s + Math.abs(m.amount || 0), 0)
+        : 0;
+      // Unpaid purchases this session: invoices recorded since the register
+      // opened whose paid_amount is below their total (credit/Dette).
+      if ($activeSession && sharedRegister) {
+        try {
+          const openedDay = String($activeSession.opened_at || '').slice(0, 10);
+          const purchases = await invoke<any[]>('list_purchases');
+          unpaidPurchases = purchases
+            .filter((p: any) => (p.paid_amount || 0) < (p.total || 0))
+            .filter((p: any) => String(p.created_at || p.date || '').slice(0, 10) >= openedDay)
+            .reduce((s: number, p: any) => s + Math.max(0, (p.total || 0) - (p.paid_amount || 0)), 0);
+        } catch {
+          unpaidPurchases = 0;
+        }
+      } else {
+        unpaidPurchases = 0;
+      }
       // Versement: remaining unpaid layaway balances today.
       try {
         const sales = await invoke<any[]>('list_sales', {
@@ -122,6 +153,12 @@
   }
 
   onMount(async () => {
+    try {
+      const flag = await invoke<string | null>('get_setting', { key: 'register_shared_purchases' });
+      sharedRegister = flag === 'true';
+    } catch {
+      sharedRegister = false;
+    }
     await loadData();
     await loadDebtKpis();
   });
@@ -135,6 +172,7 @@
         movements = await invoke<CashMovement[]>('list_cash_movements', { sessionId: active.id });
       }
       await loadHistorySessions();
+      await loadDebtKpis();
     } catch (e) {
       console.error(e);
     }
@@ -477,8 +515,8 @@
         </div>
       </div>
 
-      <!-- Debt & Versement Cards -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- Debt, Versement & (shared register) Purchase Cards -->
+      <div class="grid grid-cols-1 {sharedRegister ? 'md:grid-cols-5' : 'md:grid-cols-3'} gap-4">
         <div class="bg-pos-card border border-rose-200 dark:border-rose-800/60 rounded-2xl p-4 shadow-xs">
           <span class="text-xs font-bold text-pos-muted flex items-center gap-1.5 mb-2">
             <Layers class="w-4 h-4 text-rose-500" />
@@ -508,6 +546,30 @@
             {totalVersement.toLocaleString()} DZD
           </div>
         </div>
+
+        {#if sharedRegister}
+          <!-- Same cash register for purchases and sales: purchases paid in
+               cash leave THIS drawer, so the session shows both flows. -->
+          <div class="bg-pos-card border border-amber-200 dark:border-amber-800/60 rounded-2xl p-4 shadow-xs">
+            <span class="text-xs font-bold text-pos-muted flex items-center gap-1.5 mb-2">
+              <ArrowUpCircle class="w-4 h-4 text-amber-500" />
+              <span>Paid Purchases (مشتريات مؤداة)</span>
+            </span>
+            <div class="text-2xl font-black font-mono text-amber-600">
+              {paidPurchases.toLocaleString()} DZD
+            </div>
+          </div>
+
+          <div class="bg-pos-card border border-rose-200 dark:border-rose-800/60 rounded-2xl p-4 shadow-xs">
+            <span class="text-xs font-bold text-pos-muted flex items-center gap-1.5 mb-2">
+              <Layers class="w-4 h-4 text-rose-500" />
+              <span>Unpaid Purchases (مشتريات غير مؤداة)</span>
+            </span>
+            <div class="text-2xl font-black font-mono text-rose-600">
+              {unpaidPurchases.toLocaleString()} DZD
+            </div>
+          </div>
+        {/if}
       </div>
 
       <!-- Action Buttons Row matching screenshot -->
