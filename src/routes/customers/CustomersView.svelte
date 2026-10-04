@@ -30,6 +30,8 @@
   let deletePassword = '';
   let deleteErrorMsg = '';
   let isDeletingCustomer = false;
+  // Clicking a sale in the customer's history opens it on the Sales page.
+  export let onOpenSale: (sale: any) => void = () => {};
 
   async function toggleCustomerPin(c: Customer) {
     try {
@@ -501,20 +503,35 @@
 <!-- Modal: Customer Profile & Real QR Code -->
 {#if previewCustomer}
   <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-    <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col">
-      <div class="flex items-center justify-between px-6 py-4 border-b border-pos-border bg-slate-50 dark:bg-slate-800/60">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-2xl bg-sky-600/10 text-sky-600 flex items-center justify-center font-bold">
-            <Users class="w-5 h-5" />
+    <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col">
+      <!-- Header: identity + permanent data (contact info) -->
+      <div class="px-6 py-4 border-b border-pos-border bg-slate-50 dark:bg-slate-800/60">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-10 h-10 rounded-2xl bg-sky-600/10 text-sky-600 flex items-center justify-center font-bold shrink-0">
+              <Users class="w-5 h-5" />
+            </div>
+            <div class="min-w-0">
+              <h3 class="font-black text-base text-pos-text truncate">{previewCustomer.name}</h3>
+              <p class="text-xs text-pos-muted">Customer Code: #CUST-{previewCustomer.id}</p>
+            </div>
           </div>
-          <div>
-            <h3 class="font-black text-base text-pos-text">{previewCustomer.name}</h3>
-            <p class="text-xs text-pos-muted">Customer Code: #CUST-{previewCustomer.id}</p>
-          </div>
+          <button on:click={() => (previewCustomer = null)} class="text-pos-muted hover:text-pos-text p-1.5 rounded-xl cursor-pointer shrink-0">
+            <X class="w-5 h-5" />
+          </button>
         </div>
-        <button on:click={() => (previewCustomer = null)} class="text-pos-muted hover:text-pos-text p-1.5 rounded-xl cursor-pointer">
-          <X class="w-5 h-5" />
-        </button>
+        <!-- Permanent data strip: contacts -->
+        <div class="mt-3 grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 text-[11px]">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <Phone class="w-3 h-3 text-sky-500 shrink-0" />
+            <span class="font-mono font-bold text-pos-text truncate">{previewCustomer.phone || '—'}</span>
+          </div>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <MapPin class="w-3 h-3 text-sky-500 shrink-0" />
+            <span class="text-pos-text truncate">{previewCustomer.address || 'Alger'}</span>
+          </div>
+          <span class="font-mono text-pos-muted truncate">RC: <b class="text-pos-text">{previewCustomer.rc || '—'}</b> · NIF: <b class="text-pos-text">{previewCustomer.nif || '—'}</b></span>
+        </div>
       </div>
 
       <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
@@ -522,7 +539,7 @@
         <div class="p-4 rounded-2xl border flex items-center justify-between {previewCustomer.balance > 0 ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200' : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200'}">
           <div>
             <p class="text-[10px] uppercase font-black tracking-wider">Outstanding Debt Balance (الرصيد المستحق)</p>
-            <p class="text-xl font-black font-mono">{previewCustomer.balance.toLocaleString()} DZD</p>
+            <p class="text-2xl font-black font-mono">{previewCustomer.balance.toLocaleString()} DZD</p>
           </div>
           {#if previewCustomer.balance > 0}
             <button
@@ -537,23 +554,39 @@
           {/if}
         </div>
 
-        <!-- Sales History -->
+        <!-- Sales history: real table; a row opens the sale on the Sales page -->
         <div class="bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border p-3">
           <h4 class="font-black text-xs text-pos-text mb-2">Sales History (سجل المبيعات) — {customerHistory.length}</h4>
-          <div class="max-h-48 overflow-y-auto space-y-1">
-            {#each customerHistory as sale}
-              <div class="flex items-center justify-between p-2 bg-pos-card rounded-lg text-xs border border-pos-border/60">
-                <span class="font-mono font-bold text-sky-600 truncate">#{sale.sale_number}</span>
-                <span class="text-pos-muted font-mono">{sale.created_at}</span>
-                <span class="font-mono font-black text-pos-text">{sale.total_amount.toLocaleString()} DZD</span>
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-black {sale.payment_status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
-                  {sale.payment_status}
-                </span>
-              </div>
-            {/each}
-            {#if customerHistory.length === 0}
-              <p class="text-xs text-pos-muted text-center py-3">No sales recorded for this customer.</p>
-            {/if}
+          <div class="max-h-64 overflow-y-auto rounded-xl border border-pos-border/60">
+            <table class="w-full text-[11px] border-collapse">
+              <thead class="bg-slate-100 dark:bg-slate-800 text-pos-muted font-black uppercase sticky top-0">
+                <tr>
+                  <th class="p-2 text-start">Sale #</th>
+                  <th class="p-2 text-start">Date & Time</th>
+                  <th class="p-2 text-end">Total</th>
+                  <th class="p-2 text-end">Status</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-pos-border/40">
+                {#each customerHistory as sale (sale.id)}
+                  <tr class="bg-pos-card hover:bg-sky-50 dark:hover:bg-sky-950/30 cursor-pointer transition"
+                    on:click={() => { previewCustomer = null; onOpenSale(sale); }}
+                    title="Open this sale on the Sales page">
+                    <td class="p-2 font-mono font-bold text-sky-600">#{sale.sale_number}</td>
+                    <td class="p-2 font-mono text-pos-muted">{String(sale.created_at || '').slice(0, 16).replace('T', ' ')}</td>
+                    <td class="p-2 text-end font-mono font-black text-pos-text">{sale.total_amount.toLocaleString()} DZD</td>
+                    <td class="p-2 text-end">
+                      <span class="px-2 py-0.5 rounded-full text-[10px] font-black {sale.payment_status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
+                        {sale.payment_status}
+                      </span>
+                    </td>
+                  </tr>
+                {/each}
+                {#if customerHistory.length === 0}
+                  <tr><td colspan="4" class="p-4 text-xs text-pos-muted text-center">No sales recorded for this customer.</td></tr>
+                {/if}
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -577,23 +610,23 @@
             </button>
           </div>
 
-          <!-- Contact & Registration -->
+          <!-- Account details -->
           <div class="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-pos-border text-xs space-y-2">
             <div class="flex justify-between pb-1 border-b border-pos-border/50">
-              <span class="text-pos-muted font-bold">Phone:</span>
-              <span class="font-mono font-bold text-pos-text">{previewCustomer.phone || '—'}</span>
+              <span class="text-pos-muted font-bold">Customer since:</span>
+              <span class="font-mono text-pos-text">{String(previewCustomer.created_at || '').slice(0, 16).replace('T', ' ') || '—'}</span>
+            </div>
+            <div class="flex justify-between pb-1 border-b border-pos-border/50">
+              <span class="text-pos-muted font-bold">Total purchases:</span>
+              <span class="font-mono font-black text-pos-text">{(previewCustomer.total_purchases || 0).toLocaleString()} DZD</span>
             </div>
             <div class="flex justify-between pb-1 border-b border-pos-border/50">
               <span class="text-pos-muted font-bold">Email:</span>
               <span class="text-pos-text truncate max-w-[130px]">{previewCustomer.email || '—'}</span>
             </div>
-            <div class="flex justify-between pb-1 border-b border-pos-border/50">
-              <span class="text-pos-muted font-bold">City / Address:</span>
-              <span class="text-pos-text">{previewCustomer.address || 'Alger'}</span>
-            </div>
             <div class="flex justify-between">
-              <span class="text-pos-muted font-bold">RC / NIF:</span>
-              <span class="font-mono text-pos-text">{previewCustomer.rc || '—'} / {previewCustomer.nif || '—'}</span>
+              <span class="text-pos-muted font-bold">Sales on record:</span>
+              <span class="font-mono font-black text-pos-text">{customerHistory.length}</span>
             </div>
           </div>
         </div>

@@ -236,8 +236,12 @@
         unloading_fee_per_unit: i.unloading_fee_per_unit || 0,
       }));
       clearCart();
-      $cartItems = mergeCartDuplicates(mapped);
+      // Customer BEFORE items: the cart mirror (active_cart_json) persists on
+      // the items assignment, and PosView's mount restores the customer from
+      // that mirror — capturing the sale's client here keeps the dropdown
+      // correct after the route switch.
       if (sale.customer_id) $selectedCustomerId = sale.customer_id;
+      $cartItems = mergeCartDuplicates(mapped);
       // Editing in place: the checkout updates this sale (tagged MODIFIED)
       // instead of inserting a duplicate row.
       originSaleId.set(sale.id);
@@ -257,6 +261,15 @@
   }
 
   export let onRequestPosRoute: () => void = () => {};
+  // Deep-link from the customer popup's sales-history table: the exact sale
+  // row to open in the detail modal on arrival (list filters don't matter —
+  // the modal loads the items by id itself).
+  export let focusSale: any = null;
+  $: if (focusSale) {
+    const target = focusSale;
+    focusSale = null;
+    openSaleDetails(target);
+  }
 
   async function executeProtectedDelete() {
     if (!$currentUser) return;

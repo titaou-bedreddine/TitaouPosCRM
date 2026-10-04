@@ -931,8 +931,13 @@
         unloading_fee_per_unit: i.unloading_fee_per_unit || 0,
       }));
       clearCart();
-      $cartItems = mergeCartDuplicates(mapped);
+      // The customer MUST be set BEFORE the items land: the cart mirror
+      // (active_cart_json) persists synchronously on the items assignment,
+      // and a later route switch back to the POS restores customerId from
+      // that mirror — a walk-in captured here would clobber the sale's
+      // client in the dropdown.
       if (sale.customer_id) $selectedCustomerId = sale.customer_id;
+      $cartItems = mergeCartDuplicates(mapped);
       originSaleId.set(sale.id);
       // Legacy receipts (saved before per-line fee persistence) hold the fee
       // as ONE Déchargement expense row keyed by sale number: reload it and

@@ -830,6 +830,7 @@
         <tr>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('invoice_number')}>{t('pur_invoice_num')} {sortIndicator('invoice_number')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('date')}>{t('pur_col_date')} {sortIndicator('date')}</th>
+          <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('created_at')} title="Exact save time">Recorded (توقيت) {sortIndicator('created_at')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('supplier_name')}>{t('pur_supplier_col')} {sortIndicator('supplier_name')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('terminal_name')} title="PC / terminal that recorded this purchase">{t('terminal')} {sortIndicator('terminal_name')}</th>
           <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('total')}>{t('pur_col_total')} {sortIndicator('total')}</th>
@@ -841,13 +842,14 @@
       <tbody class="divide-y divide-pos-border/40">
         {#if purchases.length === 0}
           <tr>
-            <td colspan="8" class="p-8 text-center text-pos-muted">No purchase invoices recorded yet.</td>
+            <td colspan="9" class="p-8 text-center text-pos-muted">No purchase invoices recorded yet.</td>
           </tr>
         {:else}
           {#each sortedPurchases as pur}
             <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
               <td class="p-3 font-mono font-bold text-sky-600">#{pur.invoice_number}</td>
               <td class="p-3 font-mono text-pos-muted">{pur.date}</td>
+              <td class="p-3 font-mono text-pos-muted whitespace-nowrap">{String(pur.created_at || '').slice(0, 16).replace('T', ' ')}</td>
               <td class="p-3 font-bold text-pos-text">{pur.supplier_name || 'Fournisseur Inconnu'}</td>
               <td class="p-3">
                 {#if pur.terminal_name}

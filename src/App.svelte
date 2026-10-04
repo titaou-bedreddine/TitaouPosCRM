@@ -50,6 +50,8 @@
   // Purchase QR scan (PUR:<invoice>): open the purchases page focused on
   // that invoice.
   let purchasesFocusInvoice: string | null = null;
+  // Customer popup → Sales page deep-link: the exact sale row to open.
+  let salesFocusSale: any = null;
   // Sidebar drawer-kick feedback (success/failure shown under the button).
   let drawerMsg = '';
   let netToast = '';
@@ -809,7 +811,7 @@
         {#if currentRoute === 'pos'}
           <PosView onNavigate={(r) => (currentRoute = r)} initialOpenProductId={posOpenProductId} onProductOpened={() => (posOpenProductId = null)} onOpenPurchase={(inv) => { purchasesFocusInvoice = inv; currentRoute = 'purchases'; }} />
         {:else if currentRoute === 'sales'}
-          <SalesView onRequestPosRoute={() => (currentRoute = 'pos')} />
+          <SalesView onRequestPosRoute={() => (currentRoute = 'pos')} focusSale={salesFocusSale} />
         {:else if currentRoute === 'cash'}
           <CashRegisterView />
         {:else if currentRoute === 'purchases'}
@@ -829,9 +831,9 @@
         {:else if currentRoute === 'promotions'}
           <PromotionsView />
         {:else if currentRoute === 'customers'}
-        <CustomersView />
+        <CustomersView onOpenSale={(sale) => { salesFocusSale = sale; currentRoute = 'sales'; }} />
       {:else if currentRoute === 'suppliers'}
-        <SuppliersView />
+        <SuppliersView onOpenPurchase={(inv) => { purchasesFocusInvoice = inv; currentRoute = 'purchases'; }} />
       {:else if currentRoute === 'inventory'}
         <InventoryView />
       {:else if currentRoute === 'expenses'}

@@ -144,7 +144,22 @@ pub fn record_supplier_debt_payment(db: &DbState, input: SupplierPaymentInput) -
         );
     }
 
-    if input.payment_method == "cash" {
+    // The drawer only moves when purchases share the sales cash register
+    // (setting `register_shared_purchases`). With separate accounting (OFF,
+    // the default) the supplier is paid outside the sales drawer: the
+    // payment row and the supplier balance still update, but no cash
+    // movement is booked and expected_cash is untouched.
+    let shared_register: bool = {
+        let v: Option<String> = tx
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'register_shared_purchases'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        v.as_deref() == Some("true")
+    };
+    if shared_register && input.payment_method == "cash" {
         if let Some(sid) = input.session_id {
             tx.execute(
                 "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, reference_type, reference_id)
