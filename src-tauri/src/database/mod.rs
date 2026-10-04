@@ -403,6 +403,47 @@ impl DbState {
             );
         }
 
+        // ---- Cash movements type CHECK gains 'purchase_payment' ----------
+        // Field QA: create_purchase's shared-register drawer movement failed
+        // the 001 CHECK (purchase_payment was unknown) and aborted the whole
+        // purchase save. SQLite can't ALTER a CHECK — rebuild the table when
+        // the old constraint is still in place (same pattern as
+        // sale_payments above). Nothing references cash_movements.
+        {
+            let old_constraint: String = conn
+                .query_row(
+                    "SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'table' AND name = 'cash_movements'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or_default();
+            if !old_constraint.contains("'purchase_payment'") {
+                let _ = conn.execute_batch(
+                    "CREATE TABLE cash_movements_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id INTEGER REFERENCES cash_sessions(id),
+                        user_id INTEGER REFERENCES users(id),
+                        type TEXT CHECK(type IN ('opening_balance', 'cash_sale', 'cash_refund', 'cash_in', 'cash_out', 'expense_payment', 'salary_payment', 'customer_debt_payment', 'supplier_debt_payment', 'purchase_payment', 'closing_adjustment')) NOT NULL,
+                        amount INTEGER NOT NULL,
+                        reason TEXT,
+                        reference_type TEXT,
+                        reference_id INTEGER,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        notes TEXT,
+                        terminal_name TEXT DEFAULT ''
+                    );
+                    INSERT INTO cash_movements_new (id, session_id, user_id, type, amount, reason, reference_type, reference_id, created_at, notes, terminal_name)
+                        SELECT id, session_id, user_id, type, amount, reason, reference_type, reference_id, created_at, notes, COALESCE(terminal_name, '') FROM cash_movements;
+                    DROP TABLE cash_movements;
+                    ALTER TABLE cash_movements_new RENAME TO cash_movements;
+                    CREATE INDEX IF NOT EXISTS idx_cash_movements_session ON cash_movements(session_id);
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_cash_mov_settlement
+                        ON cash_movements (reference_type, reference_id)
+                        WHERE reference_type = 'truck_settlement';",
+                );
+            }
+        }
+
         // Performance Indexes
         let _ = conn.execute_batch("
             CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);

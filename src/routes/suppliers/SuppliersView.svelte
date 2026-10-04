@@ -272,13 +272,14 @@
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('contact_person')}>Contact Person {sortIndicator('contact_person')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('phone')}>Phone {sortIndicator('phone')}</th>
           <th class="p-3 text-start cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('address')}>Address {sortIndicator('address')}</th>
+          <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('balance')}>Debt / Balance (الدين) {sortIndicator('balance')}</th>
           <th class="p-3 text-end">Actions</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-pos-border/40">
         {#if filteredSuppliers.length === 0}
           <tr>
-            <td colspan="5" class="p-8 text-center text-pos-muted">No suppliers found.</td>
+            <td colspan="6" class="p-8 text-center text-pos-muted">No suppliers found.</td>
           </tr>
         {:else}
           {#each sortedSuppliers as s}
@@ -289,6 +290,11 @@
               <td class="p-3 text-pos-muted">{s.contact_person || '—'}</td>
               <td class="p-3 font-mono text-pos-muted">{s.phone || '—'}</td>
               <td class="p-3 text-pos-muted">{s.address || '—'}</td>
+              <td class="p-3 text-end font-mono font-black {(s.balance || 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}">
+                {(s.balance || 0) > 0
+                  ? (s.balance).toLocaleString() + ' DZD'
+                  : '0 DZD'}
+              </td>
               <td class="p-3 text-end">
                 <div class="flex items-center justify-end gap-1">
                                       <button
@@ -434,7 +440,7 @@
 <!-- Modal: Supplier Profile Details Popup -->
 {#if previewSupplier}
   <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-    <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col">
+    <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col">
       <div class="flex items-center justify-between px-6 py-4 border-b border-pos-border bg-slate-50 dark:bg-slate-800/60">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-2xl bg-sky-600/10 text-sky-600 flex items-center justify-center font-bold">

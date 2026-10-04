@@ -785,8 +785,10 @@
       return;
     }
 
-    // Cash or TPE Checkout directly
-    await executeCheckout(null, undefined);
+    // Cash or TPE Checkout directly. The cart's selected client MUST ride
+    // along — passing null here made every fast cash/TPE sale land on
+    // Walk-in ("Client Comptoir") even with a client picked in the dropdown.
+    await executeCheckout($selectedCustomerId, undefined);
   }
 
   // Mode switch with cart parking: each mode keeps its own held cart,

@@ -500,28 +500,37 @@
   }
 
   onMount(async () => {
-    try {
-      const list = await invoke<any[]>('get_packaging_types', { activeOnly: false });
-      packagingTypes = list.map((x: any) => ({ ...x, editing: false }));
-    } catch { packagingTypes = []; }
-    await loadAutostart();
-    // Printer enumeration (wmic subprocess) is the reason tabs felt slow to
-    // open: it blocked interaction for seconds. It now loads only when a
-    // tab that actually shows a printer picker is opened (see the reactive
-    // trigger below); presets & shortcuts are quick SQL and load now.
-    loadShortcutBindings().catch(() => {});
-    try {
-      const v = await invoke<string>('get_app_version');
-      if (v) {
-        appVersion = `v${v}`;
-        updateStatus = `Titaou One is up to date (Version ${v} - Latest Release)`;
-      }
-    } catch (e) {
-      console.warn(e);
-    }
+    // The General tab's saved selections live in `settings`: load them FIRST
+    // so every field/radio/select is correct the moment the page renders.
+    // The old sequence awaited packaging types → autostart → version check →
+    // scale logs → users BEFORE loadSettings, so the saved selections only
+    // appeared after every one of those IPC round trips finished (seconds on
+    // a busy disk).
     await loadSettings();
-    await loadScaleLogs();
-    await loadUsersAndRoles();
+    loadShortcutBindings().catch(() => {});
+    loadAutostart().catch(() => {});
+    (async () => {
+      try {
+        const list = await invoke<any[]>('get_packaging_types', { activeOnly: false });
+        packagingTypes = list.map((x: any) => ({ ...x, editing: false }));
+      } catch { packagingTypes = []; }
+    })();
+    // Printer enumeration (wmic subprocess) stays lazy: it loads only when a
+    // tab that actually shows a printer picker is opened (see the reactive
+    // trigger below).
+    (async () => {
+      try {
+        const v = await invoke<string>('get_app_version');
+        if (v) {
+          appVersion = `v${v}`;
+          updateStatus = `Titaou One is up to date (Version ${v} - Latest Release)`;
+        }
+      } catch (e) {
+        console.warn(e);
+      }
+    })();
+    loadScaleLogs().catch(() => {});
+    loadUsersAndRoles().catch(() => {});
   });
 
   const BOOLEAN_KEYS = new Set([

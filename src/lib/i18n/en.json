@@ -809,5 +809,6 @@
   "trucks_edited": "EDITED",
   "trucks_no_active_trip": "No active trip for this truck.",
   "trucks_already_closed": "This trip is already CLOSED — open the audit from the history table.",
-  "trucks_need_reconcile": "This trip must be IN RECONCILIATION before close & settle — reopen reconciliation first."
+  "trucks_need_reconcile": "This trip must be IN RECONCILIATION before close & settle — reopen reconciliation first.",
+  "trucks_delete_type_truck": "Type TRUCK to confirm"
 }

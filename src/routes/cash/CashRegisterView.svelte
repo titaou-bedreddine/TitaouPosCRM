@@ -119,7 +119,7 @@
         : 0;
       // Unpaid purchases this session: invoices recorded since the register
       // opened whose paid_amount is below their total (credit/Dette).
-      if ($activeSession && sharedRegister) {
+      if ($activeSession) {
         try {
           const openedDay = String($activeSession.opened_at || '').slice(0, 10);
           const purchases = await invoke<any[]>('list_purchases');
@@ -515,8 +515,11 @@
         </div>
       </div>
 
-      <!-- Debt, Versement & (shared register) Purchase Cards -->
-      <div class="grid grid-cols-1 {sharedRegister ? 'md:grid-cols-5' : 'md:grid-cols-3'} gap-4">
+      <!-- Debt, Versement & Purchase Cards (always visible: the
+           register_shared_purchases setting only decides whether invoice-time
+           cash payments leave the sales drawer — the session figures are
+           informational either way) -->
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div class="bg-pos-card border border-rose-200 dark:border-rose-800/60 rounded-2xl p-4 shadow-xs">
           <span class="text-xs font-bold text-pos-muted flex items-center gap-1.5 mb-2">
             <Layers class="w-4 h-4 text-rose-500" />
@@ -549,7 +552,7 @@
 
         {#if sharedRegister}
           <!-- Same cash register for purchases and sales: purchases paid in
-               cash leave THIS drawer, so the session shows both flows. -->
+               cash leave THIS drawer (movement-based). -->
           <div class="bg-pos-card border border-amber-200 dark:border-amber-800/60 rounded-2xl p-4 shadow-xs">
             <span class="text-xs font-bold text-pos-muted flex items-center gap-1.5 mb-2">
               <ArrowUpCircle class="w-4 h-4 text-amber-500" />
@@ -559,17 +562,30 @@
               {paidPurchases.toLocaleString()} DZD
             </div>
           </div>
-
-          <div class="bg-pos-card border border-rose-200 dark:border-rose-800/60 rounded-2xl p-4 shadow-xs">
+        {:else}
+          <!-- Separate accounting: the drawer never moved for purchases, so
+               show the period's cash purchase payments from the ledger for
+               reference (same computation, informational). -->
+          <div class="bg-pos-card border border-amber-200 dark:border-amber-800/60 rounded-2xl p-4 shadow-xs opacity-80">
             <span class="text-xs font-bold text-pos-muted flex items-center gap-1.5 mb-2">
-              <Layers class="w-4 h-4 text-rose-500" />
-              <span>Unpaid Purchases (مشتريات غير مؤداة)</span>
+              <ArrowUpCircle class="w-4 h-4 text-amber-500" />
+              <span>Paid Purchases (مشتريات مؤداة)</span>
             </span>
-            <div class="text-2xl font-black font-mono text-rose-600">
-              {unpaidPurchases.toLocaleString()} DZD
+            <div class="text-2xl font-black font-mono text-amber-600">
+              {paidPurchases.toLocaleString()} DZD
             </div>
           </div>
         {/if}
+
+        <div class="bg-pos-card border border-rose-200 dark:border-rose-800/60 rounded-2xl p-4 shadow-xs">
+          <span class="text-xs font-bold text-pos-muted flex items-center gap-1.5 mb-2">
+            <Layers class="w-4 h-4 text-rose-500" />
+            <span>Unpaid Purchases (مشتريات غير مؤداة)</span>
+          </span>
+          <div class="text-2xl font-black font-mono text-rose-600">
+            {unpaidPurchases.toLocaleString()} DZD
+          </div>
+        </div>
       </div>
 
       <!-- Action Buttons Row matching screenshot -->

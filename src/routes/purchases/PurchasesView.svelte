@@ -343,8 +343,8 @@
     try {
       purchases = await invoke<Purchase[]>('list_purchases');
       suppliers = await invoke<Supplier[]>('list_suppliers');
-      if (suppliers.length > 0 && !selectedSupplierId) {
-        selectedSupplierId = suppliers[0].id;
+      if (!selectedSupplierId) {
+        selectedSupplierId = defaultSupplierId();
       }
       products = await invoke<Product[]>('search_products', { query: '', categoryId: null, searchType: 'all' });
       modalCategories = await invoke<Category[]>('get_categories');
@@ -577,10 +577,17 @@
   $: total = subtotalTtc + invoiceTva;
 
   // Dedicated fresh state for a NEW purchase invoice (never a spread of
-  // the previous invoice): TVA EMPTY, supplier/dates/lines clean.
+  // the previous invoice): TVA EMPTY, supplier/dates/lines clean. A new
+  // invoice comes prefilled with the default supplier (id 1 —
+  // "Fournisseur Divers / متنوع", the protected seed row) so the cashier
+  // only changes it when buying from a real supplier.
+  function defaultSupplierId(): number | null {
+    return suppliers.find((s) => s.id === 1)?.id ?? suppliers[0]?.id ?? null;
+  }
+
   function resetInvoiceForm() {
     items = [];
-    selectedSupplierId = null;
+    selectedSupplierId = defaultSupplierId();
     invoiceNumber = '';
     invoiceDate = localTodayISO();
     purchaseTva = null;

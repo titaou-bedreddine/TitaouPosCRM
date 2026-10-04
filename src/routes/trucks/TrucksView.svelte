@@ -28,6 +28,16 @@
 
   $: selected = trucks.find((x) => x.id === selectedId) ?? null;
   $: visibleTrucks = showArchived ? trucks : trucks.filter((x) => x.is_active !== false);
+  // Unchecking "Show archived" while an ARCHIVED truck is selected must move
+  // the selection to the next visible truck — the archived truck's detail
+  // panel must not linger once it is hidden from the list. (Reads the raw
+  // trucks rows, NOT the `selected` derived, to avoid a reactive cycle.)
+  $: if (!showArchived && selectedId) {
+    const sel = trucks.find((x) => x.id === selectedId);
+    if (sel && sel.is_active === false) {
+      selectedId = visibleTrucks[0]?.id ?? '';
+    }
+  }
   $: sellerName = (id: string | null) => staff.find((s) => s.id === id)?.full_name ?? '—';
   // Trip history filters (req: quick date filters + custom range + seller,
   // combinable, read-only). The truck dimension: selected truck, or ALL.
@@ -339,17 +349,39 @@
 
   // ── Delete / Archive truck (soft delete, history preserved) ────────────────
   let deleteTarget: any = null;
+  let deletePassword = '';
+  let deleteConfirmText = '';
+  let deleteError = '';
 
   function openDeleteTruck(tr: any) {
     error = '';
     deleteTarget = tr;
+    deletePassword = '';
+    deleteConfirmText = '';
+    deleteError = '';
   }
 
   async function confirmDeleteTruck() {
     const tr = deleteTarget;
     if (!tr) return;
-    busy = true; error = '';
+    // Destructive guard: typed confirmation + admin password, verified
+    // against the backend before anything is touched.
+    if (deleteConfirmText.trim().toUpperCase() !== 'TRUCK') {
+      deleteError = t('trucks_delete_type_truck');
+      return;
+    }
+    if (!deletePassword.trim()) {
+      deleteError = t('admin_password') + ' *';
+      return;
+    }
+    busy = true; deleteError = '';
     try {
+      const ok = await invoke<boolean>('verify_admin_password', { password: deletePassword });
+      if (!ok) {
+        deleteError = t('admin_password') + ' ✗';
+        busy = false;
+        return;
+      }
       if (loads.some((l) => l.truck_id === tr.id)) {
         // Trips/loads exist: ARCHIVE (soft delete) — the truck disappears
         // from the active list but every historical record stays intact.
@@ -998,10 +1030,24 @@
           ? t('trucks_delete_archive_msg')
           : t('trucks_delete_hard_msg')}
       </p>
+      <div class="space-y-1">
+        <label class="block text-[10px] font-bold text-pos-muted">
+          {t('trucks_delete_type_truck')} <span class="text-rose-600 font-mono font-black">TRUCK</span>
+        </label>
+        <input type="text" bind:value={deleteConfirmText} placeholder="TRUCK"
+          class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-mono font-black text-rose-600 outline-none" />
+        <label class="block text-[10px] font-bold text-pos-muted mt-1">{t('admin_password')} *</label>
+        <input type="password" bind:value={deletePassword} placeholder="••••••••"
+          class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-mono text-pos-text outline-none" />
+        {#if deleteError}
+          <p class="text-[10px] font-bold text-rose-600">{deleteError}</p>
+        {/if}
+      </div>
       <div class="flex justify-end gap-2 pt-1">
         <button type="button" on:click={() => (deleteTarget = null)}
           class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
-        <button type="button" on:click={confirmDeleteTruck} disabled={busy}
+        <button type="button" on:click={confirmDeleteTruck}
+          disabled={busy || deleteConfirmText.trim().toUpperCase() !== 'TRUCK' || !deletePassword.trim()}
           class="px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer flex items-center gap-1.5">
           <Archive class="w-3.5 h-3.5" />{t('trucks_delete_confirm')}
         </button>

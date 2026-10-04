@@ -809,5 +809,6 @@
   "trucks_edited": "MODIFIÉ",
   "trucks_no_active_trip": "Aucune tournée active pour ce camion.",
   "trucks_already_closed": "Cette tournée est déjà CLÔTURÉE — ouvrez l'audit depuis l'historique.",
-  "trucks_need_reconcile": "Cette tournée doit être EN RÉCONCILIATION avant la clôture — rouvrez la réconciliation d'abord."
+  "trucks_need_reconcile": "Cette tournée doit être EN RÉCONCILIATION avant la clôture — rouvrez la réconciliation d'abord.",
+  "trucks_delete_type_truck": "Tapez TRUCK pour confirmer"
 }
