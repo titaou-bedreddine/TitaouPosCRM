@@ -17,7 +17,8 @@
   import {
     ShoppingBag, Search, Printer, Calendar, User as UserIcon,
     DollarSign, Eye, Trash2, X, Check, AlertTriangle, Layers,
-    CreditCard, Banknote, ShieldAlert, TrendingUp, Pencil, Package, Monitor
+    CreditCard, Banknote, ShieldAlert, TrendingUp, Pencil, Package, Monitor,
+    Edit2
   } from 'lucide-svelte';
 
   let sales: Sale[] = [];
@@ -49,6 +50,7 @@
     payment_status: string;
     total_amount: number;
     amount_paid: number;
+    notes?: string;
     client: { name?: string } | null;
     seller_name?: string;
     truck_name?: string;
@@ -97,6 +99,140 @@
     gross: androidFiltered.reduce((s, o) => s + (o.total_amount || 0), 0),
     paid: androidFiltered.reduce((s, o) => s + (o.amount_paid || 0), 0),
   };
+
+  // ── Android row actions: A4 print / EDIT / DELETE (0053 RPCs) ───────────
+  interface AndroidLine {
+    product_id: string;
+    name: string;
+    quantity: number;
+    unit_price: number;
+    line_total: number;
+    base_quantity: number | null;
+    sale_unit: string | null;
+    tva_rate: number;
+  }
+  let androidEditOpen = false;
+  let androidEditSaving = false;
+  let androidEditError = '';
+  let androidEditOrder: AndroidOrder | null = null;
+  let androidEditLines: (AndroidLine & { editQty: number })[] = [];
+  let androidEditPaid = 0;
+
+  async function openAndroidEdit(o: AndroidOrder) {
+    try {
+      const detail = await invoke<any>('cloud_direct_order_detail', { orderId: o.id });
+      const lines = (detail?.lines ?? []) as any[];
+      androidEditOrder = o;
+      androidEditLines = lines.map((ln) => {
+        const qty = Number(ln.quantity ?? 0);
+        const unit = Number(ln.unit_price ?? 0);
+        return {
+          product_id: ln.product_id,
+          name: (ln.product?.name ?? '—') as string,
+          quantity: qty,
+          unit_price: unit,
+          line_total: Number(ln.line_total ?? Math.round(qty * unit)),
+          base_quantity: ln.base_quantity != null ? Number(ln.base_quantity) : null,
+          sale_unit: (ln.sale_unit ?? null) as string | null,
+          tva_rate: Number(ln.tva_rate ?? 0),
+          editQty: qty,
+        };
+      });
+      androidEditPaid = Number(detail?.order?.amount_paid ?? o.amount_paid);
+      androidEditError = '';
+      androidEditOpen = true;
+    } catch (e: any) {
+      androidError = typeof e === 'string' ? e : e?.message || 'Failed';
+    }
+  }
+
+  function androidLineTotal(ln: { editQty: number; unit_price: number }): number {
+    return Math.round(ln.editQty * ln.unit_price);
+  }
+  $: androidEditNewTotal = androidEditLines.reduce((s, ln) => s + androidLineTotal(ln), 0);
+
+  async function saveAndroidEdit() {
+    if (!androidEditOrder) return;
+    if (androidEditLines.some((ln) => ln.editQty <= 0)) {
+      androidEditError = 'Quantité doit être > 0 / الكمية يجب أن تكون أكبر من 0';
+      return;
+    }
+    androidEditSaving = true;
+    androidEditError = '';
+    try {
+      const items = androidEditLines.map((ln) => ({
+        product_id: ln.product_id,
+        quantity: ln.editQty,
+        unit_price: ln.unit_price,
+        line_total: androidLineTotal(ln),
+        base_quantity:
+          ln.base_quantity != null && ln.quantity > 0
+            ? Number((ln.base_quantity * (ln.editQty / ln.quantity)).toFixed(3))
+            : ln.editQty,
+        sale_unit: ln.sale_unit,
+        tva_rate: ln.tva_rate > 0 ? ln.tva_rate / 100 : 0,
+      }));
+      await invoke('cloud_update_direct_order', {
+        orderId: androidEditOrder.id,
+        items,
+        payment: androidEditPaid,
+        method: 'cash',
+        notes: null,
+      });
+      androidEditOpen = false;
+      await loadAndroidOrders();
+    } catch (e: any) {
+      androidEditError = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      androidEditSaving = false;
+    }
+  }
+
+  async function deleteAndroidOrder(o: AndroidOrder) {
+    const confirmed = window.confirm(
+      'Supprimer cette vente ? Stock et solde client restaurés. Notification Telegram envoyée. / حذف هذا البيع؟ سيُستعاد المخزون ورصيد العميل وسيُرسل إشعار تيليغرام.'
+    );
+    if (!confirmed) return;
+    try {
+      await invoke('cloud_cancel_direct_order', { orderId: o.id, userId: null });
+      await loadAndroidOrders();
+    } catch (e: any) {
+      window.alert(typeof e === 'string' ? e : e?.message || 'Failed');
+    }
+  }
+
+  /// A4 print of an Android direct sale (owner: print on PC = A4).
+  async function printAndroidOrder(o: AndroidOrder) {
+    try {
+      const detail = await invoke<any>('cloud_direct_order_detail', { orderId: o.id });
+      const lines = (detail?.lines ?? []) as any[];
+      const pays = (detail?.payments ?? []) as any[];
+      const paid = pays.reduce((s2, pp) => s2 + (Number(pp.amount) || 0), 0);
+      await printService.printDocument({
+        id: o.id,
+        documentNumber: 'DS-' + String(o.id).slice(0, 8),
+        documentType: 'sale_invoice',
+        title: 'BON DE VENTE — VENTE CAMION',
+        date: String(o.created_at).slice(0, 10),
+        party: { name: o.client?.name || '—', type: 'customer' },
+        items: lines.map((ln) => ({
+          name: ln.product?.name ?? '—',
+          quantity: Number(ln.quantity ?? 0),
+          unitPrice: Number(ln.unit_price ?? 0),
+          totalPrice: Number(ln.line_total ?? 0),
+          notes: ln.sale_unit ? String(ln.sale_unit) : '',
+        })),
+        subtotal: lines.reduce((s2, ln) => s2 + (Number(ln.line_total) || 0), 0),
+        discountTotal: 0,
+        taxTotal: 0,
+        grandTotal: Number(o.total_amount || 0),
+        notes: `Payé: ${(o.amount_paid || 0).toLocaleString('fr-DZ')} DZD — Reste: ${Math.max(0, (o.total_amount || 0) - (o.amount_paid || 0)).toLocaleString('fr-DZ')} DZD`,
+        footerNote: (o.notes || '').includes('MODIFIED') ? 'MODIFIÉ / EDITED' : '',
+      });
+    } catch (e: any) {
+      window.alert(typeof e === 'string' ? e : e?.message || 'Print failed');
+    }
+  }
 
   $: periodClients = Array.from(
     new Map(sales.filter((s) => s.customer_id).map((s) => [s.customer_id, { id: s.customer_id as number, name: s.customer_name || '#' + s.customer_id }])).values()
@@ -552,15 +688,21 @@
           <th class="p-3 text-end">{t('sales_paid')}</th>
           <th class="p-3 text-end">{t('sales_credit')}</th>
           <th class="p-3 text-center">{t('status')}</th>
+          <th class="p-3 text-end">{t('actions')}</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-pos-border/40">
         {#if androidFiltered.length === 0}
-          <tr><td colspan="8" class="p-8 text-center text-pos-muted">{t('no_data')}</td></tr>
+          <tr><td colspan="9" class="p-8 text-center text-pos-muted">{t('no_data')}</td></tr>
         {:else}
           {#each androidFiltered as o (o.id)}
             <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-              <td class="p-3 font-mono text-pos-muted">{String(o.created_at).slice(0, 16).replace('T', ' ')}</td>
+              <td class="p-3 font-mono text-pos-muted">
+                {String(o.created_at).slice(0, 16).replace('T', ' ')}
+                {#if (o.notes || '').includes('MODIFIED')}
+                  <span class="ms-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t('sale_edited_tag')}</span>
+                {/if}
+              </td>
               <td class="p-3 font-bold text-pos-text">{o.client?.name || '—'}</td>
               <td class="p-3 text-pos-muted">{o.seller_name || '—'}</td>
               <td class="p-3">
@@ -573,6 +715,34 @@
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase {o.payment_status === 'paid' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800'}">
                   {o.payment_status}
                 </span>
+              </td>
+              <td class="p-3 text-end">
+                <div class="flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    on:click={(e) => { e.stopPropagation(); printAndroidOrder(o); }}
+                    class="p-1.5 text-pos-muted hover:text-sky-600 rounded-lg cursor-pointer"
+                    title="Imprimer A4 / Print A4"
+                  >
+                    <Printer class="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    on:click={(e) => { e.stopPropagation(); openAndroidEdit(o); }}
+                    class="p-1.5 text-pos-muted hover:text-emerald-600 rounded-lg cursor-pointer"
+                    title="Modifier (tournée active) / Edit"
+                  >
+                    <Edit2 class="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    on:click={(e) => { e.stopPropagation(); deleteAndroidOrder(o); }}
+                    class="p-1.5 text-pos-muted hover:text-rose-600 rounded-lg cursor-pointer"
+                    title="Supprimer (tournée active) / Delete — notifie Telegram"
+                  >
+                    <Trash2 class="w-4 h-4" />
+                  </button>
+                </div>
               </td>
             </tr>
           {/each}

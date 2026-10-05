@@ -197,9 +197,13 @@
 
   // Warehouse products actually IN stock (owner: pick from what exists;
   // 0/negative stock is refused server-side with a business error anyway).
+  // If the stock RPC failed (offline?) show ALL products rather than an
+  // always-empty picker — the server still refuses real shortfalls with a
+  // bilingual business error.
+  $: stockMapEmpty = warehouseByProduct.size === 0;
   $: tripPickable = products
     .filter((p) => !tripItems.some((i) => i.product_id === p.id))
-    .filter((p) => (warehouseByProduct.get(p.id) ?? 0) > 0)
+    .filter((p) => stockMapEmpty || (warehouseByProduct.get(p.id) ?? 0) > 0)
     .filter((p) => tripProductSearch.trim() === ''
         ? true
         : p.name.toLowerCase().includes(tripProductSearch.toLowerCase()))
@@ -212,6 +216,7 @@
   // Friendly stock validation BEFORE the RPC: raw P0001 JSON never reaches
   // the user (field report: negative warehouse stock showed a JSON blob).
   function tripStockProblem(): string | null {
+    if (warehouseByProduct.size === 0) return null; // stock unknown → server validates
     for (const i of tripItems) {
       const available = warehouseByProduct.get(i.product_id) ?? 0;
       const requested = i.quantity * (i.unitsPerPackage || 1);
@@ -938,7 +943,7 @@
                   <button type="button" on:click={() => addTripProduct(p)}
                     class="w-full text-start px-3 py-2 text-xs font-bold text-pos-text hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer flex items-center justify-between">
                     <span class="truncate">{p.name}</span>
-                    <span class="text-[10px] font-black text-emerald-600 shrink-0 ms-2">{warehouseByProduct.get(p.id) ?? 0} en stock</span>
+                    <span class="text-[10px] font-black {stockMapEmpty ? 'text-pos-muted' : 'text-emerald-600'} shrink-0 ms-2">{stockMapEmpty ? 'stock ?' : `${warehouseByProduct.get(p.id) ?? 0} en stock`}</span>
                   </button>
                 {/each}
               </div>

@@ -564,6 +564,107 @@ pub fn cloud_trip_orders(load_id: String) -> Result<Value, String> {
     Ok(Value::Array(rows))
 }
 
+/// Lines + payments of ONE direct-truck order (A4 print + POS edit dialog).
+#[tauri::command]
+pub fn cloud_direct_order_detail(order_id: String) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let lines = client.select(
+        "order_items",
+        "quantity, unit_price, line_total, tva_rate, sale_unit, base_quantity,          product:products(name)",
+        &[("order_id", format!("eq.{order_id}"))],
+    )?;
+    let pays = client.select(
+        "payments",
+        "amount, method, created_at",
+        &[("order_id", format!("eq.{order_id}"))],
+    )?;
+    let head = client.select(
+        "orders",
+        "id, created_at, total_amount, amount_paid, payment_status, notes,          client:clients(name)",
+        &[("id", format!("eq.{order_id}"))],
+    )?;
+    Ok(serde_json::json!({
+        "order": head.first().cloned().unwrap_or(Value::Null),
+        "lines": lines,
+        "payments": pays,
+    }))
+}
+
+/// DELETE a direct-truck sale from the POS (active trip only, server-guarded
+/// by cancel_truck_sale) + TELEGRAM notification (owner requirement).
+#[tauri::command]
+pub fn cloud_cancel_direct_order(
+    order_id: String,
+    db: State<'_, DbState>,
+    user_id: Option<i64>,
+) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let res = client.rpc(
+        "cancel_truck_sale",
+        serde_json::json!({ "p_order_id": order_id }),
+    )?;
+    // Telegram: fire-and-forget, same switch as POS sale deletion.
+    {
+        let lang = crate::services::notifier_service::ui_language(db.inner());
+        let actor = crate::services::notifier_service::actor_label(db.inner(), user_id);
+        let text = crate::services::notifier_service::tr(
+            &lang,
+            (
+                format!("🗑 *Vente camion supprimée* — #{order_id}
+👤 Par : {actor}"),
+                format!("🗑 *حذف بيع التوني* — #{order_id}
+👤 بواسطة: {actor}"),
+                format!("🗑 *Truck sale deleted* — #{order_id}
+👤 By: {actor}"),
+            ),
+        );
+        crate::services::notifier_service::notify_if_enabled(db.inner(), "notify_history_change", text);
+    }
+    Ok(res)
+}
+
+/// EDIT a direct-truck sale from the POS (update_direct_sale RPC, 0053):
+/// tags the order MODIFIED → the EDITED badge shows in the Android tab.
+#[tauri::command]
+pub fn cloud_update_direct_order(
+    order_id: String,
+    items: Value,
+    payment: Option<i64>,
+    method: Option<String>,
+    notes: Option<String>,
+    db: State<'_, DbState>,
+    user_id: Option<i64>,
+) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let res = client.rpc(
+        "update_direct_sale",
+        serde_json::json!({
+            "p_order_id": order_id,
+            "p_items": items,
+            "p_payment": payment,
+            "p_method": method.unwrap_or_else(|| "cash".into()),
+            "p_notes": notes,
+        }),
+    )?;
+    {
+        let lang = crate::services::notifier_service::ui_language(db.inner());
+        let actor = crate::services::notifier_service::actor_label(db.inner(), user_id);
+        let text = crate::services::notifier_service::tr(
+            &lang,
+            (
+                format!("✏️ *Vente camion modifiée* — #{order_id}
+👤 Par : {actor}"),
+                format!("✏️ *تعديل بيع التوني* — #{order_id}
+👤 بواسطة: {actor}"),
+                format!("✏️ *Truck sale edited* — #{order_id}
+👤 By: {actor}"),
+            ),
+        );
+        crate::services::notifier_service::notify_if_enabled(db.inner(), "notify_history_change", text);
+    }
+    Ok(res)
+}
+
 /// Warehouse products IN STOCK for the trip creator (migration 0051 RPC):
 /// name + positive stock so the new-trip picker only offers what exists.
 #[tauri::command]
@@ -604,7 +705,7 @@ pub fn cloud_recent_direct_orders(
         query.push(("created_at", format!("lt.{end}T00:00:00")));
     }
     let rows = client.select("orders",
-        "id, created_at, source, payment_status, total_amount, amount_paid, \n         client_id, seller_id, preseller_id, truck_load_id, \n         client:clients(name), load:truck_loads(name)",
+        "id, created_at, source, payment_status, total_amount, amount_paid, notes, \n         client_id, seller_id, preseller_id, truck_load_id, \n         client:clients(name), load:truck_loads(name)",
         &query)?;
 
     // Seller names: a tiny profiles map (the org's field staff is small).
