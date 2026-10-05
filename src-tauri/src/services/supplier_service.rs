@@ -132,16 +132,60 @@ pub fn record_supplier_debt_payment(db: &DbState, input: SupplierPaymentInput) -
     )
     .map_err(|e| e.to_string())?;
 
-    // When the payment settles a specific invoice (reference = invoice
-    // number), raise the invoice's paid_amount too — otherwise the DUE
-    // button would stay on the invoice list after paying it.
-    if let Some(ref invoice_ref) = input.reference {
-        let _ = tx.execute(
-            "UPDATE purchases
-             SET paid_amount = MIN(total, paid_amount + ?1)
-             WHERE invoice_number = ?2",
-            rusqlite::params![input.amount, invoice_ref],
-        );
+    // Settle open invoices so `paid_amount` agrees with the supplier's
+    // balance everywhere (the DUE badges on the Purchases page, the supplier
+    // popup's history, …). A reference that MATCHES one of this supplier's
+    // open invoices settles that invoice directly; anything else (empty, or
+    // a free-text cheque/transfer note) is allocated FIFO across the open
+    // invoices, oldest first.
+    {
+        let mut settle_target: Option<i64> = None;
+        if let Some(ref invoice_ref) = input.reference {
+            settle_target = tx
+                .query_row(
+                    "SELECT id FROM purchases
+                     WHERE invoice_number = ?1 AND supplier_id = ?2 AND paid_amount < total",
+                    rusqlite::params![invoice_ref, input.supplier_id],
+                    |r| r.get(0),
+                )
+                .ok();
+        }
+        let mut remaining = input.amount;
+        let open_invoices: Vec<(i64, i64)> = match settle_target {
+            Some(purchase_id) => tx
+                .query_row(
+                    "SELECT id, total - paid_amount FROM purchases WHERE id = ?1 AND paid_amount < total",
+                    [purchase_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map(|row| vec![row])
+                .unwrap_or_default(),
+            None => {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT id, total - paid_amount FROM purchases
+                         WHERE supplier_id = ?1 AND paid_amount < total
+                         ORDER BY id ASC",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let mapped = stmt
+                    .query_map([input.supplier_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .map_err(|e| e.to_string())?;
+                mapped.filter_map(|r| r.ok()).collect()
+            }
+        };
+        for (purchase_id, due) in open_invoices {
+            if remaining <= 0 {
+                break;
+            }
+            let pay = due.min(remaining);
+            tx.execute(
+                "UPDATE purchases SET paid_amount = paid_amount + ?1 WHERE id = ?2",
+                rusqlite::params![pay, purchase_id],
+            )
+            .map_err(|e| e.to_string())?;
+            remaining -= pay;
+        }
     }
 
     // The drawer only moves when purchases share the sales cash register

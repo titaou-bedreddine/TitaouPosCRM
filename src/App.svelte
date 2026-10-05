@@ -811,11 +811,11 @@
         {#if currentRoute === 'pos'}
           <PosView onNavigate={(r) => (currentRoute = r)} initialOpenProductId={posOpenProductId} onProductOpened={() => (posOpenProductId = null)} onOpenPurchase={(inv) => { purchasesFocusInvoice = inv; currentRoute = 'purchases'; }} />
         {:else if currentRoute === 'sales'}
-          <SalesView onRequestPosRoute={() => (currentRoute = 'pos')} focusSale={salesFocusSale} />
+          <SalesView onRequestPosRoute={() => (currentRoute = 'pos')} bind:focusSale={salesFocusSale} />
         {:else if currentRoute === 'cash'}
           <CashRegisterView />
         {:else if currentRoute === 'purchases'}
-          <PurchasesView focusInvoice={purchasesFocusInvoice} />
+          <PurchasesView bind:focusInvoice={purchasesFocusInvoice} />
         {:else if currentRoute === 'fieldorders'}
           <FieldOrdersView />
         {:else if currentRoute === 'team'}

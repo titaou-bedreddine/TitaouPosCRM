@@ -10,6 +10,7 @@
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import type { Purchase, Supplier, Product } from '../../lib/types';
   import { currentUser } from '../../lib/stores/auth';
+  import { activeSession } from '../../lib/stores/session';
   import { printHtmlSilently } from '../../lib/utils/printer';
   import { printService } from '../../lib/services/printService';
   import DateQuickFilters from '../../lib/components/DateQuickFilters.svelte';
@@ -219,7 +220,9 @@
       purchaseTva = pur.subtotal > 0 && pur.tax > 0 ? Math.round((pur.tax / pur.subtotal) * 1000) / 10 : 0;
       isCreateOpen = true;
       items = mapped;
-      invoiceNumber = pur.invoice_number + '-C';
+      // EDIT-IN-PLACE: the original invoice is rewritten by update_purchase
+      // (same number) — no -C copy, the old row stops existing as it was.
+      invoiceNumber = pur.invoice_number;
       invoiceDate = pur.date;
       selectedSupplierId = pur.supplier_id;
       paidManuallyEdited = true;
@@ -248,8 +251,6 @@
       return;
     }
     try {
-      const { activeSession } = await import('../../lib/stores/session');
-      const { currentUser } = await import('../../lib/stores/auth');
       const me = get(currentUser);
       await invoke('record_supplier_debt_payment', {
         input: {
@@ -611,6 +612,51 @@
   let itemsSignature = () =>
     JSON.stringify(items.map((i) => [i.product_id, i.quantity, i.unit_cost, i.sale_price, i.tva_rate]));
 
+  // ── Cash-session gate: a purchase paid in cash with NO open session would
+  // silently lose its drawer movement (shared register ON) — popup offering
+  // to open the session first, then the save continues. ──
+  let isSessionGateOpen = false;
+  let sessionGateAmount = 0;
+  let sessionGateBusy = false;
+  let sessionGateError = '';
+  let sessionGateResolve: ((sid: number | null) => void) | null = null;
+
+  function ensureCashSession(): Promise<number | null> {
+    const s = get(activeSession);
+    if (s?.id) return Promise.resolve(s.id);
+    sessionGateAmount = 0;
+    sessionGateError = '';
+    isSessionGateOpen = true;
+    return new Promise((resolve) => {
+      sessionGateResolve = resolve;
+    });
+  }
+
+  async function confirmSessionGate() {
+    sessionGateBusy = true;
+    sessionGateError = '';
+    try {
+      const session = await invoke<any>('open_cash_session', {
+        userId: $currentUser?.id || 1,
+        registerId: 1,
+        openingAmount: Math.max(0, Math.round(sessionGateAmount)),
+        notes: 'Opened from purchase invoice / فتح من فاتورة شراء',
+      });
+      activeSession.set(session);
+      isSessionGateOpen = false;
+      sessionGateResolve?.(session.id);
+    } catch (e: any) {
+      sessionGateError = typeof e === 'string' ? e : e?.message || 'Failed to open session';
+    } finally {
+      sessionGateBusy = false;
+    }
+  }
+
+  function cancelSessionGate() {
+    isSessionGateOpen = false;
+    sessionGateResolve?.(null);
+  }
+
   async function handleCreatePurchase(keepOpen = false) {
     if (!selectedSupplierId || items.length === 0) {
       errorMsg = 'Please add products and select supplier / الرجاء إضافة منتجات واختيار المورد';
@@ -626,46 +672,68 @@
       invoiceNumber = invoiceNumber.replace(/-C\d*$/, '') + '-C';
       appliedInvoiceNumber = null;
     }
+    // No open cash session + cash to hand over: popup first (open it now or
+    // cancel), so the drawer movement is never silently lost.
+    let sessionId = get(activeSession)?.id ?? null;
+    if (!sessionId && paidAmount > 0 && paymentMethod === 'cash') {
+      sessionId = await ensureCashSession();
+      if (!sessionId) {
+        errorMsg = 'Open a cash session to record a paid purchase / افتح الصندوق لتسجيل الشراء المدفوع';
+        return;
+      }
+    }
     try {
       isSaving = true;
       errorMsg = '';
       const invNum = invoiceNumber || `PUR-${Date.now().toString().slice(-6)}`;
-      // With the shared-register setting ON, the cash paid portion books a
-      // drawer movement inside create_purchase (same transaction).
-      const { activeSession } = await import('../../lib/stores/session');
-      await invoke('create_purchase', {
-        input: {
-          invoice_number: invNum,
-          supplier_id: selectedSupplierId,
-          user_id: $currentUser?.id || 1,
-          date: invoiceDate,
-          subtotal: subtotal,
+      const buildInput = (num: string) => ({
+        invoice_number: num,
+        supplier_id: selectedSupplierId,
+        user_id: $currentUser?.id || 1,
+        date: invoiceDate,
+        subtotal: subtotal,
+        discount: 0,
+        tax: itemsTva,
+        total: total,
+        paid_amount: paidAmount,
+        payment_method: paymentMethod,
+        session_id: sessionId,
+        notes: notes || 'Facture Achat',
+        items: items.map((i, idx2) => ({
+          product_id: i.product_id,
+          quantity: i.quantity,
+          unit_cost: i.unit_cost,
           discount: 0,
-          tax: itemsTva,
-          total: total,
-          paid_amount: paidAmount,
-          payment_method: paymentMethod,
-          session_id: get(activeSession)?.id ?? null,
-          notes: notes || 'Facture Achat',
-          items: items.map((i, idx2) => ({
-            product_id: i.product_id,
-            quantity: i.quantity,
-            unit_cost: i.unit_cost,
-            discount: 0,
-            tax: lineTotals[idx2].tva,
-            total: lineTotals[idx2].ttc,
-            units_per_package: i.units_per_package ?? 0,
-            expiry_date: null,
-            batch_number: null,
-          })),
-        }
+          tax: lineTotals[idx2].tva,
+          total: lineTotals[idx2].ttc,
+          units_per_package: i.units_per_package ?? 0,
+          expiry_date: null,
+          batch_number: null,
+        })),
       });
+
+      let savedNumber: string;
+      if (editingPurchase) {
+        // EDIT-IN-PLACE: the SAME invoice is rewritten (stock, supplier
+        // balance and drawer movements recomputed server-side) — the old
+        // behaviour spawned a -C copy while the original stayed fully paid
+        // (and its drawer money never came back).
+        savedNumber = await invoke<string>('update_purchase', {
+          purchaseId: editingPurchase.id,
+          input: buildInput(editingPurchase.invoice_number),
+        });
+        editingPurchase = null;
+      } else {
+        // With the shared-register setting ON, the cash paid portion books a
+        // drawer movement inside create_purchase (same transaction).
+        savedNumber = await invoke<string>('create_purchase', { input: buildInput(invNum) });
+      }
 
       if (keepOpen) {
         // Apply: committed, modal stays open for more edits / printing.
-        appliedInvoiceNumber = invNum;
+        appliedInvoiceNumber = savedNumber;
         savedItemsSnapshot = itemsSignature();
-        applyMsg = `✅ ${t('invoice_saved_apply')}: #${invNum}`;
+        applyMsg = `✅ ${t('invoice_saved_apply')}: #${savedNumber}`;
         setTimeout(() => (applyMsg = ''), 3000);
         await loadData();
         return;
@@ -1401,6 +1469,42 @@
       <div class="flex justify-end gap-2 pt-2 border-t border-pos-border">
         <button on:click={() => (payDialogPurchase = null)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">Cancel</button>
         <button on:click={confirmPaySupplierDue} class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl cursor-pointer shadow-md">Confirm Payment</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Cash-session gate: a paid purchase needs an open register. Open one now
+     (funds stay in the drawer) or cancel the save. -->
+{#if isSessionGateOpen}
+  <div class="fixed inset-0 z-[70] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-pos-card border border-amber-400 rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+      <h3 class="font-black text-sm text-pos-text flex items-center gap-2">
+        ⚠️ No open cash session / لا توجد جلسة صندوق مفتوحة
+      </h3>
+      <p class="text-xs text-pos-muted">
+        This purchase is paid in cash — open a cash session first so the register reflects the money leaving. / هذه الفاتورة مدفوعة نقداً — افتح الصندوق أولاً حتى يسجل خروج المال.
+      </p>
+      {#if sessionGateError}
+        <div class="p-2 bg-rose-100 text-rose-700 text-xs font-bold rounded-lg">{sessionGateError}</div>
+      {/if}
+      <div>
+        <label class="block text-xs font-bold text-pos-muted mb-1">Opening cash (DZD)</label>
+        <input
+          type="number"
+          inputmode="numeric"
+          min="0"
+          bind:value={sessionGateAmount}
+          on:focus={(e) => (e.target as HTMLInputElement).select()}
+          on:keydown={(e) => e.key === 'Enter' && confirmSessionGate()}
+          class="w-full px-3 py-2.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-lg font-mono font-black text-emerald-600 outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+      </div>
+      <div class="flex justify-end gap-2 pt-2 border-t border-pos-border">
+        <button on:click={cancelSessionGate} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">Cancel</button>
+        <button on:click={confirmSessionGate} disabled={sessionGateBusy} class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black rounded-xl cursor-pointer shadow-md">
+          Open Session & Continue
+        </button>
       </div>
     </div>
   </div>

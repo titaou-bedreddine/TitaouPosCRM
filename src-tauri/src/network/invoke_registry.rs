@@ -128,6 +128,7 @@ pub fn lookup(command: &str) -> Option<CommandSpec> {
 
         // --- purchases ---
         "create_purchase" => spec(Auth::User, Some("purchase_created")),
+        "update_purchase" => spec(Auth::User, Some("purchase_created")),
         "get_purchase_items" => spec(Auth::User, None),
         "delete_purchase" => spec(Auth::User, Some("purchase_deleted")),
         "list_purchases" => spec(Auth::User, None),
@@ -190,7 +191,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "delete_customer", "toggle_customer_pin", "record_customer_debt_payment",
     "clear_customer_debt", "list_debt_clear_log", "list_suppliers", "save_supplier",
     "delete_supplier", "toggle_supplier_pin", "record_supplier_debt_payment",
-    "list_supplier_debt_payments", "clear_supplier_debt", "create_purchase", "get_purchase_items",
+    "list_supplier_debt_payments", "clear_supplier_debt", "create_purchase", "update_purchase", "get_purchase_items",
     "delete_purchase", "list_purchases", "add_expense", "update_expense", "list_expenses",
     "delete_expense", "list_employees", "save_employee", "find_employee_by_rfid",
     "next_employee_code", "delete_employee", "list_payrolls", "record_employee_advance",
@@ -780,6 +781,10 @@ pub fn dispatch(ctx: &InvokeContext, command: &str, args: &Value) -> Result<Valu
         "create_purchase" => {
             let input: CreatePurchaseInput = model(args, "input")?;
             as_json(crate::services::purchase_service::create_purchase(db, input)?)?
+        }
+        "update_purchase" => {
+            let input: CreatePurchaseInput = model(args, "input")?;
+            as_json(crate::services::purchase_service::update_purchase(db, req_i64(args, "purchase_id")?, input)?)?
         }
         "get_purchase_items" => as_json(crate::services::purchase_service::get_purchase_items(db, req_i64(args, "purchase_id")?)?)?,
         "delete_purchase" => {

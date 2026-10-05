@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { localTodayISO } from '../utils/date';
   import { t, currentLocale } from '../i18n';
+  import { activeSession } from '../stores/session';
   import type { Supplier, Product } from '../types';
   import { normalizeBarcode } from '../utils/barcode';
   import { X, Check, ShoppingBag, Plus, Search, DollarSign } from 'lucide-svelte';
@@ -58,6 +59,21 @@
     try {
       isSaving = true;
       errorMsg = '';
+      // The quick purchase is paid cash: with no open session it would book
+      // no drawer movement — open one (0 float) and continue instead.
+      let sessionId: number | null = null;
+      if ($activeSession?.id) {
+        sessionId = $activeSession.id;
+      } else {
+        const session = await invoke<any>('open_cash_session', {
+          userId: 1,
+          registerId: 1,
+          openingAmount: 0,
+          notes: 'Auto-opened for quick purchase / فتح تلقائي للشراء السريع',
+        });
+        activeSession.set(session);
+        sessionId = session.id;
+      }
       const total = purchasePrice * quantity;
       const input = {
         supplier_id: selectedSupplierId,
@@ -70,6 +86,7 @@
         total: total,
         paid_amount: total,
         payment_method: 'cash',
+        session_id: sessionId,
         notes: 'Quick POS Purchase (شراء سريع من نقطة البيع)',
         items: [
           {

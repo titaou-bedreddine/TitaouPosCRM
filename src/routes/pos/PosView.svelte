@@ -814,6 +814,12 @@
   // supplier; broken writes quantity off and books an expense.
   async function executeModeCheckout(mode: 'purchase' | 'broken') {
     if ($cartItems.length === 0) return;
+    // No open register → the session popup first (same rule as sales): the
+    // purchase's drawer movement and the write-off expense both need it.
+    if (!$activeSession) {
+      isCashDrawerOpen = true;
+      return;
+    }
     try {
       const stamp = Date.now().toString().slice(-8);
       if (mode === 'purchase') {

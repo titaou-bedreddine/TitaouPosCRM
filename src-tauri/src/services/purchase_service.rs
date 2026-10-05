@@ -144,6 +144,197 @@ pub fn create_purchase(db: &DbState, input: CreatePurchaseInput) -> Result<Strin
     Ok(input.invoice_number)
 }
 
+/// Update a purchase invoice IN PLACE (edit flow): same row and invoice
+/// number, everything else recomputed atomically — stock (old lines
+/// reversed, new lines applied), supplier balance (remaining delta), and
+/// the drawer (old purchase_payment movements reversed; a fresh one booked
+/// for the new cash paid when the shared register is ON).
+pub fn update_purchase(db: &DbState, purchase_id: i64, input: CreatePurchaseInput) -> Result<String, String> {
+    let mut conn = db.conn.lock().unwrap();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let (old_total, old_paid, old_supplier_id): (i64, i64, i64) = tx
+        .query_row(
+            "SELECT total, paid_amount, supplier_id FROM purchases WHERE id = ?1",
+            [purchase_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| format!("Purchase not found: {}", e))?;
+
+    // ── Reverse the old drawer movements (shared-register payments) ──
+    {
+        let rows: Vec<(i64, Option<i64>)> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT amount, session_id FROM cash_movements
+                     WHERE reference_type = 'purchase' AND reference_id = ?1",
+                )
+                .map_err(|e| e.to_string())?;
+            let mapped = stmt
+                .query_map([purchase_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| e.to_string())?;
+            mapped.filter_map(|r| r.ok()).collect()
+        };
+        for (amount, session) in rows {
+            if let Some(sid) = session {
+                tx.execute(
+                    "UPDATE cash_sessions SET expected_cash = expected_cash - ?1 WHERE id = ?2",
+                    rusqlite::params![amount, sid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.execute(
+            "DELETE FROM cash_movements WHERE reference_type = 'purchase' AND reference_id = ?1",
+            [purchase_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // ── Reverse the old stock & items ──
+    let old_items: Vec<(i64, f64)> = {
+        let mut stmt = tx
+            .prepare("SELECT product_id, quantity FROM purchase_items WHERE purchase_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([purchase_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    for (product_id, qty) in old_items {
+        tx.execute(
+            "UPDATE products SET current_stock = current_stock - ?1 WHERE id = ?2",
+            rusqlite::params![qty, product_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.execute(
+        "DELETE FROM inventory_movements WHERE reference_type = 'purchase' AND reference_id = ?1",
+        [purchase_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM purchase_items WHERE purchase_id = ?1", [purchase_id])
+        .map_err(|e| e.to_string())?;
+
+    // ── Apply the new lines (stock in, per-base cost, movements) ──
+    for item in &input.items {
+        let upp = if item.units_per_package > 0.0 {
+            item.units_per_package
+        } else {
+            1.0
+        };
+        let base_qty = item.quantity * upp;
+        let per_base_cost = if upp > 1.0 {
+            ((item.unit_cost as f64 / upp) * 100.0).round() / 100.0
+        } else {
+            item.unit_cost as f64
+        };
+
+        tx.execute(
+            "INSERT INTO purchase_items (purchase_id, product_id, quantity, unit_cost, discount, tax, total, base_quantity)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                purchase_id, item.product_id, item.quantity, item.unit_cost,
+                item.discount, item.tax, item.total, base_qty
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "UPDATE products SET current_stock = current_stock + ?1, purchase_price = ?2 WHERE id = ?3",
+            rusqlite::params![base_qty, per_base_cost.round() as i64, item.product_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "INSERT INTO inventory_movements (product_id, quantity, type, reference_type, reference_id, user_id, cost_at_time)
+             VALUES (?1, ?2, 'purchase', 'purchase', ?3, ?4, ?5)",
+            rusqlite::params![item.product_id, base_qty, purchase_id, input.user_id, item.unit_cost],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // ── Rewrite the invoice row ──
+    tx.execute(
+        "UPDATE purchases SET invoice_number = ?2, supplier_id = ?3, date = ?4, subtotal = ?5, discount = ?6, tax = ?7,
+                total = ?8, paid_amount = ?9, payment_method = ?10, notes = ?11, terminal_name = ?12
+         WHERE id = ?1",
+        rusqlite::params![
+            purchase_id, input.invoice_number, input.supplier_id, input.date,
+            input.subtotal, input.discount, input.tax, input.total,
+            input.paid_amount, input.payment_method, input.notes,
+            crate::network::current_stamp_terminal()
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // ── Supplier balance: move by the change in what we still owe ──
+    let old_remaining = (old_total - old_paid).max(0);
+    let new_remaining = (input.total - input.paid_amount).max(0);
+    let delta = new_remaining - old_remaining;
+    if delta != 0 {
+        if input.supplier_id == old_supplier_id {
+            tx.execute(
+                "UPDATE suppliers SET balance = MAX(0, balance + ?1) WHERE id = ?2",
+                rusqlite::params![delta, input.supplier_id],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            // Supplier changed: undo the old remaining on the old supplier,
+            // put the new remaining on the new one.
+            tx.execute(
+                "UPDATE suppliers SET balance = MAX(0, balance - ?1) WHERE id = ?2",
+                rusqlite::params![old_remaining, old_supplier_id],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute(
+                "UPDATE suppliers SET balance = balance + ?1 WHERE id = ?2",
+                rusqlite::params![new_remaining, input.supplier_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // ── Fresh drawer movement for the new cash paid (shared register ON) ──
+    let shared_register: bool = tx
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'register_shared_purchases'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let cash_paid = if input.payment_method == "cash" {
+        input.paid_amount.clamp(0, input.total)
+    } else {
+        0
+    };
+    if shared_register && cash_paid > 0 {
+        if let Some(sid) = input.session_id {
+            if sid > 0 {
+                tx.execute(
+                    "INSERT INTO cash_movements (session_id, user_id, type, amount, reason, reference_type, reference_id)
+                     VALUES (?1, ?2, 'purchase_payment', ?3, ?4, 'purchase', ?5)",
+                    rusqlite::params![
+                        sid, input.user_id, -cash_paid,
+                        format!("Purchase paid cash / دفع شراء نقدي {}", input.invoice_number),
+                        purchase_id
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                tx.execute(
+                    "UPDATE cash_sessions SET expected_cash = expected_cash - ?1 WHERE id = ?2",
+                    rusqlite::params![cash_paid, sid],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(input.invoice_number)
+}
+
 pub fn list_purchases(db: &DbState) -> Result<Vec<Purchase>, String> {
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn

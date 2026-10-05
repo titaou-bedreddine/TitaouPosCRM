@@ -501,6 +501,11 @@ pub fn create_purchase(db: State<'_, DbState>, input: CreatePurchaseInput) -> Re
 }
 
 #[tauri::command]
+pub fn update_purchase(db: State<'_, DbState>, purchase_id: i64, input: CreatePurchaseInput) -> Result<String, String> {
+    purchase_service::update_purchase(&db, purchase_id, input)
+}
+
+#[tauri::command]
 pub fn get_purchase_items(db: State<'_, DbState>, purchase_id: i64) -> Result<Vec<PurchaseItem>, String> {
     purchase_service::get_purchase_items(&db, purchase_id)
 }

@@ -218,6 +218,18 @@
       isSaving = false;
     }
   }
+  // After a debt payment EVERY surface must agree: the supplier list (table
+  // + balance column), the open popup's balance, and its invoice history
+  // (FIFO allocation may have settled invoices). The Purchases and Cash
+  // Register pages reload on mount, so they pick the new state on arrival.
+  async function refreshAfterSupplierPayment() {
+    await loadSuppliers();
+    if (previewSupplier) {
+      const fresh = suppliers.find((s) => s.id === previewSupplier!.id);
+      if (fresh) previewSupplier = fresh;
+      await loadSupplierHistory(previewSupplier);
+    }
+  }
 </script>
 
 <div class="h-full flex flex-col bg-pos-bg p-4 overflow-hidden select-none">
@@ -578,7 +590,7 @@
   isOpen={isDebtModalOpen}
   supplier={payingSupplier}
   onClose={() => (isDebtModalOpen = false)}
-  onPaymentRecorded={loadSuppliers}
+  onPaymentRecorded={refreshAfterSupplierPayment}
 />
 
 <!-- Protected Supplier Delete -->
