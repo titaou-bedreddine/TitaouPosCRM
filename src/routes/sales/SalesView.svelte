@@ -32,6 +32,72 @@
   // Client filter (spec §18): combinable with the other filters; 'all' by
   // default. The options derive from the loaded period's sales.
   let selectedClientId: number | null = null;
+  // Android / Direct Sale source (spec §19): the same page shows POS-local
+  // sales AND the CRM's direct_truck orders, with combined filters.
+  let sourceTab: 'pos' | 'android' = 'pos';
+  let androidOrders: AndroidOrder[] = [];
+  let androidLoading = false;
+  let androidError = '';
+  let androidTruck = '';
+  let androidSeller = '';
+  let androidClientId = '';
+  let androidStatus = 'all';
+
+  interface AndroidOrder {
+    id: string;
+    created_at: string;
+    payment_status: string;
+    total_amount: number;
+    amount_paid: number;
+    client: { name?: string } | null;
+    seller_name?: string;
+    truck_name?: string;
+  }
+
+  async function loadAndroidOrders() {
+    androidLoading = true;
+    androidError = '';
+    try {
+      androidOrders = await invoke<any[]>('cloud_recent_direct_orders', {
+        fromDate: startDate || null,
+        toDate: endDate || null,
+      });
+    } catch (e: any) {
+      androidError = typeof e === 'string' ? e : e?.message || 'Failed';
+      androidOrders = [];
+    } finally {
+      androidLoading = false;
+    }
+  }
+
+  function switchSource(tab: 'pos' | 'android') {
+    sourceTab = tab;
+    if (tab === 'android' && androidOrders.length === 0) loadAndroidOrders();
+  }
+
+  $: androidClients = Array.from(
+    new Map(androidOrders.filter((o) => o.client?.name).map((o) => [o.client!.name as string, o.client!.name as string])).values()
+  ).sort((a, b) => a.localeCompare(b));
+  $: androidTrucks = Array.from(
+    new Set(androidOrders.map((o) => o.truck_name || '—'))
+  ).sort();
+  $: androidSellers = Array.from(
+    new Set(androidOrders.map((o) => o.seller_name || '—'))
+  ).sort();
+  $: androidFiltered = androidOrders.filter((o) => {
+    if (androidTruck && (o.truck_name || '—') !== androidTruck) return false;
+    if (androidSeller && (o.seller_name || '—') !== androidSeller) return false;
+    if (androidClientId && (o.client?.name || '') !== androidClientId) return false;
+    if (androidStatus === 'paid' && o.payment_status !== 'paid') return false;
+    if (androidStatus === 'credit' && o.payment_status === 'paid') return false;
+    return true;
+  });
+  $: androidTotals = {
+    count: androidFiltered.length,
+    gross: androidFiltered.reduce((s, o) => s + (o.total_amount || 0), 0),
+    paid: androidFiltered.reduce((s, o) => s + (o.amount_paid || 0), 0),
+  };
+
   $: periodClients = Array.from(
     new Map(sales.filter((s) => s.customer_id).map((s) => [s.customer_id, { id: s.customer_id as number, name: s.customer_name || '#' + s.customer_id }])).values()
   ).sort((a, b) => a.name.localeCompare(b.name));
@@ -399,11 +465,123 @@
     </div>
   </div>
 
-  <!-- Quick Date Presets -->
+  <!-- Source toggle (spec §19): POS counter sales vs Android Direct Sale. -->
   <div class="flex items-center justify-between shrink-0">
-    <DateQuickFilters bind:startDate bind:endDate onChange={loadSales} />
+    <DateQuickFilters bind:startDate bind:endDate onChange={() => sourceTab === 'android' ? loadAndroidOrders() : loadSales()} />
+    <div class="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-pos-border">
+      <button
+        type="button"
+        on:click={() => switchSource('pos')}
+        class="px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer {sourceTab === 'pos' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:text-pos-text'}"
+      >POS</button>
+      <button
+        type="button"
+        on:click={() => switchSource('android')}
+        class="px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer {sourceTab === 'android' ? 'bg-purple-600 text-white shadow-xs' : 'text-pos-muted hover:text-pos-text'}"
+      >{t('trucks_direct')} (Android)</button>
+    </div>
   </div>
 
+  {#if sourceTab === 'android'}
+  <!-- ANDROID / DIRECT SALE table (read-only) -->
+  <div class="bg-pos-card border border-pos-border rounded-2xl p-3 shadow-xs grid grid-cols-1 md:grid-cols-4 gap-2.5 items-end shrink-0">
+    <div>
+      <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('trucks_name')}</label>
+      <select bind:value={androidTruck} class="w-full px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-bold text-pos-text outline-none">
+        <option value="">{t('trucks_all_trucks')}</option>
+        {#each androidTrucks as tn}<option value={tn}>{tn}</option>{/each}
+      </select>
+    </div>
+    <div>
+      <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('tl_seller')}</label>
+      <select bind:value={androidSeller} class="w-full px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-bold text-pos-text outline-none">
+        <option value="">{t('trucks_all_sellers')}</option>
+        {#each androidSellers as sn}<option value={sn}>{sn}</option>{/each}
+      </select>
+    </div>
+    <div>
+      <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('customer')}</label>
+      <select bind:value={androidClientId} class="w-full px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-bold text-pos-text outline-none">
+        <option value="">{t('all')}</option>
+        {#each androidClients as cn}<option value={cn}>{cn}</option>{/each}
+      </select>
+    </div>
+    <div>
+      <label class="block text-[10px] font-bold text-pos-muted mb-1">{t('status')}</label>
+      <select bind:value={androidStatus} class="w-full px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-bold text-pos-text outline-none">
+        <option value="all">{t('all')}</option>
+        <option value="paid">{t('sales_paid')}</option>
+        <option value="credit">{t('sales_credit')}</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
+    <div class="bg-pos-card border border-pos-border rounded-2xl p-4 shadow-xs">
+      <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_count')}</p>
+      <p class="text-base font-black font-mono text-pos-text">{androidTotals.count}</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border rounded-2xl p-4 shadow-xs">
+      <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_total_brut')}</p>
+      <p class="text-base font-black font-mono text-sky-600">{androidTotals.gross.toLocaleString('fr-DZ')} DA</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border rounded-2xl p-4 shadow-xs">
+      <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_paid')}</p>
+      <p class="text-base font-black font-mono text-emerald-600">{androidTotals.paid.toLocaleString('fr-DZ')} DA</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border rounded-2xl p-4 shadow-xs">
+      <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_credit')}</p>
+      <p class="text-base font-black font-mono text-rose-600">{(androidTotals.gross - androidTotals.paid).toLocaleString('fr-DZ')} DA</p>
+    </div>
+  </div>
+
+  <div class="bg-pos-card border border-pos-border rounded-2xl shadow-xs overflow-hidden flex-1 overflow-y-auto">
+    {#if androidLoading}
+      <div class="p-8 text-center text-pos-muted">↻</div>
+    {:else if androidError}
+      <div class="p-8 text-center text-rose-600 font-bold">❌ {androidError}</div>
+    {:else}
+    <table class="w-full text-start text-xs border-collapse">
+      <thead class="bg-slate-50 dark:bg-slate-800/60 border-b border-pos-border text-pos-muted font-bold sticky top-0 z-10">
+        <tr>
+          <th class="p-3 text-start">{t('sales_date_time')}</th>
+          <th class="p-3 text-start">{t('customer')}</th>
+          <th class="p-3 text-start">{t('tl_seller')}</th>
+          <th class="p-3 text-start">{t('trucks_name')}</th>
+          <th class="p-3 text-end">{t('sales_total_brut')}</th>
+          <th class="p-3 text-end">{t('sales_paid')}</th>
+          <th class="p-3 text-end">{t('sales_credit')}</th>
+          <th class="p-3 text-center">{t('status')}</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-pos-border/40">
+        {#if androidFiltered.length === 0}
+          <tr><td colspan="8" class="p-8 text-center text-pos-muted">{t('no_data')}</td></tr>
+        {:else}
+          {#each androidFiltered as o (o.id)}
+            <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+              <td class="p-3 font-mono text-pos-muted">{String(o.created_at).slice(0, 16).replace('T', ' ')}</td>
+              <td class="p-3 font-bold text-pos-text">{o.client?.name || '—'}</td>
+              <td class="p-3 text-pos-muted">{o.seller_name || '—'}</td>
+              <td class="p-3">
+                <span class="px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">{o.truck_name || '—'}</span>
+              </td>
+              <td class="p-3 text-end font-mono font-black text-pos-text">{(o.total_amount ?? 0).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-end font-mono font-bold text-sky-600 dark:text-sky-400">{(o.amount_paid ?? 0).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-end font-mono font-bold {o.total_amount - o.amount_paid > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-pos-muted'}">{(o.total_amount - o.amount_paid).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-center">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase {o.payment_status === 'paid' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800'}">
+                  {o.payment_status}
+                </span>
+              </td>
+            </tr>
+          {/each}
+        {/if}
+      </tbody>
+    </table>
+    {/if}
+  </div>
+  {:else}
   <!-- Filter Bar -->
   <div class="bg-pos-card border border-pos-border rounded-2xl p-3 shadow-xs grid grid-cols-1 md:grid-cols-5 gap-2.5 items-end shrink-0">
     <div>
@@ -561,6 +739,7 @@
       </tbody>
     </table>
   </div>
+  {/if}
 </div>
 
 <!-- Sale Details Modal -->

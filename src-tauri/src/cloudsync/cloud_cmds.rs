@@ -564,6 +564,84 @@ pub fn cloud_trip_orders(load_id: String) -> Result<Value, String> {
     Ok(Value::Array(rows))
 }
 
+/// Recent DIRECT-SALE (Android, source='direct_truck') orders for the POS
+/// Sales History "Android" tab (spec §19): date-ranged, newest first, with
+/// client/seller/truck resolved so the POS can show and filter them.
+#[tauri::command]
+pub fn cloud_recent_direct_orders(
+    from_date: Option<String>,
+    to_date: Option<String>,
+) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+
+    // Inclusive date window: created_at >= from 00:00, < to+1d 00:00.
+    let mut query: Vec<(&str, String)> = vec![
+        (
+            "select",
+            "id, created_at, source, payment_status, total_amount, amount_paid, \
+             client_id, seller_id, preseller_id, truck_load_id, \
+             client:clients(name), load:truck_loads(name)"
+                .to_string(),
+        ),
+        ("source", "eq.direct_truck".into()),
+        ("order", "created_at.desc".into()),
+        ("limit", "500".into()),
+    ];
+    if let Some(f) = from_date.as_deref().filter(|s| !s.trim().is_empty()) {
+        query.push(("created_at", format!("gte.{f}T00:00:00")));
+    }
+    if let Some(t) = to_date.as_deref().filter(|s| !s.trim().is_empty()) {
+        let end = chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.succ_opt())
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| t.to_string());
+        query.push(("created_at", format!("lt.{end}T00:00:00")));
+    }
+    let rows = client.select("orders", "*", &query)?;
+
+    // Seller names: a tiny profiles map (the org's field staff is small).
+    let profiles = client
+        .select(
+            "profiles",
+            "id, full_name",
+            &[("order", "full_name.asc".into())],
+        )
+        .unwrap_or_default();
+    let name_of = |id: &Value| -> String {
+        profiles
+            .iter()
+            .find(|p| p["id"] == *id)
+            .and_then(|p| p["full_name"].as_str())
+            .unwrap_or("—")
+            .to_string()
+    };
+
+    let out: Vec<Value> = rows
+        .into_iter()
+        .map(|mut r| {
+            let seller_id = r["seller_id"].clone();
+            let preseller_id = r["preseller_id"].clone();
+            let seller = if seller_id.is_null() { &preseller_id } else { &seller_id };
+            r["seller_name"] = Value::String(name_of(seller));
+            r["truck_name"] = r["load"]["name"]
+                .as_str()
+                .unwrap_or("—")
+                .to_string()
+                .into();
+            r.as_object_mut().map(|o| {
+                o.remove("load");
+                o.remove("client_id");
+                o.remove("seller_id");
+                o.remove("preseller_id");
+                o.remove("truck_load_id");
+            });
+            r
+        })
+        .collect();
+    Ok(Value::Array(out))
+}
+
 /// One trip's settlement + stock reconciliation + expenses — the immutable
 /// audit view (SELECT-only policies make these rows unmodifiable).
 #[tauri::command]
