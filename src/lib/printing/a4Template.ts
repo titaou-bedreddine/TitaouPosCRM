@@ -45,17 +45,25 @@ export function buildA4DocumentHtml(doc: PrintableDocument, settings: Record<str
   const showBarcode = bool(settings, 'a4_show_barcode', false);
   const showQuantity = bool(settings, 'a4_show_quantity', true);
   const showUnitPrice = bool(settings, 'a4_show_unit_price', true);
-  const showDiscount = bool(settings, 'a4_show_discount', true);
+  const showDiscountSetting = bool(settings, 'a4_show_discount', true);
   const showTax = bool(settings, 'a4_show_tax', false);
 
   const showPayment = bool(settings, 'a4_show_payment', true);
   const showAmountPaid = bool(settings, 'a4_show_amount_paid', true);
   const showRemaining = bool(settings, 'a4_show_remaining', true);
 
+  // Receipts show only what's there: the Remise column appears when at least
+  // one line actually carries a discount, the VAT columns when the document
+  // really carries VAT (invoice total > 0 or any line-taxed item). A setting
+  // alone no longer forces empty "—/0" columns onto the printout.
+  const hasDiscountData = (doc.items || []).some((i) => (i.discountPerUnit ?? 0) > 0);
+  const hasTaxData = (doc.items || []).some((i) => (i.taxAmount ?? 0) > 0);
+  const showDiscount = showDiscountSetting && hasDiscountData;
+
   // VAT breakdown (purchase invoices / any doc carrying VAT): per-line
   // Total HT | TVA % | TVA | Total TTC + the HT/TVA/TTC totals. Sales
   // carry no VAT (taxTotal 0) and keep their classic layout.
-  const showTva = showTax || (doc.taxTotal ?? 0) > 0;
+  const showTva = (doc.taxTotal ?? 0) > 0 || (showTax && hasTaxData);
   const docHasVat = (doc.taxTotal ?? 0) > 0;
   const vatRatePct = docHasVat && (doc.subtotal ?? 0) > 0
     ? Math.round(((doc.taxTotal as number) / (doc.subtotal as number)) * 1000) / 10

@@ -29,6 +29,12 @@
   let selectedCashier: number | null = null;
   let selectedStatus: string = 'all';
   let selectedChannel: string = 'all';
+  // Client filter (spec §18): combinable with the other filters; 'all' by
+  // default. The options derive from the loaded period's sales.
+  let selectedClientId: number | null = null;
+  $: periodClients = Array.from(
+    new Map(sales.filter((s) => s.customer_id).map((s) => [s.customer_id, { id: s.customer_id as number, name: s.customer_name || '#' + s.customer_id }])).values()
+  ).sort((a, b) => a.name.localeCompare(b.name));
   let searchQuery = '';
   // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
   $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
@@ -110,6 +116,9 @@
       qr.includes(stripped);
 
     if (!matchesSearch) return false;
+
+    // Client filter: exact customer, combinable with the rest.
+    if (selectedClientId !== null && s.customer_id !== selectedClientId) return false;
 
     if (selectedStatus === 'all') return true;
     if (selectedStatus === 'paid') return s.payment_status === 'paid';
@@ -445,6 +454,16 @@
         <option value={null}>{t('exp_all_users')}</option>
         {#each users as u}
           <option value={u.id}>{u.display_name || u.username}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-[10px] font-bold text-pos-muted mb-1">Client</label>
+      <select bind:value={selectedClientId} class="w-full px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-bold text-pos-text outline-none">
+        <option value={null}>{t('all')}</option>
+        {#each periodClients as c (c.id)}
+          <option value={c.id}>{c.name}</option>
         {/each}
       </select>
     </div>

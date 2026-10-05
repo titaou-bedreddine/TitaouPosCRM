@@ -247,8 +247,11 @@ export function buildProfessionalReceiptHtml(o: ProReceiptOptions): string {
       <span class="val"><span dir="ltr">${esc(value)}${currencySuffix ? ' ' + esc(currency) : ''}</span></span>
     </div>`;
   const totals = [
-    totalsRow(t.subtotal, money(o.subtotal)),
-    totalsRow(t.discount, money(o.discount)),
+    // Show only what's there: the Sous-total/Remise pair appears when a
+    // discount actually exists — a bare "REMISE 0" row is noise.
+    ...(o.discount > 0
+      ? [totalsRow(t.subtotal, money(o.subtotal)), totalsRow(t.discount, money(o.discount))]
+      : []),
     totalsRow(t.total, money(o.grandTotal), true, true),
     // Déchargement fee: the customer's debt stays grandTotal; the fee only
     // explains what remains in the drawer (never merged into the total).

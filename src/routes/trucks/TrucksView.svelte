@@ -459,13 +459,62 @@
     }
   }
 
-  // ── Closed-trip audit (immutable) + deposit ────────────────────────────────
+  // ── Closed-trip audit (immutable) + deposit + recap print ──────────────────
   let auditTrip: any = null;
   let auditData: any = null;
 
   async function viewAudit(tp: any) {
     auditTrip = tp;
     auditData = await invoke<any>('cloud_trip_settlement', { loadId: tp.out_load_id }).catch(() => null);
+  }
+
+  // Print the closed trip's RECAP (thermal document): truck/seller/driver,
+  // per-product reconciliation and the cash settlement — the same figures as
+  // the immutable audit rows (spec §39/§43: trip recap print + POS access).
+  async function printTripRecap() {
+    if (!auditTrip || !auditData) return;
+    const loadRow = loads.find((l) => l.id === auditTrip.out_load_id);
+    const soldBy: Record<string, number> = {};
+    try {
+      const orders = await invoke<any[]>('cloud_trip_orders', { loadId: auditTrip.out_load_id }).catch(() => []);
+      for (const o of orders ?? []) {
+        for (const ln of o.items ?? []) {
+          soldBy[ln.product_id] = (soldBy[ln.product_id] ?? 0) + Number(ln.base_quantity ?? ln.quantity ?? 0);
+        }
+      }
+    } catch { /* recap degrades to expected/physical only */ }
+    const st = auditData.settlement ?? {};
+    const reconc: any[] = auditData.reconciliations ?? [];
+    const exps: any[] = auditData.expenses ?? [];
+    const expenseTotal = exps.reduce((s, e) => s + Number(e.amount ?? 0), 0);
+    const result = await printService.printDocument({
+      id: auditTrip.out_load_id,
+      documentNumber: 'RECAP-' + String(auditTrip.out_load_id).slice(0, 8),
+      documentType: 'stock_operation',
+      title: 'RECAP TOURNÉE — CLÔTURE',
+      date: String(auditTrip.out_route_date || '').slice(0, 10),
+      party: { name: (auditTrip.out_truck_name || '') + ' - ' + (loadRow?.driver_name || auditTrip.out_driver_name || ''), type: 'employee' },
+      items: reconc.map((r) => {
+        const sold = soldBy[r.product_id] ?? 0;
+        return {
+          name: r.product?.name ?? '—',
+          quantity: Number(r.physical_quantity ?? 0),
+          unitPrice: 0,
+          totalPrice: 0,
+          notes: `Vendu: ${sold} · Attendu: ${Number(r.expected_quantity ?? 0)} · Physique: ${Number(r.physical_quantity ?? 0)} · Écart: ${Number(r.difference ?? 0)}${r.reason && r.reason !== 'none' ? ' (' + r.reason + ')' : ''}`,
+        };
+      }),
+      subtotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0,
+      notes: [
+        `Vendeur: ${auditTrip.out_seller_name || '—'}`,
+        `Ventes: ${fmt(auditTrip.out_sales_value)} DA · Espèces: ${fmt(auditTrip.out_cash_value)} DA · Crédit: ${fmt(auditTrip.out_outstanding)} DA`,
+        `Dépenses: ${fmt(expenseTotal)} DA`,
+        `Attendu caisse: ${fmt(st.expected_cash ?? auditTrip.out_expected_cash)} DA · Reçu: ${fmt(st.actual_cash ?? auditTrip.out_actual_cash)} DA · Écart: ${fmt(st.cash_difference ?? auditTrip.out_cash_difference)} DA`,
+        st.reason ? `Motif: ${st.reason}` : '',
+      ].filter(Boolean).join('\n'),
+      footerNote: 'TRIP FERMÉ — CLÔTURÉ / READ ONLY',
+    });
+    if (!result.ok && result.mode !== 'disabled') error = result.message;
   }
 
   let depositBusy = '';
@@ -1064,8 +1113,12 @@
         <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
           <Lock class="w-4 h-4 text-slate-500" />{t('trucks_audit')} — {String(auditTrip.out_route_date).slice(0, 10)}
         </h3>
-        <span class="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-pos-muted dark:bg-slate-800">CLOSED — READ ONLY</span>
-        <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (auditTrip = null)}><X class="w-4 h-4" /></button>
+        <div class="flex items-center gap-2">
+          <span class="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-pos-muted dark:bg-slate-800">CLOSED — READ ONLY</span>
+          <button type="button" on:click={printTripRecap} disabled={busy}
+            class="p-1.5 text-pos-muted hover:text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer" title="Print trip recap / Imprimer le récap"><Printer class="w-4 h-4" /></button>
+          <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (auditTrip = null)}><X class="w-4 h-4" /></button>
+        </div>
       </div>
       <div class="p-4 overflow-y-auto space-y-3 text-[11px]">
         {#if auditData?.settlement}
