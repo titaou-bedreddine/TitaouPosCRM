@@ -164,7 +164,7 @@ fn finish_active_session(db: &DbState, session: Option<CashSession>) -> Result<O
             ).unwrap_or(0);
 
             let exp_sum: i64 = conn.query_row(
-                "SELECT COALESCE(SUM(amount), 0) FROM cash_movements WHERE session_id = ?1 AND (type = 'expense_payment' OR type = 'cash_out')",
+                "SELECT COALESCE(SUM(amount), 0) FROM cash_movements WHERE session_id = ?1 AND (type = 'expense_payment' OR type = 'cash_out' OR type = 'purchase_payment' OR type = 'supplier_debt_payment')",
                 [s.id],
                 |r| r.get(0),
             ).unwrap_or(0);

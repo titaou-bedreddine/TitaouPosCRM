@@ -5,7 +5,8 @@
   import { t, currentLocale } from '../../lib/i18n';
   import { localTodayISO } from '../../lib/utils/date';
   import type { Category, CartItem, Product, Supplier, Unit } from '../../lib/types';
-  import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates, unloadingFeesTotal, setLineUnloadingFee, applySaleLevelFee } from '../../lib/stores/cart';
+  import { updateItemQuantity } from '../../lib/stores/cart';
+import { cartItems, cartGrandTotal, cartSubtotal, globalDiscountAmount, globalDiscountMode, globalDiscountValue, globalDiscountPercent, isRefundMode, addToCart, clearCart, cartItemOrder, qtyEditTarget, itemKey, stopQtyEdit, posMode, originSaleId, restoreActiveCart, holdCurrentSale, allowNegativeStock, saleTotalRoundingStep, recordSoldQuantities, mergeCartDuplicates, unloadingFeesTotal, setLineUnloadingFee, applySaleLevelFee, packagingPromptModal, setPackagingPromptResolver, setLineUnit } from '../../lib/stores/cart';
   import UnloadingFeeModal from '../../lib/components/UnloadingFeeModal.svelte';
   import ProductPresentationModal from '../../lib/components/ProductPresentationModal.svelte';
   import { currentUser } from '../../lib/stores/auth';
@@ -1052,6 +1053,20 @@
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     window.addEventListener('mousedown', handlePageMouseDown);
+
+    // Packaging auto-detection resolver (owner rule): the cart asks PosView
+    // for a product's packagings before popping the unit-vs-package price.
+    setPackagingPromptResolver((productId) => {
+      const cached = packagingsCache.get(productId);
+      if (!cached) return [];
+      return cached
+        .filter((r) => Number(r.units_per_package ?? 1) > 1)
+        .map((r) => ({
+          name: r.name as string,
+          unitsPerPackage: Number(r.units_per_package ?? 1),
+          packPrice: Number(r.sale_price ?? r.sale_price_per_unit ?? 0),
+        }));
+    });
   });
 
   // Unified Checkout dialog (TopBar Checkout / F2): customer + amount +
@@ -2150,6 +2165,74 @@
     onClose={() => (isCheckoutOpen = false)}
     onConfirmCheckout={handleCheckoutConfirm}
   />
+
+  {#if $packagingPromptModal}
+    <div class="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-150">
+        <div class="px-6 py-4 border-b border-pos-border bg-slate-50 dark:bg-slate-800/60">
+          <h3 class="font-black text-base text-pos-text">Quel prix appliquer ? / أي سعر نطبق؟</h3>
+          <p class="text-xs text-pos-muted mt-0.5">
+            {$packagingPromptModal.newQty} unités = {$packagingPromptModal.packCount} × {$packagingPromptModal.packagingName}
+            ({$packagingPromptModal.unitsPerPackage}/palette)
+          </p>
+        </div>
+        <div class="p-6 space-y-3">
+          <button
+            type="button"
+            class="w-full p-3.5 rounded-2xl border-2 border-sky-500 bg-sky-50/50 dark:bg-sky-950/30 text-start cursor-pointer transition hover:scale-[1.01]"
+            on:click={() => {
+              const pp = $packagingPromptModal;
+              packagingPromptModal.set(null);
+              if (!pp) return;
+              const item = $cartItems.find(
+                (i) => i.product_id === pp.productId && i.is_refund === pp.isRefund && i.sale_unit === pp.saleUnit
+              );
+              const base = products.find((pp2) => pp2.id === pp.productId)?.sale_price ?? item?.unit_price ?? 0;
+              if (item) {
+                setLineUnit(item, null, base);
+                updateItemQuantity(pp.productId, pp.isRefund, pp.newQty, undefined);
+              }
+            }}
+          >
+            <p class="text-xs font-black text-pos-text">Prix UNITÉ — {$packagingPromptModal.unitPrice.toLocaleString()} DZD/u</p>
+            <p class="text-[11px] text-pos-muted font-bold">
+              {$packagingPromptModal.newQty} × {$packagingPromptModal.unitPrice.toLocaleString()} =
+              <span class="font-mono font-black">{($packagingPromptModal.newQty * $packagingPromptModal.unitPrice).toLocaleString()} DZD</span>
+            </p>
+          </button>
+          <button
+            type="button"
+            class="w-full p-3.5 rounded-2xl border-2 border-amber-500 bg-amber-50/50 dark:bg-amber-950/30 text-start cursor-pointer transition hover:scale-[1.01]"
+            on:click={() => {
+              const pp = $packagingPromptModal;
+              packagingPromptModal.set(null);
+              if (!pp) return;
+              const item = $cartItems.find(
+                (i) => i.product_id === pp.productId && i.is_refund === pp.isRefund && i.sale_unit === pp.saleUnit
+              );
+              const base = products.find((pp2) => pp2.id === pp.productId)?.sale_price ?? item?.unit_price ?? 0;
+              if (item) {
+                const pack = { name: pp.packagingName, units_per_package: pp.unitsPerPackage, sale_price: pp.packPrice };
+                setLineUnit(item, pack as any, base);
+                updateItemQuantity(pp.productId, pp.isRefund, pp.packCount, pp.packagingName);
+              }
+            }}
+          >
+            <p class="text-xs font-black text-pos-text">Prix PALETTE — {$packagingPromptModal.packPrice.toLocaleString()} DZD / {$packagingPromptModal.packagingName}</p>
+            <p class="text-[11px] text-pos-muted font-bold">
+              {$packagingPromptModal.packCount} × {$packagingPromptModal.packPrice.toLocaleString()} =
+              <span class="font-mono font-black">{($packagingPromptModal.packCount * $packagingPromptModal.packPrice).toLocaleString()} DZD</span>
+            </p>
+          </button>
+          <button
+            type="button"
+            class="w-full py-2 text-[11px] font-bold text-pos-muted hover:text-pos-text cursor-pointer"
+            on:click={() => packagingPromptModal.set(null)}
+          >Garder le prix actuel / حافظ على السعر الحالي</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <OtherArticleModal
     isOpen={isOtherArticleOpen}

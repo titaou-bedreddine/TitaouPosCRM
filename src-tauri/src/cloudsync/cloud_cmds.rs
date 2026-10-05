@@ -564,6 +564,18 @@ pub fn cloud_trip_orders(load_id: String) -> Result<Value, String> {
     Ok(Value::Array(rows))
 }
 
+/// Warehouse products IN STOCK for the trip creator (migration 0051 RPC):
+/// name + positive stock so the new-trip picker only offers what exists.
+#[tauri::command]
+pub fn cloud_warehouse_stock() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.rpc(
+        "warehouse_stock",
+        serde_json::json!({ "p_min": 1 }),
+    )?;
+    Ok(rows)
+}
+
 /// Recent DIRECT-SALE (Android, source='direct_truck') orders for the POS
 /// Sales History "Android" tab (spec §19): date-ranged, newest first, with
 /// client/seller/truck resolved so the POS can show and filter them.
@@ -576,13 +588,6 @@ pub fn cloud_recent_direct_orders(
 
     // Inclusive date window: created_at >= from 00:00, < to+1d 00:00.
     let mut query: Vec<(&str, String)> = vec![
-        (
-            "select",
-            "id, created_at, source, payment_status, total_amount, amount_paid, \
-             client_id, seller_id, preseller_id, truck_load_id, \
-             client:clients(name), load:truck_loads(name)"
-                .to_string(),
-        ),
         ("source", "eq.direct_truck".into()),
         ("order", "created_at.desc".into()),
         ("limit", "500".into()),
@@ -598,7 +603,9 @@ pub fn cloud_recent_direct_orders(
             .unwrap_or_else(|| t.to_string());
         query.push(("created_at", format!("lt.{end}T00:00:00")));
     }
-    let rows = client.select("orders", "*", &query)?;
+    let rows = client.select("orders",
+        "id, created_at, source, payment_status, total_amount, amount_paid, \n         client_id, seller_id, preseller_id, truck_load_id, \n         client:clients(name), load:truck_loads(name)",
+        &query)?;
 
     // Seller names: a tiny profiles map (the org's field staff is small).
     let profiles = client

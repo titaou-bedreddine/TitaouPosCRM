@@ -246,7 +246,7 @@ fn push_product(
                 .unwrap_or_default()
                 .into_iter()
                 .map(|mut pk| {
-                    for key in ["sale_price", "purchase_price", "sale_price_per_unit"] {
+                    for key in ["sale_price", "purchase_price", "sale_price_per_unit", "unloading_fee"] {
                         if let Some(v) = pk.get_mut(key) {
                             if let Some(dzd) = v.as_i64() {
                                 *v = json!(dzd_to_centimes(dzd));

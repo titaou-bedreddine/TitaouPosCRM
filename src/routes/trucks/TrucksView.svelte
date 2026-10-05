@@ -15,6 +15,7 @@
   let trucks: any[] = [];
   let staff: any[] = [];
   let products: any[] = [];
+  let warehouseByProduct = new Map<string, number>();
   let trips: any[] = []; // stats_truck_trips rows (canonical totals)
   let loads: any[] = []; // truck_loads with items (the trips)
   let loading = true;
@@ -68,13 +69,16 @@
     loading = true;
     error = '';
     try {
-      [trucks, staff, products, trips, loads] = await Promise.all([
+      let warehouseStock: any[] = [];
+      [trucks, staff, products, trips, loads, warehouseStock] = await Promise.all([
         invoke<any[]>('cloud_list_trucks').catch(() => []),
         invoke<any[]>('cloud_field_staff').catch(() => []),
         invoke<any[]>('cloud_products_for_promos').catch(() => []),
+        invoke<any[]>('cloud_warehouse_stock').catch(() => []),
         invoke<any[]>('cloud_stats_truck_trips', { fromDate: histFrom || null, toDate: histTo || null }).catch(() => []),
         invoke<any[]>('cloud_truck_loads').catch(() => []),
       ]);
+      warehouseByProduct = new Map(warehouseStock.map((r: any) => [r.product_id, Number(r.current_stock ?? 0)]));
       if (!selectedId && trucks.length > 0) selectedId = trucks[0].id;
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
@@ -150,9 +154,7 @@
   let tripItems: { product_id: string; name: string; unit: string; unitsPerPackage: number; quantity: number }[] = [];
   let tripProductSearch = '';
 
-  $: tripProductMatches = tripProductSearch.trim()
-    ? products.filter((p) => p.name.toLowerCase().includes(tripProductSearch.toLowerCase())).slice(0, 6)
-    : [];
+
 
   function packTypesFor(productId: string) {
     return (products.find((x) => x.id === productId)?.packagings ?? []);
@@ -193,8 +195,37 @@
     tripProductSearch = '';
   }
 
+  // Warehouse products actually IN stock (owner: pick from what exists;
+  // 0/negative stock is refused server-side with a business error anyway).
+  $: tripPickable = products
+    .filter((p) => !tripItems.some((i) => i.product_id === p.id))
+    .filter((p) => (warehouseByProduct.get(p.id) ?? 0) > 0)
+    .filter((p) => tripProductSearch.trim() === ''
+        ? true
+        : p.name.toLowerCase().includes(tripProductSearch.toLowerCase()))
+    .slice(0, 12);
+
+  function removeTripProduct(productId: string) {
+    tripItems = tripItems.filter((i) => i.product_id !== productId);
+  }
+
+  // Friendly stock validation BEFORE the RPC: raw P0001 JSON never reaches
+  // the user (field report: negative warehouse stock showed a JSON blob).
+  function tripStockProblem(): string | null {
+    for (const i of tripItems) {
+      const available = warehouseByProduct.get(i.product_id) ?? 0;
+      const requested = i.quantity * (i.unitsPerPackage || 1);
+      if (requested > available) {
+        return `Stock dépôt insuffisant / Insufficient warehouse stock — ${i.name}: disponible ${available}, demandé ${requested}`;
+      }
+    }
+    return null;
+  }
+
   async function saveTrip() {
     if (!selected) return;
+    const problem = tripStockProblem();
+    if (problem) { error = '⚠️ ' + problem; return; }
     busy = true; error = '';
     try {
       await invoke('cloud_create_truck_load', {
@@ -305,7 +336,9 @@
       physical = {};
       reasons = {};
       for (const r of stockRows) physical[r.product_id] = r.expected;
-      actualCash = Math.round(previewExpectedCash / 100) * 100 > 0 ? Math.round(previewExpectedCash) : 0;
+      // The field is in DA (the RPC takes centimes — we x100 on submit).
+      // Field report: the bar showed raw centimes (319000) — fixed here.
+      actualCash = previewExpectedCash > 0 ? Math.round(previewExpectedCash / 100) : 0;
       cashReason = '';
       showClose = true;
     })();
@@ -328,7 +361,7 @@
         loadId: activeTrip.id,
         counts,
         reasons: reasonMap,
-        actualCash: Math.round(actualCash),
+        actualCash: Math.round(actualCash * 100),
         cashReason: cashReason.trim() || null,
       });
       showClose = false;
@@ -899,16 +932,23 @@
             <Search class="w-3.5 h-3.5 absolute start-2.5 top-2.5 text-pos-muted" />
             <input type="text" bind:value={tripProductSearch} placeholder={t('trucks_add_product')}
               class="w-full ps-8 pe-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-            {#if tripProductMatches.length > 0}
-              <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg overflow-hidden">
-                {#each tripProductMatches as p (p.id)}
+            {#if tripPickable.length > 0}
+              <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto">
+                {#each tripPickable as p (p.id)}
                   <button type="button" on:click={() => addTripProduct(p)}
-                    class="w-full text-start px-3 py-2 text-xs font-bold text-pos-text hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer">{p.name}</button>
+                    class="w-full text-start px-3 py-2 text-xs font-bold text-pos-text hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer flex items-center justify-between">
+                    <span class="truncate">{p.name}</span>
+                    <span class="text-[10px] font-black text-emerald-600 shrink-0 ms-2">{warehouseByProduct.get(p.id) ?? 0} en stock</span>
+                  </button>
                 {/each}
+              </div>
+            {:else if tripProductSearch.trim()}
+              <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg px-3 py-2 text-[11px] text-pos-muted">
+                Aucun produit en stock / No in-stock product matches
               </div>
             {/if}
           </div>
-          {#each tripItems as it (it.product_id)}
+          {#each tripItems as it, tripIdx (it.product_id)}
             <div class="flex items-center gap-2 mb-1.5">
               <Package class="w-3.5 h-3.5 text-pos-muted shrink-0" />
               <span class="text-xs font-bold text-pos-text flex-1 truncate">{it.name}</span>
@@ -923,6 +963,10 @@
               <input type="number" step="1" min="0" bind:value={it.quantity}
                 class="w-20 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
               <span class="text-[9px] text-pos-muted font-mono whitespace-nowrap">= {it.quantity * (it.unitsPerPackage || 1)} base</span>
+              <button type="button" on:click={() => removeTripProduct(it.product_id)}
+                class="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg cursor-pointer shrink-0" title="Retirer / Remove">
+                <X class="w-3.5 h-3.5" />
+              </button>
             </div>
           {/each}
           {#if tripItems.length > 0}
@@ -1012,10 +1056,10 @@
                 class="w-full mt-0.5 px-2 py-1 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-sm font-black font-mono text-pos-text outline-none" />
             </div>
           </div>
-          <div class="mt-2 flex items-center justify-between p-2.5 rounded-xl border {actualCash - previewExpectedCash < 0 ? 'border-rose-300 bg-rose-50 dark:bg-rose-950/40' : 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40'}">
+          <div class="mt-2 flex items-center justify-between p-2.5 rounded-xl border {actualCash * 100 - previewExpectedCash < 0 ? 'border-rose-300 bg-rose-50 dark:bg-rose-950/40' : 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40'}">
             <span class="text-[10px] font-black text-pos-muted uppercase">{t('trucks_cash_diff')}</span>
-            <span class="text-sm font-black font-mono {actualCash - previewExpectedCash < 0 ? 'text-rose-600' : 'text-emerald-600'}">
-              {fmt(actualCash - previewExpectedCash)} DA
+            <span class="text-sm font-black font-mono {actualCash * 100 - previewExpectedCash < 0 ? 'text-rose-600' : 'text-emerald-600'}">
+              {fmt(actualCash * 100 - previewExpectedCash)} DA
             </span>
           </div>
           <input type="text" bind:value={cashReason} placeholder={t('trucks_cash_reason')}

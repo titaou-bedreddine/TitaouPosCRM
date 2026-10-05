@@ -177,6 +177,21 @@ export function addToCart(
   return true;
 }
 
+// Pending packaging-price prompt (owner rule: typing 112 on a Palette-112
+// product must ASK whether the palette price applies). PosView renders it.
+export interface PackagingPrompt {
+  productId: number;
+  isRefund: boolean;
+  saleUnit?: string;
+  newQty: number;
+  packagingName: string;
+  unitsPerPackage: number;
+  packCount: number;
+  unitPrice: number;
+  packPrice: number;
+}
+export const packagingPromptModal = writable<PackagingPrompt | null>(null);
+
 export function updateItemQuantity(
   productId: number,
   isRefund: boolean,
@@ -221,6 +236,48 @@ export function updateItemQuantity(
       return item;
     })
   );
+
+  // Packaging auto-detection (owner rule): a BASE line whose qty hits an
+  // exact packaging multiple pops the unit-vs-package price question. The
+  // line is ALREADY updated at base qty — accepting converts it to the
+  // packaging presentation; declining keeps base.
+  if (!saleUnit && !isRefund && newQty >= 1 && newQty % 1 === 0) {
+    const item = get(cartItems).find(
+      (i) => i.product_id === productId && i.is_refund === isRefund && i.sale_unit === saleUnit
+    );
+    const match = (packagingPromptResolver?.(productId) ?? []).find(
+      (pk) => pk.unitsPerPackage > 1 && newQty % pk.unitsPerPackage === 0
+    );
+    void 0;
+    if (item && match) {
+      packagingPromptModal.set({
+        productId,
+        isRefund,
+        saleUnit,
+        newQty,
+        packagingName: match.name,
+        unitsPerPackage: match.unitsPerPackage,
+        packCount: newQty / match.unitsPerPackage,
+        unitPrice: item.unit_price,
+        packPrice: match.packPrice,
+      });
+    }
+  }
+}
+
+/// PosView registers its packaging cache here at mount so the detector can
+/// see each product's packagings (name / units-per-package / package price
+/// in DZD).
+export interface PromptPack {
+  name: string;
+  unitsPerPackage: number;
+  packPrice: number;
+}
+let packagingPromptResolver: ((productId: number) => PromptPack[]) | null = null;
+export function setPackagingPromptResolver(
+  f: ((productId: number) => PromptPack[]) | null
+) {
+  packagingPromptResolver = f;
 }
 
 export function applyItemDiscount(
