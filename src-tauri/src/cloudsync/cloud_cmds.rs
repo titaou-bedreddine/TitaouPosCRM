@@ -223,7 +223,7 @@ pub fn cloud_field_staff() -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "profiles",
-        "id, full_name, role",
+        "id, full_name, role, employee_type",
         &[
             ("role", "in.(preseller,seller)".into()),
             ("is_active", "eq.true".into()),

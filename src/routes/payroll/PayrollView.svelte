@@ -196,10 +196,23 @@
     }
   }
 
+  // Field staff (CRM profiles, §23/§24): the cashier sees every seller /
+  // preseller / driver with their EMPLOYEE TYPE — one people model, no
+  // duplicates (these are the same persons the trucks are assigned to).
+  let fieldStaff: { id: string; full_name: string; role: string; employee_type?: string }[] = [];
+  async function loadFieldStaff() {
+    try {
+      fieldStaff = await invoke<any[]>('cloud_field_staff');
+    } catch (e) {
+      console.warn('Field staff unavailable (offline?):', e);
+    }
+  }
+
   onMount(async () => {
     await loadEmployees();
     await loadAdvances();
     await loadAbsences();
+    await loadFieldStaff();
   });
 
   async function loadAdvances() {
@@ -449,6 +462,32 @@
       <span>New Employee (موظف جديد)</span>
     </button>
   </div>
+
+  <!-- Field staff (CRM profiles with EMPLOYEE TYPE) -->
+  {#if fieldStaff.length > 0}
+    <div class="bg-pos-card border border-pos-border rounded-2xl p-4 shadow-xs">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-black text-pos-text flex items-center gap-2">
+          <Users class="w-4 h-4 text-purple-600" />
+          Field Staff / Vendeurs terrain — {fieldStaff.length}
+        </h2>
+        <span class="text-[10px] font-bold text-pos-muted">CRM profiles (read-only) — types drive truck assignment</span>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+        {#each fieldStaff as f (f.id)}
+          <div class="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-pos-border">
+            <div class="min-w-0">
+              <p class="text-xs font-black text-pos-text truncate">{f.full_name}</p>
+              <p class="text-[10px] text-pos-muted">{f.employee_type || f.role}</p>
+            </div>
+            <span class="px-2 py-0.5 rounded-full text-[9px] font-black uppercase shrink-0 {f.employee_type === 'preseller' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' : f.employee_type === 'truck_driver' ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300' : 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'}">
+              {f.employee_type || f.role}
+            </span>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   {#if isAddOpen}
     <div class="bg-pos-card border border-pos-border rounded-2xl p-5 shadow-md space-y-4 animate-in zoom-in-95 duration-150">
