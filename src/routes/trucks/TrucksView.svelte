@@ -197,13 +197,13 @@
 
   // Warehouse products actually IN stock (owner: pick from what exists;
   // 0/negative stock is refused server-side with a business error anyway).
-  // If the stock RPC failed (offline?) show ALL products rather than an
-  // always-empty picker — the server still refuses real shortfalls with a
-  // bilingual business error.
+  // Picker shows ALL active products — never filtered by stock (field
+  // report: 'aucun produit en stock' while products existed, caused by a
+  // failed/empty stock map filtering everything out). The stock badge shows
+  // when known; the server + client pre-check still refuse real shortfalls.
   $: stockMapEmpty = warehouseByProduct.size === 0;
   $: tripPickable = products
     .filter((p) => !tripItems.some((i) => i.product_id === p.id))
-    .filter((p) => stockMapEmpty || (warehouseByProduct.get(p.id) ?? 0) > 0)
     .filter((p) => tripProductSearch.trim() === ''
         ? true
         : p.name.toLowerCase().includes(tripProductSearch.toLowerCase()))
@@ -949,7 +949,11 @@
               </div>
             {:else if tripProductSearch.trim()}
               <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg px-3 py-2 text-[11px] text-pos-muted">
-                Aucun produit en stock / No in-stock product matches
+                Aucun produit ne correspond / No product matches
+              </div>
+            {:else if products.length === 0}
+              <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg px-3 py-2 text-[11px] text-rose-600">
+                Impossible de charger les produits — vérifiez la connexion puis rafraîchissez / تعذر تحميل المنتجات
               </div>
             {/if}
           </div>
