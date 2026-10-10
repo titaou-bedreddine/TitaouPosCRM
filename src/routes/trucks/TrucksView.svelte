@@ -202,15 +202,14 @@
   // failed/empty stock map filtering everything out). The stock badge shows
   // when known; the server + client pre-check still refuse real shortfalls.
   $: stockMapEmpty = warehouseByProduct.size === 0;
-  // Picker lists ALL products — already-added ones stay visible (owner: the
-  // seller searches a product, sees it's on the trip, adjusts the quantity
-  // there instead of wondering where it went). Clicking an added row is a
+  // Sidebar lists ALL products, scrollable — already-added ones stay visible
+  // highlighted (owner: the seller must always SEE the added product; the
+  // dropdown was replacing it and hiding it). Clicking an added row is a
   // no-op guarded in addTripProduct.
   $: tripPickable = products
     .filter((p) => tripProductSearch.trim() === ''
         ? true
-        : p.name.toLowerCase().includes(tripProductSearch.toLowerCase()))
-    .slice(0, 12);
+        : p.name.toLowerCase().includes(tripProductSearch.toLowerCase()));
 
   function removeTripProduct(productId: string) {
     tripItems = tripItems.filter((i) => i.product_id !== productId);
@@ -906,97 +905,114 @@
 <!-- New trip (load) modal -->
 {#if showTripForm && selected}
   <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (showTripForm = false)} role="presentation">
-    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-xl max-h-[85vh] flex flex-col" on:click|stopPropagation>
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-3xl max-h-[85vh] flex flex-col" on:click|stopPropagation>
       <div class="p-4 border-b border-pos-border flex items-center justify-between">
         <h3 class="text-sm font-black text-pos-text flex items-center gap-2"><Truck class="w-4 h-4 text-sky-500" />{t('trucks_new_trip')} — {selected.name}</h3>
         <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (showTripForm = false)}><X class="w-4 h-4" /></button>
       </div>
-      <div class="p-4 overflow-y-auto space-y-3">
-        <p class="text-[10px] text-pos-muted">👤 {t('trucks_driver')}: <b>{selected.driver_name || '—'}</b></p>
-        <div class="grid grid-cols-2 gap-2.5">
-          <div>
-            <label class="block text-[10px] font-black text-pos-muted mb-1">{t('tl_seller')}</label>
-            <select bind:value={tripSeller}
-              class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">
-              <option value="">—</option>
-              {#each staff as s (s.id)}<option value={s.id}>{s.full_name} ({s.role})</option>{/each}
-            </select>
-          </div>
-          <div>
-            <label class="block text-[10px] font-black text-pos-muted mb-1">{t('tl_date')}</label>
-            <input type="date" bind:value={tripDate}
-              class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-          </div>
-          <div class="col-span-2">
-            <label class="block text-[10px] font-black text-pos-muted mb-1">{t('routes_name')}</label>
-            <input type="text" bind:value={tripName} placeholder="Tournée {selected.name} — {tripDate}"
-              class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-          </div>
-        </div>
+      <div class="p-4 overflow-y-auto">
+        <div class="flex gap-4 items-start">
+          <!-- Main column: trip fields + the ADDED products (nothing can cover them) -->
+          <div class="flex-1 min-w-0 space-y-3">
+            <p class="text-[10px] text-pos-muted">👤 {t('trucks_driver')}: <b>{selected.driver_name || '—'}</b></p>
+            <div class="grid grid-cols-2 gap-2.5">
+              <div>
+                <label class="block text-[10px] font-black text-pos-muted mb-1">{t('tl_seller')}</label>
+                <select bind:value={tripSeller}
+                  class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">
+                  <option value="">—</option>
+                  {#each staff as s (s.id)}<option value={s.id}>{s.full_name} ({s.role})</option>{/each}
+                </select>
+              </div>
+              <div>
+                <label class="block text-[10px] font-black text-pos-muted mb-1">{t('tl_date')}</label>
+                <input type="date" bind:value={tripDate}
+                  class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+              </div>
+              <div class="col-span-2">
+                <label class="block text-[10px] font-black text-pos-muted mb-1">{t('routes_name')}</label>
+                <input type="text" bind:value={tripName} placeholder="Tournée {selected.name} — {tripDate}"
+                  class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+              </div>
+            </div>
 
-        <div>
-          <p class="text-[10px] font-black text-pos-muted uppercase mb-1.5">{t('tl_products')}</p>
-          <div class="relative mb-1.5">
-            <Search class="w-3.5 h-3.5 absolute start-2.5 top-2.5 text-pos-muted" />
-            <input type="text" bind:value={tripProductSearch} placeholder={t('trucks_add_product')}
-              class="w-full ps-8 pe-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
-            {#if tripPickable.length > 0}
-              <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto">
+            <div>
+              <p class="text-[10px] font-black text-pos-muted uppercase mb-1.5">{t('tl_products')}</p>
+              {#if tripItems.length === 0}
+                <p class="text-[11px] text-pos-muted px-2 py-3 border border-dashed border-pos-border rounded-xl mb-1.5">
+                  Aucun produit ajouté — choisissez dans la liste à droite / No products yet — pick from the list
+                </p>
+              {/if}
+              {#each tripItems as it, tripIdx (it.product_id)}
+                <div class="flex items-center gap-2 mb-1.5">
+                  <Package class="w-3.5 h-3.5 text-pos-muted shrink-0" />
+                  <span class="text-xs font-bold text-pos-text flex-1 truncate">{it.name}</span>
+                  <select bind:value={it.unit}
+                    on:change={() => { const pk = (packTypesFor(it.product_id) || []).find((pk2: any) => pk2.name === it.unit); it.unitsPerPackage = pk ? Number(pk.units_per_package) : 1; }}
+                    class="w-24 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-bold outline-none">
+                    <option value="Base">Base</option>
+                    {#each (packTypesFor(it.product_id) || []) as pk (pk.name)}
+                      <option value={pk.name}>{pk.name} x{pk.units_per_package}</option>
+                    {/each}
+                  </select>
+                  <input type="number" step="1" min="0" bind:value={it.quantity}
+                    class="w-16 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
+                  <button type="button" on:click={() => removeTripProduct(it.product_id)}
+                    class="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg cursor-pointer shrink-0" title="Retirer / Remove">
+                    <X class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <p class="text-[9px] text-pos-muted font-mono mb-1.5 ps-6">{it.unit} × {it.quantity} = {it.quantity * (it.unitsPerPackage || 1)} base</p>
+              {/each}
+              {#if tripItems.length > 0}
+                <p class="text-[10px] font-black text-sky-600">{t('trucks_loaded')}: {tripBaseTotal} base units / unités de base</p>
+              {/if}
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2">
+              <button type="button" on:click={() => (showTripForm = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
+              <button type="button" on:click={saveTrip} disabled={busy || !tripSeller || tripItems.length === 0}
+                class="flex items-center gap-1.5 px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
+                <Truck class="w-3.5 h-3.5" />{t('tl_save')}
+              </button>
+            </div>
+          </div>
+
+          <!-- Sidebar: permanent product list — always fully visible, never a
+               floating dropdown, so an added product can never be hidden. -->
+          <div class="w-60 shrink-0 flex flex-col border border-pos-border rounded-xl bg-slate-50 dark:bg-slate-800/50">
+            <div class="p-2 border-b border-pos-border">
+              <div class="relative">
+                <Search class="w-3.5 h-3.5 absolute start-2.5 top-2.5 text-pos-muted" />
+                <input type="text" bind:value={tripProductSearch} placeholder={t('trucks_add_product')}
+                  class="w-full ps-8 pe-3 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-lg text-xs text-pos-text font-bold outline-none" />
+              </div>
+            </div>
+            <div class="h-72 overflow-y-auto p-1.5 space-y-1">
+              {#if products.length === 0}
+                <div class="px-2 py-2 text-[11px] text-rose-600">
+                  Impossible de charger les produits — vérifiez la connexion puis rafraîchissez / تعذر تحميل المنتجات
+                </div>
+              {:else if tripPickable.length === 0 && tripProductSearch.trim()}
+                <div class="px-2 py-2 text-[11px] text-pos-muted">
+                  Aucun produit ne correspond / No product matches
+                </div>
+              {:else}
                 {#each tripPickable as p (p.id)}
                   {@const added = tripItems.some((i) => i.product_id === p.id)}
                   <button type="button" on:click={() => addTripProduct(p)}
-                    class="w-full text-start px-3 py-2 text-xs font-bold text-pos-text hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer flex items-center justify-between {added ? 'opacity-60' : ''}">
+                    class="w-full text-start px-2 py-2 text-xs font-bold rounded-lg cursor-pointer flex items-center justify-between gap-1 {added ? 'bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300' : 'text-pos-text hover:bg-white dark:hover:bg-slate-900'}">
                     <span class="truncate">{p.name}</span>
                     {#if added}
-                      <span class="text-[10px] font-black text-sky-600 shrink-0 ms-2">{t('trucks_already_added')}</span>
+                      <span class="text-[9px] font-black shrink-0">{t('trucks_already_added')}</span>
                     {:else}
-                      <span class="text-[10px] font-black {stockMapEmpty ? 'text-pos-muted' : 'text-emerald-600'} shrink-0 ms-2">{stockMapEmpty ? 'stock ?' : `${warehouseByProduct.get(p.id) ?? 0} en stock`}</span>
+                      <span class="text-[9px] font-black {stockMapEmpty ? 'text-pos-muted' : 'text-emerald-600'} shrink-0">{stockMapEmpty ? 'stock ?' : `${warehouseByProduct.get(p.id) ?? 0}`}</span>
                     {/if}
                   </button>
                 {/each}
-              </div>
-            {:else if tripProductSearch.trim()}
-              <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg px-3 py-2 text-[11px] text-pos-muted">
-                Aucun produit ne correspond / No product matches
-              </div>
-            {:else if products.length === 0}
-              <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg px-3 py-2 text-[11px] text-rose-600">
-                Impossible de charger les produits — vérifiez la connexion puis rafraîchissez / تعذر تحميل المنتجات
-              </div>
-            {/if}
-          </div>
-          {#each tripItems as it, tripIdx (it.product_id)}
-            <div class="flex items-center gap-2 mb-1.5">
-              <Package class="w-3.5 h-3.5 text-pos-muted shrink-0" />
-              <span class="text-xs font-bold text-pos-text flex-1 truncate">{it.name}</span>
-              <select bind:value={it.unit}
-                on:change={() => { const pk = (packTypesFor(it.product_id) || []).find((pk2: any) => pk2.name === it.unit); it.unitsPerPackage = pk ? Number(pk.units_per_package) : 1; }}
-                class="w-28 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-bold outline-none">
-                <option value="Base">Base</option>
-                {#each (packTypesFor(it.product_id) || []) as pk (pk.name)}
-                  <option value={pk.name}>{pk.name} x{pk.units_per_package}</option>
-                {/each}
-              </select>
-              <input type="number" step="1" min="0" bind:value={it.quantity}
-                class="w-20 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
-              <span class="text-[9px] text-pos-muted font-mono whitespace-nowrap">= {it.quantity * (it.unitsPerPackage || 1)} base</span>
-              <button type="button" on:click={() => removeTripProduct(it.product_id)}
-                class="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg cursor-pointer shrink-0" title="Retirer / Remove">
-                <X class="w-3.5 h-3.5" />
-              </button>
+              {/if}
             </div>
-          {/each}
-          {#if tripItems.length > 0}
-            <p class="text-[10px] font-black text-sky-600">{t('trucks_loaded')}: {tripBaseTotal} base units / unités de base</p>
-          {/if}
-        </div>
-
-        <div class="flex justify-end gap-2 pt-2">
-          <button type="button" on:click={() => (showTripForm = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
-          <button type="button" on:click={saveTrip} disabled={busy || !tripSeller || tripItems.length === 0}
-            class="flex items-center gap-1.5 px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
-            <Truck class="w-3.5 h-3.5" />{t('tl_save')}
-          </button>
+          </div>
         </div>
       </div>
     </div>
