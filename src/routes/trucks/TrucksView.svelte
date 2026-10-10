@@ -202,8 +202,11 @@
   // failed/empty stock map filtering everything out). The stock badge shows
   // when known; the server + client pre-check still refuse real shortfalls.
   $: stockMapEmpty = warehouseByProduct.size === 0;
+  // Picker lists ALL products — already-added ones stay visible (owner: the
+  // seller searches a product, sees it's on the trip, adjusts the quantity
+  // there instead of wondering where it went). Clicking an added row is a
+  // no-op guarded in addTripProduct.
   $: tripPickable = products
-    .filter((p) => !tripItems.some((i) => i.product_id === p.id))
     .filter((p) => tripProductSearch.trim() === ''
         ? true
         : p.name.toLowerCase().includes(tripProductSearch.toLowerCase()))
@@ -940,10 +943,15 @@
             {#if tripPickable.length > 0}
               <div class="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-pos-border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto">
                 {#each tripPickable as p (p.id)}
+                  {@const added = tripItems.some((i) => i.product_id === p.id)}
                   <button type="button" on:click={() => addTripProduct(p)}
-                    class="w-full text-start px-3 py-2 text-xs font-bold text-pos-text hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer flex items-center justify-between">
+                    class="w-full text-start px-3 py-2 text-xs font-bold text-pos-text hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer flex items-center justify-between {added ? 'opacity-60' : ''}">
                     <span class="truncate">{p.name}</span>
-                    <span class="text-[10px] font-black {stockMapEmpty ? 'text-pos-muted' : 'text-emerald-600'} shrink-0 ms-2">{stockMapEmpty ? 'stock ?' : `${warehouseByProduct.get(p.id) ?? 0} en stock`}</span>
+                    {#if added}
+                      <span class="text-[10px] font-black text-sky-600 shrink-0 ms-2">{t('trucks_already_added')}</span>
+                    {:else}
+                      <span class="text-[10px] font-black {stockMapEmpty ? 'text-pos-muted' : 'text-emerald-600'} shrink-0 ms-2">{stockMapEmpty ? 'stock ?' : `${warehouseByProduct.get(p.id) ?? 0} en stock`}</span>
+                    {/if}
                   </button>
                 {/each}
               </div>
