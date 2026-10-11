@@ -172,6 +172,22 @@
   async function printTrip(copies: number) {
     if (!activeTrip || !stockRows.length) return;
     for (let c = 0; c < copies; c++) {
+      // P.U. = the product's base unit sale price (products.unit_price is
+      // CENTIMES in Supabase; the A4/thermal templates print raw DA) and
+      // Total = P.U. x loaded base qty — the manifest must state the VALUE
+      // of what the truck carries, not just quantities.
+      const items = stockRows.map((r) => {
+        const puDa = Number(products.find((p) => p.id === r.product_id)?.unit_price ?? 0) / 100;
+        const total = Math.round(puDa * r.loaded);
+        return {
+          name: r.name,
+          quantity: r.loaded,
+          unitPrice: puDa,
+          totalPrice: total,
+          notes: 'Charge: ' + r.loaded + ' (base)',
+        };
+      });
+      const grandTotal = items.reduce((s, it) => s + it.totalPrice, 0);
       const result = await printService.printDocument({
         id: activeTrip.id,
         documentNumber: 'TRIP-' + String(activeTrip.id).slice(0, 8),
@@ -179,14 +195,8 @@
         title: 'BON DE CHARGEMENT - TOURNEE',
         date: String(activeTrip.route_date || new Date().toISOString()).slice(0, 10),
         party: { name: (selected?.name || '') + ' - ' + (activeTrip.driver_name || ''), type: 'employee' },
-        items: stockRows.map((r) => ({
-          name: r.name,
-          quantity: r.loaded,
-          unitPrice: 0,
-          totalPrice: 0,
-          notes: 'Charge: ' + r.loaded + ' (base)',
-        })),
-        subtotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0,
+        items,
+        subtotal: grandTotal, discountTotal: 0, taxTotal: 0, grandTotal,
         notes: 'Vendeur: ' + sellerName(selected?.seller_id) + ' - Chauffeur: ' + (activeTrip.driver_name || '-'),
         footerNote: c === 0 ? 'Exemplaire depot / Warehouse copy' : 'Exemplaire camion / Truck copy',
       });

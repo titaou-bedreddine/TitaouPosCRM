@@ -1126,13 +1126,14 @@ pub fn cloud_promotions_active() -> Result<Value, String> {
     client.rpc("active_promotions", serde_json::json!({}))
 }
 
-/// CRM products (id, name) — the promotion product picker.
+/// CRM products (id, name, unit_price centimes) — the promotion product picker
+/// AND the Trucks page (unit_price prices the printed bon de chargement).
 #[tauri::command]
 pub fn cloud_products_for_promos() -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "products",
-        "id, name, packagings:product_packagings(name, units_per_package, sale_price)",
+        "id, name, unit_price, packagings:product_packagings(name, units_per_package, sale_price)",
         &[("is_active", "eq.true".into()), ("order", "name.asc".into())],
     )?;
     Ok(Value::Array(rows))
