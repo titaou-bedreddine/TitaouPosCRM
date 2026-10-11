@@ -70,7 +70,12 @@
     error = '';
     try {
       let warehouseStock: any[] = [];
-      [trucks, staff, products, trips, loads, warehouseStock] = await Promise.all([
+      // Target order MUST mirror the invoke order exactly: since QA5 the
+      // warehouse_stock invoke sat in position 4 while warehouseStock was
+      // the 6th target — trips got the stock rows, loads got the stats and
+      // the stock map was built from load rows (every product badge showed
+      // 0, 'aucun produit en stock' survived two QA rounds).
+      [trucks, staff, products, warehouseStock, trips, loads] = await Promise.all([
         invoke<any[]>('cloud_list_trucks').catch(() => []),
         invoke<any[]>('cloud_field_staff').catch(() => []),
         invoke<any[]>('cloud_products_for_promos').catch(() => []),
