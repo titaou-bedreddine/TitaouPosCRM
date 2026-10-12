@@ -756,10 +756,15 @@
   "trucks_history": "Historique des tournées",
   "trucks_date": "Date",
   "trucks_status": "Statut actuel",
-  "trucks_audit": "Audit de la tournée",
+  "trucks_audit": "Audit",
   "trucks_deposit": "Déposer en caisse",
   "trucks_need_session": "Ouvrez une session de caisse pour déposer",
   "trucks_already_deposited": "ℹ️ Déjà déposé en caisse",
+  "trucks_deposited": "Déposé ✓",
+  "reg_view": "Voir",
+  "reg_return": "Retour",
+  "reg_return_confirm": "Retourner ce dépôt ? L'argent sort de la caisse et retourne au vendeur.",
+  "reg_view_fail": "Impossible de charger les détails de la tournée.",
   "trucks_reason": "Motif",
   "trucks_channel_filter": "Origine",
   "trucks_direct": "Vente directe",
@@ -811,5 +816,9 @@
   "trucks_no_active_trip": "Aucune tournée active pour ce camion.",
   "trucks_already_closed": "Cette tournée est déjà CLÔTURÉE — ouvrez l'audit depuis l'historique.",
   "trucks_need_reconcile": "Cette tournée doit être EN RÉCONCILIATION avant la clôture — rouvrez la réconciliation d'abord.",
-  "trucks_delete_type_truck": "Tapez TRUCK pour confirmer"
+  "trucks_delete_type_truck": "Tapez TRUCK pour confirmer",
+  "team_admin_password": "Votre mot de passe admin (votre mot de passe de connexion)",
+  "team_admin_password_hint": "Le mot de passe de VOTRE compte admin (celui avec lequel vous vous connectez) — pas un mot de passe séparé.",
+  "team_new_password": "Nouveau mot de passe du membre (optionnel) — réinitialise sa connexion",
+  "team_admin_password_prompt": "Votre mot de passe admin (votre mot de passe de connexion) :"
 }

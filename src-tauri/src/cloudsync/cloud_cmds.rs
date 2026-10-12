@@ -172,17 +172,21 @@ pub fn cloud_team_members() -> Result<Value, String> {
 }
 
 /// Invite a member (preseller/seller/admin) via the invite-user Edge Function.
+/// admin_password = the CALLER's own password — the edge function re-verifies
+/// it (403 'Admin password required' without it; the caller's OWN login
+/// password, NOT a separate 'CRM password').
 #[tauri::command]
 pub fn cloud_team_invite(
     email: String,
     full_name: String,
     role: String,
     password: Option<String>,
+    admin_password: Option<String>,
 ) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     client.function(
         "invite-user",
-        serde_json::json!({ "email": email, "fullName": full_name, "role": role, "password": password }),
+        serde_json::json!({ "email": email, "fullName": full_name, "role": role, "password": password, "adminPassword": admin_password }),
     )
 }
 
@@ -193,6 +197,7 @@ pub fn cloud_team_update(
     full_name: Option<String>,
     role: Option<String>,
     password: Option<String>,
+    admin_password: Option<String>,
 ) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     client.function(
@@ -203,17 +208,21 @@ pub fn cloud_team_update(
             "fullName": full_name,
             "role": role,
             "password": password,
+            "adminPassword": admin_password,
         }),
     )
 }
 
 /// Delete a member via manage-user (refuses the last active admin server-side).
 #[tauri::command]
-pub fn cloud_team_delete(user_id: String) -> Result<Value, String> {
+pub fn cloud_team_delete(
+    user_id: String,
+    admin_password: Option<String>,
+) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     client.function(
         "manage-user",
-        serde_json::json!({ "action": "delete", "userId": user_id }),
+        serde_json::json!({ "action": "delete", "userId": user_id, "adminPassword": admin_password }),
     )
 }
 
@@ -705,7 +714,10 @@ pub fn cloud_recent_direct_orders(
         query.push(("created_at", format!("lt.{end}T00:00:00")));
     }
     let rows = client.select("orders",
-        "id, created_at, source, payment_status, total_amount, amount_paid, notes, \n         client_id, seller_id, preseller_id, truck_load_id, \n         client:clients(name), load:truck_loads(name)",
+        // SINGLE LINE — a literal \n inside the select param reached PostgREST
+        // un-encoded and failed the parser (PGRST100 'failed to parse select
+        // parameter', exactly at the newline after 'notes,').
+        "id, created_at, source, payment_status, total_amount, amount_paid, notes, client_id, seller_id, preseller_id, truck_load_id, client:clients(name), load:truck_loads(name)",
         &query)?;
 
     // Seller names: a tiny profiles map (the org's field staff is small).

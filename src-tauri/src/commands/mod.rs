@@ -376,6 +376,22 @@ pub fn deposit_truck_settlement(
     )
 }
 
+/// Trips with an EXISTING settlement deposit (Trucks page disables re-deposit).
+#[tauri::command]
+pub fn list_deposited_truck_settlements(db: State<'_, DbState>) -> Result<Vec<String>, String> {
+    crate::services::cash_service::list_deposited_truck_settlements(&db)
+}
+
+/// Cancel a truck settlement deposit — the cash goes back out of the register.
+#[tauri::command]
+pub fn return_truck_settlement(
+    db: State<'_, DbState>,
+    movement_id: i64,
+    user_id: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    crate::services::cash_service::return_truck_settlement(&db, movement_id, user_id)
+}
+
 #[tauri::command]
 pub fn get_sale_items(db: State<'_, DbState>, sale_id: i64) -> Result<Vec<CartItem>, String> {
     sales_service::get_sale_items(&db, sale_id)

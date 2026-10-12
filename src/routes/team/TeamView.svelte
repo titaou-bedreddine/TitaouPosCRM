@@ -22,6 +22,11 @@
   let editName = '';
   let editRole = 'preseller';
   let editPassword = '';
+  // The caller's OWN password — the cloud edge functions re-verify it
+  // (NOT a separate 'CRM password': it's the password YOU log into the POS
+  // with).
+  let invAdminPassword = '';
+  let editAdminPassword = '';
 
   async function load() {
     loading = true;
@@ -43,9 +48,10 @@
       await invoke('cloud_team_invite', {
         email: invEmail, fullName: invName, role: invRole,
         password: invPassword || null,
+        adminPassword: invAdminPassword || null,
       });
       showInvite = false;
-      invEmail = invName = invPassword = '';
+      invEmail = invName = invPassword = invAdminPassword = '';
       await load();
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
@@ -63,8 +69,10 @@
         fullName: editName,
         role: editRole,
         password: editPassword || null,
+        adminPassword: editAdminPassword || null,
       });
       editMember = null;
+      editAdminPassword = '';
       await load();
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
@@ -74,11 +82,13 @@
   }
 
   async function remove(m: any) {
-    if (!confirm(t('team_confirm_delete'))) return;
+    const pwd = prompt(
+      t('team_admin_password_prompt') || 'Your admin password (YOUR OWN POS login password): / كلمة مرورك أنت:');
+    if (pwd === null) return;
     busy = true;
     error = '';
     try {
-      await invoke('cloud_team_delete', { userId: m.id });
+      await invoke('cloud_team_delete', { userId: m.id, adminPassword: pwd || null });
       await load();
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
@@ -191,9 +201,11 @@
       </select>
       <input type="text" bind:value={invPassword} placeholder="({t('cloud_password')})"
         class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+      <input type="password" bind:value={invAdminPassword} placeholder={t('team_admin_password')}
+        class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
       <div class="flex justify-end gap-2 pt-2">
         <button type="button" on:click={() => (showInvite = false)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">{t('cloud_disconnect').split(' ')[0] === 'Disconnect' ? 'Cancel' : 'إلغاء'}</button>
-        <button type="button" on:click={invite} disabled={busy || !invEmail || !invName}
+        <button type="button" on:click={invite} disabled={busy || !invEmail || !invName || !invAdminPassword}
           class="px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">OK</button>
       </div>
     </div>
@@ -215,13 +227,16 @@
         <option value="seller">seller</option>
         <option value="admin">admin</option>
       </select>
-      <input type="text" bind:value={editPassword} placeholder="({t('cloud_password')})"
+      <input type="text" bind:value={editPassword} placeholder={t('team_new_password')}
         class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+      <input type="password" bind:value={editAdminPassword} placeholder={t('team_admin_password')}
+        class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none" />
+      <p class="text-[9px] text-pos-muted font-bold">{t('team_admin_password_hint')}</p>
       <div class="flex justify-end gap-2 pt-2">
         <button type="button" on:click={() => (editMember = null)} class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">
           <X class="w-4 h-4" />
         </button>
-        <button type="button" on:click={saveEdit} disabled={busy || !editName}
+        <button type="button" on:click={saveEdit} disabled={busy || !editName || !editAdminPassword}
           class="px-4 py-2 text-[11px] font-black bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">OK</button>
       </div>
     </div>

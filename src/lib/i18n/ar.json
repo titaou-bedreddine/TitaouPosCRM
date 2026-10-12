@@ -756,10 +756,15 @@
   "trucks_history": "سجل الجولات",
   "trucks_date": "التاريخ",
   "trucks_status": "الحالة الحالية",
-  "trucks_audit": "تدقيق الجولة",
+  "trucks_audit": "تدقيق",
   "trucks_deposit": "إيداع في الصندوق",
   "trucks_need_session": "افتح جلسة الصندوق للإيداع",
   "trucks_already_deposited": "ℹ️ تم الإيداع مسبقا",
+  "trucks_deposited": "مودع ✓",
+  "reg_view": "عرض",
+  "reg_return": "إرجاع",
+  "reg_return_confirm": "إرجاع هذا الإيداع إلى البائع؟",
+  "reg_view_fail": "تعذر تحميل تفاصيل التوني.",
   "trucks_reason": "السبب",
   "trucks_channel_filter": "المصدر",
   "trucks_direct": "بيع مباشر",
@@ -811,5 +816,9 @@
   "trucks_no_active_trip": "لا توجد جولة نشطة لهذه الشاحنة.",
   "trucks_already_closed": "هذه الجولة مُغلقة بالفعل — افتح التدقيق من جدول السجل.",
   "trucks_need_reconcile": "يجب أن تكون الجولة في مرحلة الجرد قبل الإغلاق — أعد فتح الجرد أولاً.",
-  "trucks_delete_type_truck": "اكتب TRUCK للتأكيد"
+  "trucks_delete_type_truck": "اكتب TRUCK للتأكيد",
+  "team_admin_password": "كلمة مرورك أنت (كلمة مرور دخولك للبرنامج)",
+  "team_admin_password_hint": "",
+  "team_new_password": "كلمة مرور جديدة للعضو (اختياري)",
+  "team_admin_password_prompt": "كلمة مرورك أنت (كلمة مرور دخولك للبرنامج):"
 }

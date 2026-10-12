@@ -464,6 +464,99 @@ pub fn deposit_truck_settlement(
     Ok(serde_json::json!({ "already_deposited": false, "movement_id": movement_id }))
 }
 
+/// Which closed trips ALREADY have a settlement deposit in the register —
+/// the Trucks page disables the deposit button for these (owner: no double
+/// deposit); the register's Retour action removes the movement (see
+/// return_truck_settlement) which frees the trip for a new deposit.
+pub fn list_deposited_truck_settlements(db: &DbState) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT reference_id FROM cash_movements WHERE reference_type = 'truck_settlement'",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .map(|reference_id| {
+            reference_id
+                .trim_start_matches("truck_settlement:")
+                .to_string()
+        })
+        .collect();
+    Ok(ids)
+}
+
+/// RETURN (cancel) a truck settlement deposit (owner: deposited the wrong
+/// trip / amount): deletes the cash_in movement and decrements the session's
+/// expected_cash in ONE transaction — the money is back with the seller and
+/// the trip can be deposited again. Refuses when the session is closed
+/// (history must stay frozen once closed).
+pub fn return_truck_settlement(
+    db: &DbState,
+    movement_id: i64,
+    user_id: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let mut conn = db.conn.lock().unwrap();
+    let (session_id, amount, load_id): (i64, i64, String) = conn
+        .query_row(
+            "SELECT session_id, amount, COALESCE(reference_id, '') FROM cash_movements
+              WHERE id = ?1 AND reference_type = 'truck_settlement'",
+            [movement_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| "Deposit movement not found / حركة الإيداع غير موجودة".to_string())?;
+
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM cash_sessions WHERE id = ?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if status == "closed" {
+        return Err(
+            "Session caisse clôturée — dépôt non retournable / Session closed — cannot return the deposit"
+                .into(),
+        );
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM cash_movements WHERE id = ?1 AND reference_type = 'truck_settlement'",
+        [movement_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE cash_sessions SET expected_cash = expected_cash - ?1 WHERE id = ?2",
+        rusqlite::params![amount, session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    drop(conn);
+
+    // Telegram alert (fire-and-forget), mirror of the deposit alert.
+    {
+        let lang = crate::services::notifier_service::ui_language(db);
+        let actor = crate::services::notifier_service::actor_label(db, user_id);
+        crate::services::notifier_service::notify_if_enabled(
+            db,
+            "notify_cash_in",
+            crate::services::notifier_service::tr(
+                &lang,
+                (
+                    format!("↩️ *Truck settlement deposit RETURNED*\nAmount: *{amount} DZD*\nTrip: {load_id}\n👤 By: {actor}"),
+                    format!("↩️ *إرجاع إيداع مالية التوني*\nالمبلغ: *{amount} دج*\nالتوني: {}\n👤 بواسطة: {}", load_id, actor),
+                    format!("↩️ *Retour de dépôt de tournée camion*\nMontant : *{amount} DZD*\nTournée : {}\n👤 Par : {}", load_id, actor),
+                ),
+            ),
+        );
+    }
+
+    Ok(serde_json::json!({ "returned": true, "load_id": load_id, "amount": amount }))
+}
+
 pub fn close_session(db: &DbState, session_id: i64, actual_cash: i64, notes: Option<String>) -> Result<(), String> {
     let conn = db.conn.lock().unwrap();
     
@@ -493,7 +586,7 @@ pub fn list_movements(db: &DbState, session_id: i64) -> Result<Vec<CashMovement>
     let mut stmt = conn
         .prepare(
             "SELECT cm.id, cm.session_id, cm.user_id, u.display_name, cm.type, cm.amount, cm.reason, cm.created_at, cm.notes,
-                    COALESCE(cm.terminal_name, '')
+                    COALESCE(cm.terminal_name, ''), COALESCE(cm.reference_type, ''), COALESCE(cm.reference_id, '')
              FROM cash_movements cm
              LEFT JOIN users u ON cm.user_id = u.id
              WHERE cm.session_id = ?1
@@ -515,6 +608,14 @@ pub fn list_movements(db: &DbState, session_id: i64) -> Result<Vec<CashMovement>
                 notes: row.get(8)?,
                 terminal_name: {
                     let t: String = row.get(9)?;
+                    if t.is_empty() { None } else { Some(t) }
+                },
+                reference_type: {
+                    let t: String = row.get(10)?;
+                    if t.is_empty() { None } else { Some(t) }
+                },
+                reference_id: {
+                    let t: String = row.get(11)?;
                     if t.is_empty() { None } else { Some(t) }
                 },
             })

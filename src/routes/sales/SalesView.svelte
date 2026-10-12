@@ -601,6 +601,28 @@
     </div>
   </div>
 
+  <!-- Android / direct-truck totals (owner: both scopes shown SEPARATELY —
+       the cards above are POS counter sales ONLY; this row is the
+       Android direct_truck sales for the same period). -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
+    <div class="bg-pos-card border border-pos-border p-2.5 rounded-2xl shadow-xs">
+      <p class="text-[9px] font-black text-sky-600 uppercase">📱 {t('sales_android') || 'Android'} — {t('sales_transactions')}</p>
+      <p class="text-sm font-black font-mono text-pos-text">{androidTotals.count.toLocaleString()}</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border p-2 rounded-2xl shadow-xs">
+      <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_total_revenue')}</p>
+      <p class="text-sm font-black font-mono text-emerald-600">{androidTotals.gross.toLocaleString()} DZD</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border p-2 rounded-2xl shadow-xs">
+      <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_net_paid')}</p>
+      <p class="text-sm font-black font-mono text-blue-600">{androidTotals.paid.toLocaleString()} DZD</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border p-2 rounded-2xl shadow-xs">
+      <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_credit_due')}</p>
+      <p class="text-sm font-black font-mono text-amber-600">{Math.max(0, androidTotals.gross - androidTotals.paid).toLocaleString()} DZD</p>
+    </div>
+  </div>
+
   <!-- Source toggle (spec §19): POS counter sales vs Android Direct Sale. -->
   <div class="flex items-center justify-between shrink-0">
     <DateQuickFilters bind:startDate bind:endDate onChange={() => sourceTab === 'android' ? loadAndroidOrders() : loadSales()} />

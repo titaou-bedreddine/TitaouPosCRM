@@ -85,6 +85,7 @@
       ]);
       warehouseByProduct = new Map(warehouseStock.map((r: any) => [r.product_id, Number(r.current_stock ?? 0)]));
       if (!selectedId && trucks.length > 0) selectedId = trucks[0].id;
+      await refreshDeposited();
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
     } finally {
@@ -542,6 +543,9 @@
     const reconc: any[] = auditData.reconciliations ?? [];
     const exps: any[] = auditData.expenses ?? [];
     const expenseTotal = exps.reduce((s, e) => s + Number(e.amount ?? 0), 0);
+    // NET À PAYER = TOTAL VENTES (gross, owner decision) — out_sales_value is
+    // CENTIMES; the print templates format raw DA.
+    const salesDa = Math.round(Number(auditTrip.out_sales_value ?? 0) / 100);
     const result = await printService.printDocument({
       id: auditTrip.out_load_id,
       documentNumber: 'RECAP-' + String(auditTrip.out_load_id).slice(0, 8),
@@ -559,7 +563,7 @@
           notes: `Vendu: ${sold} · Attendu: ${Number(r.expected_quantity ?? 0)} · Physique: ${Number(r.physical_quantity ?? 0)} · Écart: ${Number(r.difference ?? 0)}${r.reason && r.reason !== 'none' ? ' (' + r.reason + ')' : ''}`,
         };
       }),
-      subtotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0,
+      subtotal: salesDa, discountTotal: 0, taxTotal: 0, grandTotal: salesDa,
       notes: [
         `Vendeur: ${auditTrip.out_seller_name || '—'}`,
         `Ventes: ${fmt(auditTrip.out_sales_value)} DA · Espèces: ${fmt(auditTrip.out_cash_value)} DA · Crédit: ${fmt(auditTrip.out_outstanding)} DA`,
@@ -573,17 +577,31 @@
   }
 
   let depositBusy = '';
+  // Trips that ALREADY have a settlement deposit in the register — the
+  // deposit button greys out for these (owner: no double deposit); a Retour
+  // from the register frees the trip for a new deposit.
+  let depositedLoads = new Set<string>();
+  async function refreshDeposited() {
+    try {
+      depositedLoads = new Set(await invoke<string[]>('list_deposited_truck_settlements'));
+    } catch { depositedLoads = new Set(); }
+  }
   async function deposit(tp: any) {
     if (!$activeSession || !$currentUser) { error = t('trucks_need_session'); return; }
     depositBusy = tp.out_load_id;
     try {
+      const loadRow = loads.find((l) => l.id === tp.out_load_id);
       const res = await invoke<any>('deposit_truck_settlement', {
         sessionId: $activeSession.id,
         userId: $currentUser.id,
         loadId: tp.out_load_id,
         amount: Math.round(tp.out_actual_cash ?? 0),
+        // Description the register log must show (owner: trip name + truck
+        // name + seller name, not a raw uuid).
+        reason: `Tournée "${loadRow?.name ?? ''}" — Camion ${tp.out_truck_name || '—'} — Vendeur ${tp.out_seller_name || '—'}`,
       });
       msg = res?.already_deposited ? t('trucks_already_deposited') : '✅';
+      depositedLoads = new Set(await invoke<string[]>('list_deposited_truck_settlements').catch(() => []));
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
     } finally {
@@ -829,12 +847,27 @@
                       <td class="p-1.5 text-end font-mono">{tp.out_actual_cash === null ? '—' : fmt(tp.out_actual_cash)}</td>
                       <td class="p-1.5 text-end font-mono font-black {tp.out_cash_difference === null ? '' : tp.out_cash_difference < 0 ? 'text-rose-600' : 'text-emerald-600'}">{tp.out_cash_difference === null ? '—' : fmt(tp.out_cash_difference)}</td>
                       <td class="p-1.5 text-end space-x-1 whitespace-nowrap">
-                        <button type="button" on:click={() => printHistoryTrip(tp)} class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" title="Print / Imprimer"><Printer class="w-3 h-3" /></button>
+                        <!-- Labeled action buttons (owner: bigger + named so
+                             each is understandable) -->
+                        <button type="button" on:click={() => printHistoryTrip(tp)}
+                          class="px-2 py-1.5 text-[10px] font-black text-pos-muted hover:text-pos-text hover:bg-slate-100 dark:hover:bg-slate-800 border border-pos-border rounded-lg cursor-pointer inline-flex items-center gap-1">
+                          <Printer class="w-3.5 h-3.5" />{t('tl_print')}
+                        </button>
                         {#if tp.out_status === 'closed'}
-                          <button type="button" on:click={() => viewAudit(tp)} class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" title="Audit"><Lock class="w-3 h-3" /></button>
+                          <button type="button" on:click={() => viewAudit(tp)}
+                            class="px-2 py-1.5 text-[10px] font-black text-pos-muted hover:text-pos-text hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer rounded-lg border border-pos-border">
+                            🔒 {t('trucks_audit')}
+                          </button>
                           {#if (tp.out_actual_cash ?? 0) > 0}
-                            <button type="button" on:click={() => deposit(tp)} disabled={depositBusy === tp.out_load_id || !$activeSession}
-                              class="p-1 text-emerald-600 hover:bg-emerald-50 cursor-pointer disabled:opacity-40" title={t('trucks_deposit')}><Wallet class="w-3 h-3" /></button>
+                            {#if depositedLoads.has(tp.out_load_id)}
+                              <span class="px-2 py-1.5 text-[10px] font-black text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 rounded-lg">✓ {t('trucks_deposited')}</span>
+                            {:else}
+                              <button type="button" on:click={() => deposit(tp)}
+                                disabled={depositBusy === tp.out_load_id || !$activeSession}
+                                class="px-2 py-1.5 text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 cursor-pointer rounded-lg">
+                                <Wallet class="w-3 h-3 inline -mt-0.5 me-0.5" />{t('trucks_deposit')}
+                              </button>
+                            {/if}
                           {/if}
                         {/if}
                       </td>

@@ -187,6 +187,9 @@ export interface CashMovement {
   notes?: string;
   /** LAN: PC name of the terminal that recorded this movement. */
   terminal_name?: string;
+  /** What the movement books (e.g. 'truck_settlement') + its reference. */
+  reference_type?: string;
+  reference_id?: string;
 }
 
 export interface Sale {

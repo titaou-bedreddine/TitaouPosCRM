@@ -178,6 +178,38 @@
     }
   }
 
+  // ── Truck settlement rows: VIEW the trip's immutable audit + RETURN the
+  //    deposit (owner: the uuid-only line did nothing when tapped). ──────────
+
+  async function viewSettlementTrip(m: CashMovement) {
+    const loadId = (m.reference_id || '').replace('truck_settlement:', '');
+    try {
+      const data = await invoke<any>('cloud_trip_settlement', { loadId });
+      settlementTrip = { loadId, data };
+    } catch (e) {
+      settlementTrip = { loadId, data: null };
+    }
+  }
+
+  async function returnSettlement(m: CashMovement) {
+    if (!confirm(t('reg_return_confirm') + '\n\n' + (m.reason || ''))) return;
+    settlementBusyId = m.id;
+    settlementError = '';
+    try {
+      await invoke('return_truck_settlement', { movementId: m.id, userId: $currentUser?.id ?? null });
+      await loadData();
+    } catch (e: any) {
+      settlementError = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      settlementBusyId = null;
+    }
+  }
+
+  // Trip detail sheet state (Voir action).
+  let settlementTrip: any = null;
+  let settlementBusyId: number | null = null;
+  let settlementError = '';
+
   async function loadHistorySessions() {
     try {
       historySessions = await invoke<CashSession[]>('list_session_history', {
@@ -626,18 +658,19 @@
 
         <table class="w-full text-start text-xs border-collapse">
           <thead>
-            <tr class="border-b border-pos-border text-pos-muted font-bold">
-              <th class="p-3 text-start">{t('reg_col_time')}</th>
-              <th class="p-3 text-start">{t('reg_col_type')}</th>
-              <th class="p-3 text-start">{t('reg_col_description')}</th>
-              <th class="p-3 text-start">{t('terminal')}</th>
-              <th class="p-3 text-end">{t('reg_col_amount')}</th>
-            </tr>
+              <tr class="border-b border-pos-border text-pos-muted font-bold">
+                <th class="p-3 text-start">{t('reg_col_time')}</th>
+                <th class="p-3 text-start">{t('reg_col_type')}</th>
+                <th class="p-3 text-start">{t('reg_col_description')}</th>
+                <th class="p-3 text-start">{t('terminal')}</th>
+                <th class="p-3 text-end">{t('reg_col_amount')}</th>
+                <th class="p-3"></th>
+              </tr>
           </thead>
           <tbody>
             {#if movements.length === 0}
               <tr>
-                <td colspan="5" class="p-8 text-center text-pos-muted">{t('reg_no_movements')}</td>
+                <td colspan="7" class="p-8 text-center text-pos-muted">{t('reg_no_movements')}</td>
               </tr>
             {:else}
               {#each movements as m}
@@ -655,11 +688,27 @@
                   <td class="p-3 text-end font-mono font-bold text-sm {m.amount < 0 ? 'text-rose-600' : 'text-emerald-600'}">
                     {m.amount.toLocaleString()} DZD
                   </td>
+                  <!-- Truck settlement rows: VIEW the trip + RETURN the
+                       deposit (owner: the raw uuid line did nothing) -->
+                  {#if m.reference_type === 'truck_settlement'}
+                    <td class="p-2 whitespace-nowrap">
+                      <button type="button" on:click={() => viewSettlementTrip(m)}
+                        class="px-2 py-1 text-[10px] font-black text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/40 border border-pos-border rounded-lg cursor-pointer">{t('reg_view')}</button>
+                      <button type="button" on:click={() => returnSettlement(m)}
+                        disabled={settlementBusyId === m.id}
+                        class="ms-1 px-2 py-1 text-[10px] font-black text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg cursor-pointer disabled:opacity-40">{t('reg_return')}</button>
+                    </td>
+                  {:else}
+                    <td></td>
+                  {/if}
                 </tr>
               {/each}
             {/if}
           </tbody>
         </table>
+        {#if settlementError}
+          <p class="p-3 text-[11px] font-bold text-rose-600 border-t border-pos-border">{settlementError}</p>
+        {/if}
       </div>
     {:else}
       <div class="p-12 text-center bg-pos-card border border-pos-border rounded-2xl shadow-sm max-w-md mx-auto my-8">
@@ -1204,6 +1253,47 @@
           >
             {isSubmittingDelete ? 'Deleting...' : 'Delete Session / حذف'}
           </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Trip settlement detail (Voir on a truck_settlement transaction) -->
+  {#if settlementTrip}
+    <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (settlementTrip = null)} role="presentation">
+      <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-2xl max-h-[85vh] flex flex-col" on:click|stopPropagation>
+        <div class="p-4 border-b border-pos-border flex items-center justify-between">
+          <h3 class="text-sm font-black text-pos-text">🔒 Tournée {settlementTrip.loadId.slice(0, 8)}</h3>
+          <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (settlementTrip = null)}><X class="w-4 h-4" /></button>
+        </div>
+        <div class="p-4 overflow-y-auto text-xs space-y-3">
+          {#if !settlementTrip.data}
+            <p class="text-rose-600 font-bold">{t('reg_view_fail')}</p>
+          {:else}
+            {@const st = settlementTrip.data.settlement ?? {}}
+            <div class="grid grid-cols-2 gap-2">
+              <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60"><p class="text-[9px] font-black text-pos-muted uppercase">Attendu caisse / Expected</p><p class="font-mono font-black">{((settlementTrip.data.settlement?.expected_cash ?? 0) / 100).toLocaleString('fr-DZ')} DA</p></div>
+              <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/40"><p class="text-[9px] font-black text-pos-muted uppercase">Reçu / Received</p><p class="font-mono font-black">{((settlementTrip.data.settlement?.actual_cash ?? 0) / 100).toLocaleString('fr-DZ')} DA</p></div>
+              <div class="p-2 rounded-lg"><span class="text-[9px] font-black text-pos-muted uppercase">Écart / Difference</span><p class="font-mono font-black {((settlementTrip.data.settlement?.cash_difference ?? 0) < 0) ? 'text-rose-600' : 'text-emerald-600'}">{((settlementTrip.data.settlement?.cash_difference ?? 0) / 100).toLocaleString('fr-DZ')} DA</p></div>
+              <div class="p-2 rounded-lg"><span class="text-[9px] font-black text-pos-muted uppercase">Dépôts / Expenses</span><p class="font-mono">{(settlementTrip.data.expenses ?? []).reduce((s: number, e: any) => s + Number(e.amount ?? 0), 0) / 100} DA</p></div>
+            </div>
+            <div>
+              <p class="text-[10px] font-black text-pos-muted uppercase mb-1">Réconciliation stock</p>
+              <table class="w-full text-[10px]">
+                <thead><tr class="text-pos-muted font-black uppercase"><th class="text-start p-1">Produit</th><th class="p-1 text-end">Att</th><th class="p-1 text-end">Phys</th><th class="p-1 text-end">Écart</th></tr></thead>
+                <tbody>
+                  {#each (settlementTrip.data.reconciliations ?? []) as r}
+                    <tr class="border-t border-pos-border/60">
+                      <td class="p-1 font-bold">{r.product?.name ?? '—'}</td>
+                      <td class="p-1 text-end font-mono">{Number(r.expected_quantity ?? 0)}</td>
+                      <td class="p-1 text-end font-mono">{Number(r.physical_quantity ?? 0)}</td>
+                      <td class="p-1 text-end font-mono {Number(r.difference ?? 0) !== 0 ? 'text-rose-600' : ''}">{Number(r.difference ?? 0)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
         </div>
       </div>
     </div>

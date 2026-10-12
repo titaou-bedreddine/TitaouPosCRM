@@ -280,6 +280,8 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             cloudsync::cloud_cmds::cloud_update_direct_order,
             cloudsync::cloud_cmds::cloud_trip_settlement,
             commands::deposit_truck_settlement,
+            commands::list_deposited_truck_settlements,
+            commands::return_truck_settlement,
             commands::get_packaging_types,
             commands::save_packaging_type,
             commands::delete_packaging_type,

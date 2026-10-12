@@ -182,6 +182,13 @@ pub struct CashMovement {
     /// LAN: PC name of the terminal that recorded this movement.
     #[serde(default)]
     pub terminal_name: Option<String>,
+    /// What the movement books (e.g. 'truck_settlement') + its unique
+    /// reference ('truck_settlement:<load_id>') — drives the register's
+    /// Voir/Retour actions on settlement rows.
+    #[serde(default)]
+    pub reference_type: Option<String>,
+    #[serde(default)]
+    pub reference_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
