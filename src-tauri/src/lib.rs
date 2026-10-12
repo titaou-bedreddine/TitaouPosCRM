@@ -287,6 +287,7 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             commands::delete_packaging_type,
             cloudsync::cloud_cmds::get_sale_loading_fee,
             cloudsync::cloud_cmds::cloud_get_sales_mode,
+            cloudsync::cloud_cmds::cloud_org_name,
             cloudsync::cloud_cmds::cloud_set_sales_mode,
             cloudsync::cloud_cmds::cloud_delete_truck,
             cloudsync::cloud_cmds::get_loading_fees_summary,

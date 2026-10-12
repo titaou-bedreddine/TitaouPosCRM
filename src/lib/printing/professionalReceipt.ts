@@ -141,11 +141,13 @@ const ICONS = {
  */
 export function buildProfessionalReceiptHtml(o: ProReceiptOptions): string {
   const paperW = o.paperWidthMm || 80;
-  const compact = paperW <= 60; // 58 mm: drop the PU column, smaller QR
+  const compact = paperW <= 60; // 58 mm: smaller QR — the PU column STAYS
   const t = LABELS[o.lang] || LABELS.fr;
   const rtl = o.lang === 'ar';
   const currency = (o.currency || 'DA').toUpperCase();
-  const showUnitPrice = !compact;
+  // Unit price ALWAYS printed (owner: the seller must see P.U. per line,
+  // even on 58 mm rolls — the percentages scale down with the paper).
+  const showUnitPrice = true;
 
   const font = `'Segoe UI',Arial,'Helvetica Neue',Tahoma,'Noto Sans Arabic',sans-serif`;
   const style = `<style>

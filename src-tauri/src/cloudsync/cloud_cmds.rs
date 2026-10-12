@@ -561,9 +561,12 @@ pub fn cloud_trip_orders(load_id: String) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
     let rows = client.select(
         "orders",
+        // items MUST carry product_id — the Trucks stock rows key "sold" by
+        // it; without it soldBy[undefined] zeroed every product (owner:
+        // 'truck page shows sold 0' though 112 were sold).
         "id, created_at, status, total_amount, amount_paid, amount_due, payment_status, \
          client:clients(name), \
-         items:order_items(quantity, base_quantity, unit_price, line_total, tva_rate, sale_unit, product:products(name)), \
+         items:order_items(product_id, quantity, base_quantity, unit_price, line_total, tva_rate, sale_unit, product:products(name)), \
          pays:payments(amount, method, created_at)",
         &[
             ("truck_load_id", format!("eq.{load_id}")),
@@ -697,8 +700,13 @@ pub fn cloud_recent_direct_orders(
     let client = cloud::ensure_session()?;
 
     // Inclusive date window: created_at >= from 00:00, < to+1d 00:00.
+    // Inclusive date window: created_at >= from 00:00, < to+1d 00:00.
+    // Cancelled sales (deleted on the app) are HIDDEN — the owner must not
+    // see ghost rows, and cancel_truck_sale would refuse them anyway
+    // ('sale is already cancelled').
     let mut query: Vec<(&str, String)> = vec![
         ("source", "eq.direct_truck".into()),
+        ("status", "neq.cancelled".into()),
         ("order", "created_at.desc".into()),
         ("limit", "500".into()),
     ];
@@ -1219,6 +1227,18 @@ pub fn cloud_get_sales_mode() -> Result<String, String> {
         .first()
         .and_then(|r| r["sales_mode"].as_str().map(String::from))
         .unwrap_or_else(|| "pre_sale".into()))
+}
+
+/// The CRM organization NAME — the receipt/A4 header fallback when no shop
+/// name is set in Settings (owner: receipts must show the real shop).
+#[tauri::command]
+pub fn cloud_org_name() -> Result<String, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select("organizations", "name", &[])?;
+    Ok(rows
+        .first()
+        .and_then(|r| r["name"].as_str().map(String::from))
+        .unwrap_or_default())
 }
 
 /// Change the business sales mode. SECURITY-SENSITIVE: requires the local

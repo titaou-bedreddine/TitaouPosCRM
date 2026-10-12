@@ -39,9 +39,13 @@ export interface PrintOptions {
 class PrintService {
   private cachedSettings: Record<string, any> | null = null;
   private settingsTimestamp = 0;
+  private orgName: string | null = null;
 
   /**
    * Load current app settings from SQLite (cached for 2 seconds to avoid spamming DB during quick actions).
+   * When no shop name is set in Settings, the CRM organization name is
+   * fetched once and used as the receipt/A4 header (owner: receipts must
+   * never show the raw app fallback).
    */
   async getSettings(forceRefresh = false): Promise<Record<string, any>> {
     const now = Date.now();
@@ -52,11 +56,24 @@ class PrintService {
       const s = await invoke<Record<string, any>>('get_all_settings');
       this.cachedSettings = s || {};
       this.settingsTimestamp = now;
+      if (!this.cachedSettings['shop_name_fr'] && !this.cachedSettings['shop_name_ar']) {
+        const orgName = await this.getOrgName();
+        if (orgName) this.cachedSettings['shop_name_fr'] = orgName;
+      }
       return this.cachedSettings;
     } catch (e) {
       console.warn('PrintService: Failed to fetch settings, falling back to cache/empty:', e);
       return this.cachedSettings || {};
     }
+  }
+
+  /** Cloud organization name (cached for the session) — receipt fallback. */
+  async getOrgName(): Promise<string | null> {
+    if (this.orgName !== null) return this.orgName;
+    try {
+      this.orgName = await invoke<string>('cloud_org_name');
+    } catch { /* offline — keep null */ }
+    return this.orgName;
   }
 
   /**
