@@ -777,6 +777,10 @@
         stringSettings[k] = v === null || v === undefined ? '' : String(v);
       }
       await invoke('set_multiple_settings', { settings: stringSettings });
+      const shopName = settings.shop_name_fr || settings.shop_name_ar;
+      if (shopName) {
+        invoke('cloud_set_org_name', { name: shopName }).catch(() => {});
+      }
       triggerSaveNotification();
     } catch (e: any) {
       console.error('Save settings error:', e);

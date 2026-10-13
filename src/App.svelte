@@ -255,6 +255,7 @@
     const t0 = String($networkEvents[0].type || '');
     if (t0.startsWith('session_') || t0 === 'settings_updated') {
       loadActiveSession();
+      loadShopName();
     }
     // OFFLINE CLIENT (user decision 2026-09-08): the terminal worked offline
     // against its local DB; on reconnect tell the cashier what happened.
@@ -268,7 +269,19 @@
   }
 
   let sidebarVersion = '';
+  let shopNameDisplay = 'Titaou One';
+
+  async function loadShopName() {
+    try {
+      const s = await invoke<Record<string, string>>('get_all_settings');
+      shopNameDisplay = s['shop_name_fr'] || s['shop_name_ar'] || 'Titaou One';
+    } catch {
+      shopNameDisplay = 'Titaou One';
+    }
+  }
+
   onMount(async () => {
+    loadShopName();
     try {
       salesMode = (await invoke<string>('get_setting', { key: 'sales_mode' })) || 'pre_sale';
     } catch { salesMode = 'pre_sale'; }
@@ -440,7 +453,7 @@
             <img src="/logo.png" alt="Titaou One" class="w-full h-full object-contain p-0.5" />
           </div>
           <div class="min-w-0">
-            <h1 class="font-black text-sm tracking-tight text-pos-text">Titaou One</h1>
+            <h1 class="font-black text-sm tracking-tight text-pos-text truncate">{shopNameDisplay}</h1>
             <p class="text-[9px] text-sky-600 font-bold truncate">Titaou Bedreddine 0553444057</p>
             <p class="text-[8px] text-pos-muted font-mono">{sidebarVersion ? 'v' + sidebarVersion : ''}</p>
           </div>

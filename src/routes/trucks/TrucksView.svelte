@@ -86,6 +86,7 @@
       warehouseByProduct = new Map(warehouseStock.map((r: any) => [r.product_id, Number(r.current_stock ?? 0)]));
       if (!selectedId && trucks.length > 0) selectedId = trucks[0].id;
       await refreshDeposited();
+      if (activeTrip?.id) await refreshStock(activeTrip.id);
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
     } finally {
@@ -285,6 +286,7 @@
       const orders = await invoke<any[]>('cloud_trip_orders', { loadId }).catch(() => []);
       const soldBy: Record<string, number> = {};
       for (const o of orders ?? []) {
+        if (o.status === 'cancelled' || o.status === 'canceled') continue;
         for (const ln of o.items ?? []) {
           soldBy[ln.product_id] = (soldBy[ln.product_id] ?? 0) + Number(ln.base_quantity ?? ln.quantity ?? 0);
         }
@@ -534,6 +536,7 @@
     try {
       const orders = await invoke<any[]>('cloud_trip_orders', { loadId: auditTrip.out_load_id }).catch(() => []);
       for (const o of orders ?? []) {
+        if (o.status === 'cancelled' || o.status === 'canceled') continue;
         for (const ln of o.items ?? []) {
           soldBy[ln.product_id] = (soldBy[ln.product_id] ?? 0) + Number(ln.base_quantity ?? ln.quantity ?? 0);
         }
@@ -595,7 +598,9 @@
         sessionId: $activeSession.id,
         userId: $currentUser.id,
         loadId: tp.out_load_id,
-        amount: Math.round(tp.out_actual_cash ?? 0),
+        // tp.out_actual_cash is cloud centimes — convert to DA before the
+        // deposit writes into the local (DZD) register database.
+        amount: Math.round((tp.out_actual_cash ?? 0) / 100),
         // Description the register log must show (owner: trip name + truck
         // name + seller name, not a raw uuid).
         reason: `Tournée "${loadRow?.name ?? ''}" — Camion ${tp.out_truck_name || '—'} — Vendeur ${tp.out_seller_name || '—'}`,

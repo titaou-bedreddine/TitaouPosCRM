@@ -191,12 +191,20 @@
     }
   }
 
-  async function returnSettlement(m: CashMovement) {
-    if (!confirm(t('reg_return_confirm') + '\n\n' + (m.reason || ''))) return;
-    settlementBusyId = m.id;
+  let returnMovementTarget: CashMovement | null = null;
+
+  function promptReturnSettlement(m: CashMovement) {
+    returnMovementTarget = m;
+    settlementError = '';
+  }
+
+  async function confirmReturnSettlement() {
+    if (!returnMovementTarget) return;
+    settlementBusyId = returnMovementTarget.id;
     settlementError = '';
     try {
-      await invoke('return_truck_settlement', { movementId: m.id, userId: $currentUser?.id ?? null });
+      await invoke('return_truck_settlement', { movementId: returnMovementTarget.id, userId: $currentUser?.id ?? null });
+      returnMovementTarget = null;
       await loadData();
     } catch (e: any) {
       settlementError = typeof e === 'string' ? e : e?.message || 'Failed';
@@ -694,7 +702,7 @@
                     <td class="p-2 whitespace-nowrap">
                       <button type="button" on:click={() => viewSettlementTrip(m)}
                         class="px-2 py-1 text-[10px] font-black text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/40 border border-pos-border rounded-lg cursor-pointer">{t('reg_view')}</button>
-                      <button type="button" on:click={() => returnSettlement(m)}
+                      <button type="button" on:click={() => promptReturnSettlement(m)}
                         disabled={settlementBusyId === m.id}
                         class="ms-1 px-2 py-1 text-[10px] font-black text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg cursor-pointer disabled:opacity-40">{t('reg_return')}</button>
                     </td>
@@ -1294,6 +1302,53 @@
               </table>
             </div>
           {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Styled Return Deposit Dialog (respects software design) -->
+  {#if returnMovementTarget}
+    <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" on:click={() => (returnMovementTarget = null)} role="presentation">
+      <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl p-6 max-w-md w-full space-y-4 animate-in zoom-in-95" on:click|stopPropagation role="presentation">
+        <div class="flex items-center gap-3 text-rose-600">
+          <div class="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 flex items-center justify-center shrink-0">
+            <Lock class="w-5 h-5 text-rose-600" />
+          </div>
+          <div>
+            <h3 class="font-black text-sm text-pos-text">{t('reg_return_title') || 'Retourner le versement tournée'}</h3>
+            <p class="text-[10px] text-pos-muted">Annulation du versement de tournée vers la caisse</p>
+          </div>
+        </div>
+        <p class="text-xs text-pos-muted leading-relaxed">
+          {t('reg_return_confirm')}
+        </p>
+        <div class="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-pos-border text-xs font-semibold space-y-1">
+          <p class="text-pos-text">{returnMovementTarget.reason || '—'}</p>
+          <p class="font-mono font-black text-rose-600 text-sm">{returnMovementTarget.amount.toLocaleString()} DZD</p>
+        </div>
+        {#if settlementError}
+          <p class="text-xs font-bold text-rose-600 bg-rose-50 dark:bg-rose-950/40 p-2 rounded-lg">❌ {settlementError}</p>
+        {/if}
+        <div class="flex justify-end gap-2 pt-2 border-t border-pos-border">
+          <button
+            type="button"
+            on:click={() => (returnMovementTarget = null)}
+            class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-300 dark:hover:bg-slate-600 transition"
+          >
+            {t('btn_cancel') || 'Annuler'}
+          </button>
+          <button
+            type="button"
+            on:click={confirmReturnSettlement}
+            disabled={settlementBusyId !== null}
+            class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl cursor-pointer shadow-md disabled:opacity-40 transition flex items-center gap-1.5"
+          >
+            {#if settlementBusyId !== null}
+              <RefreshCw class="w-3.5 h-3.5 animate-spin" />
+            {/if}
+            <span>{t('reg_return') || 'Retourner le versement'}</span>
+          </button>
         </div>
       </div>
     </div>

@@ -570,6 +570,9 @@ pub fn cloud_trip_orders(load_id: String) -> Result<Value, String> {
          pays:payments(amount, method, created_at)",
         &[
             ("truck_load_id", format!("eq.{load_id}")),
+            // Cancelled sales must not count as "sold" on the truck — the
+            // owner deleted a sale and the qty never returned to loaded.
+            ("status", "neq.cancelled".into()),
             ("order", "created_at.asc".into()),
         ],
     )?;
@@ -1239,6 +1242,22 @@ pub fn cloud_org_name() -> Result<String, String> {
         .first()
         .and_then(|r| r["name"].as_str().map(String::from))
         .unwrap_or_default())
+}
+
+/// Update the CRM organization name to match the shop name configured in POS Settings.
+#[tauri::command]
+pub fn cloud_set_org_name(name: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    let org_id = cloud::auth::fetch_profile(&client)?["organization_id"]
+        .as_str()
+        .ok_or("no org")?
+        .to_string();
+    client.patch(
+        "organizations",
+        serde_json::json!({ "name": name }),
+        &[("id", format!("eq.{org_id}"))],
+    )?;
+    Ok(())
 }
 
 /// Change the business sales mode. SECURITY-SENSITIVE: requires the local

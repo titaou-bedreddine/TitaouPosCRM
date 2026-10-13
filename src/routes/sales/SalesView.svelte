@@ -207,7 +207,9 @@
       const detail = await invoke<any>('cloud_direct_order_detail', { orderId: o.id });
       const lines = (detail?.lines ?? []) as any[];
       const pays = (detail?.payments ?? []) as any[];
-      const paid = pays.reduce((s2, pp) => s2 + (Number(pp.amount) || 0), 0);
+      // Cloud money is CENTIMES — convert to DA for every printed figure
+      // (the A4 template formats raw values, no conversion inside).
+      const paid = pays.reduce((s2, pp) => s2 + (Number(pp.amount) || 0), 0) / 100;
       await printService.printDocument({
         id: o.id,
         documentNumber: 'DS-' + String(o.id).slice(0, 8),
@@ -218,15 +220,15 @@
         items: lines.map((ln) => ({
           name: ln.product?.name ?? '—',
           quantity: Number(ln.quantity ?? 0),
-          unitPrice: Number(ln.unit_price ?? 0),
-          totalPrice: Number(ln.line_total ?? 0),
+          unitPrice: Number(ln.unit_price ?? 0) / 100,
+          totalPrice: Number(ln.line_total ?? 0) / 100,
           notes: ln.sale_unit ? String(ln.sale_unit) : '',
         })),
-        subtotal: lines.reduce((s2, ln) => s2 + (Number(ln.line_total) || 0), 0),
+        subtotal: lines.reduce((s2, ln) => s2 + (Number(ln.line_total) || 0), 0) / 100,
         discountTotal: 0,
         taxTotal: 0,
-        grandTotal: Number(o.total_amount || 0),
-        notes: `Payé: ${(o.amount_paid || 0).toLocaleString('fr-DZ')} DZD — Reste: ${Math.max(0, (o.total_amount || 0) - (o.amount_paid || 0)).toLocaleString('fr-DZ')} DZD`,
+        grandTotal: Number(o.total_amount || 0) / 100,
+        notes: `Payé: ${paid.toLocaleString('fr-DZ')} DZD — Reste: ${(Math.max(0, (Number(o.total_amount) || 0) - (Number(o.amount_paid) || 0)) / 100).toLocaleString('fr-DZ')} DZD`,
         footerNote: (o.notes || '').includes('MODIFIED') ? 'MODIFIÉ / EDITED' : '',
       });
     } catch (e: any) {
@@ -682,15 +684,15 @@
     </div>
     <div class="bg-pos-card border border-pos-border rounded-2xl p-4 shadow-xs">
       <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_total_brut')}</p>
-      <p class="text-base font-black font-mono text-sky-600">{androidTotals.gross.toLocaleString('fr-DZ')} DA</p>
+      <p class="text-base font-black font-mono text-sky-600">{(androidTotals.gross / 100).toLocaleString('fr-DZ')} DA</p>
     </div>
     <div class="bg-pos-card border border-pos-border rounded-2xl p-4 shadow-xs">
       <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_paid')}</p>
-      <p class="text-base font-black font-mono text-emerald-600">{androidTotals.paid.toLocaleString('fr-DZ')} DA</p>
+      <p class="text-base font-black font-mono text-emerald-600">{(androidTotals.paid / 100).toLocaleString('fr-DZ')} DA</p>
     </div>
     <div class="bg-pos-card border border-pos-border rounded-2xl p-4 shadow-xs">
       <p class="text-[10px] font-bold text-pos-muted uppercase">{t('sales_credit')}</p>
-      <p class="text-base font-black font-mono text-rose-600">{(androidTotals.gross - androidTotals.paid).toLocaleString('fr-DZ')} DA</p>
+      <p class="text-base font-black font-mono text-rose-600">{((androidTotals.gross - androidTotals.paid) / 100).toLocaleString('fr-DZ')} DA</p>
     </div>
   </div>
 
@@ -731,9 +733,9 @@
               <td class="p-3">
                 <span class="px-2 py-0.5 rounded-md text-[10px] font-black bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">{o.truck_name || '—'}</span>
               </td>
-              <td class="p-3 text-end font-mono font-black text-pos-text">{(o.total_amount ?? 0).toLocaleString('fr-DZ')}</td>
-              <td class="p-3 text-end font-mono font-bold text-sky-600 dark:text-sky-400">{(o.amount_paid ?? 0).toLocaleString('fr-DZ')}</td>
-              <td class="p-3 text-end font-mono font-bold {o.total_amount - o.amount_paid > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-pos-muted'}">{(o.total_amount - o.amount_paid).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-end font-mono font-black text-pos-text">{((o.total_amount ?? 0) / 100).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-end font-mono font-bold text-sky-600 dark:text-sky-400">{((o.amount_paid ?? 0) / 100).toLocaleString('fr-DZ')}</td>
+              <td class="p-3 text-end font-mono font-bold {o.total_amount - o.amount_paid > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-pos-muted'}">{((o.total_amount - o.amount_paid) / 100).toLocaleString('fr-DZ')}</td>
               <td class="p-3 text-center">
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase {o.payment_status === 'paid' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800'}">
                   {o.payment_status}

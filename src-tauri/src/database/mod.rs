@@ -131,6 +131,51 @@ impl DbState {
                 [],
             );
         }
+
+        // ---- One-time centimes -> DZD correction for truck settlement deposits ----
+        // The first deposit code path wrote cloud centimes into the local DZD
+        // cash_movements and overstated cash_sessions.expected_cash by the same
+        // amount; the register then displayed "319000 DZD" instead of "3,190 DA".
+        // Run only on a first start (guard flag); amounts are normalized
+        // idempotently via a per-movement marker table so a re-run can never
+        // divide a DZD amount twice.
+        let had_flag: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM app_settings WHERE key = 'settlements_centimes_migrated_v1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if had_flag == 0 {
+            let delta: f64 = conn
+                .query_row(
+                    "SELECT SUM(amount - amount / 100)
+                     FROM cash_movements
+                     WHERE reference_type = 'truck_settlement'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0.0);
+            let _ = conn.execute(
+                "UPDATE cash_sessions SET expected_cash = expected_cash - ?
+                 WHERE id IN (SELECT DISTINCT session_id FROM cash_movements WHERE reference_type = 'truck_settlement')",
+                [delta],
+            );
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS cash_settlement_dzd_migrated (movement_id INTEGER PRIMARY KEY);
+                 INSERT OR IGNORE INTO cash_settlement_dzd_migrated (movement_id)
+                 SELECT id FROM cash_movements WHERE reference_type = 'truck_settlement'
+                   AND id NOT IN (SELECT movement_id FROM cash_settlement_dzd_migrated);
+                 UPDATE cash_movements SET amount = ROUND(amount / 100)
+                 WHERE reference_type = 'truck_settlement'
+                   AND EXISTS (SELECT 1 FROM cash_settlement_dzd_migrated m WHERE m.movement_id = cash_movements.id);",
+            )?;
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('settlements_centimes_migrated_v1', '1')",
+                [],
+            );
+        }
+
         let _ = conn.execute("ALTER TABLE products ADD COLUMN expiry_date TEXT;", []);
         let _ = conn.execute("ALTER TABLE products ADD COLUMN is_scalable INTEGER DEFAULT 0;", []);
         let _ = conn.execute("ALTER TABLE products ADD COLUMN scale_code TEXT;", []);
