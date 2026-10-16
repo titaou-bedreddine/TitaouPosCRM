@@ -451,17 +451,30 @@ pub fn cloud_clients_positions() -> Result<Value, String> {
     Ok(Value::Array(rows))
 }
 
-/// Last known truck positions (the seller app pushes while a trip runs).
-/// Newest-first; the Maps view keeps the LATEST row per truck and treats
-/// older ones as history. Accepts 404/PGRST205 when the migration hasn't
-/// been applied yet — the map just shows no trucks instead of erroring.
+/// Truck positions — LIVE mode (no dates): newest-first, the Maps view
+/// keeps the LATEST row per truck. TIME MACHINE mode (from_date/to_date =
+/// 'YYYY-MM-DD'): the full trail of that day (postgis-free filtering on
+/// recorded_at). Accepts a not-yet-migrated table gracefully.
 #[tauri::command]
-pub fn cloud_truck_positions() -> Result<Value, String> {
+pub fn cloud_truck_positions(
+    from_date: Option<String>,
+    to_date: Option<String>,
+) -> Result<Value, String> {
     let client = cloud::ensure_session()?;
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(f) = from_date.filter(|d| !d.trim().is_empty()) {
+        params.push(("recorded_at".into(), format!("gte.{}", f)));
+    }
+    if let Some(t) = to_date.filter(|d| !d.trim().is_empty()) {
+        params.push(("recorded_at".into(), format!("lte.{}", t)));
+    }
+    params.push(("order".into(), "recorded_at.desc".into()));
+    params.push(("limit".into(), "1500".into()));
+    let refs: Vec<(&str, String)> = params.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
     let rows = client.select(
         "truck_positions",
         "id, truck_id, seller_id, trip_load_id, latitude, longitude, recorded_at",
-        &[("order", "recorded_at.desc".into()), ("limit", "600".into())],
+        &refs,
     );
     match rows {
         Ok(rows) => Ok(Value::Array(rows)),
@@ -474,6 +487,96 @@ pub fn cloud_truck_positions() -> Result<Value, String> {
             }
         }
     }
+}
+
+// ── Chat: field app users <-> each other <-> the POS desk ───────────────────
+// recipient_id NULL = addressed to the desk (POS/admin terminal). Row-level
+// security scopes every read; these commands reuse the cloud session (the
+// desk's own CRM user).
+
+fn my_profile_id(client: &cloud::http::SupabaseClient) -> Result<String, String> {
+    let profile = cloud::auth::fetch_profile(client)?;
+    let id = profile["id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(id) = id {
+        return Ok(id);
+    }
+    // Fallback: profiles are keyed by email.
+    let email = profile["email"].as_str().unwrap_or_default().to_string();
+    if email.is_empty() {
+        return Err("no cloud session user".into());
+    }
+    let rows = client.select("profiles", "id", &[("email", format!("eq.{}", email))])?;
+    rows.get(0)
+        .and_then(|r| r["id"].as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "profile row not found".into())
+}
+
+/// Latest chat messages involving ME (sent by me, addressed to me, or sent
+/// to the desk thread when I AM the desk).
+#[tauri::command]
+pub fn cloud_chat_list() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let me = my_profile_id(&client)?;
+    let rows = client.select(
+        "chat_messages",
+        "id, sender_id, recipient_id, body, read_at, created_at",
+        &[
+            (
+                "or",
+                format!(
+                    "(sender_id.eq.{me},recipient_id.eq.{me},recipient_id.is.null)"
+                ),
+            ),
+            ("order", "created_at.asc".to_string()),
+            ("limit", "300".to_string()),
+        ],
+    )?;
+    Ok(Value::Array(rows))
+}
+
+/// Send a chat message: to the desk (recipient None) or to a team member.
+#[tauri::command]
+pub fn cloud_chat_send(
+    recipient_id: Option<String>,
+    body: String,
+) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let me = my_profile_id(&client)?;
+    let profile = cloud::auth::fetch_profile(&client)?;
+    let org = profile["organization_id"]
+        .as_str()
+        .ok_or("no org")?
+        .to_string();
+    let trimmed = body.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("empty message".into());
+    }
+    let payload = serde_json::json!({
+        "organization_id": org,
+        "sender_id": me,
+        "recipient_id": recipient_id,
+        "body": trimmed,
+    });
+    client.insert("chat_messages", payload)?;
+    Ok(Value::Null)
+}
+
+/// Mark messages the desk received (from a given sender) as read.
+#[tauri::command]
+pub fn cloud_chat_mark_read(sender_id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    let me = my_profile_id(&client)?;
+    client.patch(
+        "chat_messages",
+        serde_json::json!({ "read_at": chrono::Utc::now().to_rfc3339() }),
+        &[
+            ("sender_id", format!("eq.{}", sender_id)),
+            ("recipient_id", "is.null".into()),
+        ],
+    )
 }
 
 /// CRM uuid behind a local POS customer (sync_map) — used so the client

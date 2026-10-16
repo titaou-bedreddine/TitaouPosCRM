@@ -793,7 +793,8 @@
   {/if}
 
   {#if isAddOpen}
-    <div id="newEmployeeForm" class="bg-pos-card border border-pos-border rounded-2xl p-5 shadow-md space-y-4 animate-in zoom-in-95 duration-150 scroll-mt-4">
+    <div class="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="newEmployeeForm" class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
       <div class="flex items-center justify-between border-b border-pos-border pb-3">
         <h3 class="font-black text-sm text-pos-text">{t('pay_modal_new')}</h3>
         <button on:click={() => (isAddOpen = false)} class="text-pos-muted hover:text-pos-text"><X class="w-4 h-4" /></button>
@@ -902,6 +903,7 @@
         <button on:click={() => (isAddOpen = false)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">Cancel</button>
         <button on:click={handleSaveEmployee} class="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-black rounded-xl shadow-xs cursor-pointer">{t('pay_save_employee')}</button>
       </div>
+    </div>
     </div>
   {/if}
 

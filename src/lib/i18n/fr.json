@@ -706,6 +706,7 @@
   "pos_unloading_edit_sale_fee": "Modifier / retirer le frais de déchargement",
   "nav_trucks": "Camions",
   "nav_maps": "Carte Live",
+  "nav_chat": "Messages",
   "maps_title": "Carte Live — Camions & Clients",
   "maps_subtitle": "Positions camions poussées par l'appli terrain chaque minute + checkpoints clients — OpenStreetMap gratuit, sans clé API",
   "maps_hint": "Les positions arrivent pendant la tournée (GPS de l'appli vendeur). Un camion sans mise à jour depuis 10+ min apparaît en gris.",

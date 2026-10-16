@@ -29,6 +29,26 @@
   let lastRefresh = '';
   let mapEl: HTMLDivElement | undefined;
 
+  // TIME MACHINE: pick a truck + a calendar day -> its whole recorded trail
+  // for that day, stops labelled by nearest client (<=120 m). Positions are
+  // kept on the CRM for 7 days (migration 0054).
+  let tmTruckId = '';
+  let tmDate = '';
+  let tmLoading = false;
+  let tmPoints: { lat: number; lng: number; at: string; client: string | null }[] = [];
+  let tmLayer: any = null;
+  let tmError = '';
+
+  function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const R = 6371000;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLng = ((lng2 - lng1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
   // Sidebars + detail cards
   let showClientsPanel = false;
   let showTrucksPanel = false;
@@ -74,7 +94,7 @@
       [clients, trucks, positions, truckStats, localCustomers] = await Promise.all([
         invoke<any[]>('cloud_clients_positions').catch(() => []),
         invoke<any[]>('cloud_list_trucks').catch(() => []),
-        invoke<any[]>('cloud_truck_positions').catch(() => []),
+        invoke<any[]>('cloud_truck_positions', { fromDate: null, toDate: null }).catch(() => []),
         invoke<any[]>('cloud_stats_truck_trips', { fromDate: null, toDate: null }).catch(() => []),
         invoke<any[]>('list_customers').catch(() => []),
       ]);
@@ -264,6 +284,70 @@
     return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
   }
 
+  async function runTimeMachine() {
+    tmError = '';
+    if (!tmTruckId || !tmDate) {
+      tmError = 'Pick a truck and a date / اختر شاحنة وتاريخاً';
+      return;
+    }
+    tmLoading = true;
+    try {
+      const rows = await invoke<any[]>('cloud_truck_positions', {
+        fromDate: `${tmDate} 00:00:00`,
+        toDate: `${tmDate} 23:59:59`,
+      }).catch(() => []);
+      tmPoints = (rows ?? [])
+        .filter((r) => r.truck_id === tmTruckId)
+        .map((r) => {
+          const lat = Number(r.latitude), lng = Number(r.longitude);
+          let client: string | null = null;
+          let best = 120;
+          for (const c of clients ?? []) {
+            const clat = Number(c.latitude), clng = Number(c.longitude);
+            if (!Number.isFinite(clat) || !Number.isFinite(clng)) continue;
+            const d = haversineMeters(lat, lng, clat, clng);
+            if (d <= best) {
+              best = d;
+              client = c.name;
+            }
+          }
+          return { lat, lng, at: String(r.recorded_at || ''), client };
+        })
+        .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+        .sort((a, b) => a.at.localeCompare(b.at));
+      if (tmLayer) tmLayer.remove();
+      tmLayer = null;
+      if (map && L) {
+        tmLayer = L.layerGroup().addTo(map);
+        if (tmPoints.length > 1) {
+          L.polyline(tmPoints.map((p) => [p.lat, p.lng]), { color: '#7c3aed', weight: 3, opacity: 0.8 }).addTo(tmLayer);
+        }
+        tmPoints.forEach((p, i) => {
+          const at = p.at.slice(11, 16);
+          const label = p.client ? `🛑 ${p.client}` : `#${i + 1} · ${at}`;
+          const marker = L.circleMarker([p.lat, p.lng], {
+            radius: p.client ? 8 : 4,
+            color: p.client ? '#f59e0b' : '#7c3aed',
+            fillColor: p.client ? '#fbbf24' : '#a78bfa',
+            fillOpacity: 0.9,
+            weight: 2,
+          });
+          marker.bindPopup(`<b>${escapeHtml(label)}</b><br/>${p.at.slice(0, 19).replace('T', ' ')}`);
+          marker.addTo(tmLayer);
+        });
+        if (tmPoints.length > 0) {
+          map.flyToBounds(L.latLngBounds(tmPoints.map((p) => [p.lat, p.lng] as any)).pad(0.25));
+        } else {
+          tmError = 'No recorded positions for that day (kept 7 days).';
+        }
+      }
+    } catch (e: any) {
+      tmError = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      tmLoading = false;
+    }
+  }
+
   onMount(async () => {
     try {
       L = await ensureLeaflet();
@@ -290,6 +374,7 @@
 
   onDestroy(() => {
     if (refreshTimer) clearInterval(refreshTimer);
+    if (tmLayer) tmLayer.remove();
     if (map) { map.remove(); map = null; }
   });
 </script>
@@ -324,6 +409,30 @@
 
   {#if error}
     <p class="text-[11px] font-bold text-rose-600 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl px-3 py-2 shrink-0 mb-2">❌ {error}</p>
+
+  <!-- Time machine: past stops of a selected truck on a chosen day -->
+  <div class="flex items-center gap-2 flex-wrap shrink-0 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-900 rounded-2xl p-2.5">
+    <span class="text-[10px] font-black uppercase text-purple-700 dark:text-purple-300">Time machine / الأرشيف</span>
+    <select bind:value={tmTruckId}
+      class="px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-[11px] font-bold text-pos-text outline-none cursor-pointer">
+      <option value="">— Truck / الشاحنة —</option>
+      {#each (trucks ?? []) as tr (tr.id)}
+        <option value={tr.id}>{tr.name}</option>
+      {/each}
+    </select>
+    <input type="date" bind:value={tmDate}
+      class="px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-[11px] font-bold text-pos-text outline-none" />
+    <button type="button" on:click={runTimeMachine} disabled={tmLoading || !tmTruckId || !tmDate}
+      class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white text-[11px] font-black rounded-xl cursor-pointer">
+      {tmLoading ? '…' : 'Show stops / العرض'}
+    </button>
+    {#if tmPoints.length > 0}
+      <span class="text-[10px] font-bold text-pos-muted">{tmPoints.length} pts · {tmPoints.filter((p) => p.client).length} stops</span>
+    {/if}
+    {#if tmError}
+      <span class="text-[10px] font-bold text-rose-600">{tmError}</span>
+    {/if}
+  </div>
   {/if}
 
   <div class="relative flex-1 min-h-[320px] rounded-2xl overflow-hidden border border-pos-border">

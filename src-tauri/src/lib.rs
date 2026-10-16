@@ -274,6 +274,10 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             // Client profile popup: surface FIELD-app sales (CRM orders).
             cloudsync::cloud_cmds::cloud_client_id_for_customer,
             cloudsync::cloud_cmds::cloud_client_orders,
+            // Messaging: field app <-> each other <-> the POS desk.
+            cloudsync::cloud_cmds::cloud_chat_list,
+            cloudsync::cloud_cmds::cloud_chat_send,
+            cloudsync::cloud_cmds::cloud_chat_mark_read,
             cloudsync::cloud_cmds::cloud_save_truck,
             cloudsync::cloud_cmds::cloud_start_truck_trip,
             cloudsync::cloud_cmds::cloud_open_truck_reconciliation,

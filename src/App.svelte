@@ -24,6 +24,7 @@
   import TruckLoadsView from './routes/truckloads/TruckLoadsView.svelte';
   import TrucksView from './routes/trucks/TrucksView.svelte';
   import MapsView from './routes/maps/MapsView.svelte';
+  import MessagesView from './routes/messages/MessagesView.svelte';
   import RoutesView from './routes/routes/RoutesView.svelte';
   import CashDrawerModal from './lib/components/CashDrawerModal.svelte';
   import FirstSetupWizard from './lib/components/FirstSetupWizard.svelte';
@@ -41,7 +42,7 @@
   import {
     LayoutDashboard, ShoppingCart, Receipt, DollarSign,
     Package, TrendingDown, Users, Settings, LogOut,
-    Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle, Route, FileText, Map
+    Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle, Route, FileText, Map, MessageSquare
   } from 'lucide-svelte';
 
   let currentRoute = 'pos';
@@ -164,7 +165,8 @@
       ],
       // Insight.
       ...(allowed('dashboard') ? [[navEntry('dashboard', 'nav_dashboard', LayoutDashboard, locale)]] : []),
-      // Alerts.
+      // Alerts + team messaging.
+      ...(allowed('messages') ? [navEntry('messages', 'nav_chat', MessageSquare, locale)] : []),
       ...(allowed('notifications') ? [[navEntry('notifications', 'nav_notifications', Bell, locale)]] : []),
     ].filter(g => g.length > 0);
   }
@@ -788,6 +790,8 @@
             }
           }}
         />
+      {:else if currentRoute === 'messages'}
+        <MessagesView />
       {:else if currentRoute === 'notifications'}
         <NotificationsView
           onRequestRoute={(r) => (currentRoute = r)}
