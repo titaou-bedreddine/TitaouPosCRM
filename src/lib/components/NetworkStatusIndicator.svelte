@@ -1,14 +1,27 @@
 <script lang="ts">
   // Persistent LAN network status indicator (sidebar) + Network Details
-  // popup — shop, role, coordinator, devices and the live event feed.
+  // popup — shop, role, coordinator, devices, the live event feed and the
+  // Supabase (CRM cloud) connection state.
   import { networkStatus, networkEvents, refreshNetworkStatus } from '../stores/network';
+  import { invoke } from '@tauri-apps/api/core';
   import { t, currentLocale } from '../i18n';
   import {
-    Wifi, WifiOff, RefreshCw, Server, MonitorSmartphone, Activity, X, ShieldAlert, Globe
+    Wifi, WifiOff, RefreshCw, Server, MonitorSmartphone, Activity, X, ShieldAlert, Globe, Database
   } from 'lucide-svelte';
 
   let popupOpen = false;
   let busy = false;
+
+  // Supabase (CRM cloud) connection — loaded when the popup opens.
+  let cloudStatus: any = null;
+  async function loadCloudStatus() {
+    cloudStatus = null;
+    try {
+      cloudStatus = await invoke<any>('cloud_get_status');
+    } catch {
+      cloudStatus = null; // e.g. LAN client terminal — cloud runs on the server PC
+    }
+  }
 
   $: status = $networkStatus;
 
@@ -37,6 +50,9 @@
   }
 
   $: visual = modeVisual(status);
+  // Load the Supabase (CRM cloud) connection snapshot each time the popup
+  // opens — cheap local settings read, no network round-trip.
+  $: if (popupOpen) loadCloudStatus();
 
   async function manualRefresh() {
     busy = true;
@@ -101,6 +117,40 @@
         </button>
       </div>
       <div class="overflow-y-auto p-6 pt-4 space-y-4">
+
+      <!-- Supabase (CRM cloud) server connection -->
+      <div class="p-3 rounded-xl border {cloudStatus?.enabled && cloudStatus?.online
+          ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800'
+          : 'bg-slate-50 dark:bg-slate-800/60 border-pos-border/60'}">
+        <p class="text-[9px] font-black text-pos-muted uppercase mb-1.5 flex items-center gap-1">
+          <Database class="w-3.5 h-3.5 text-sky-500" />
+          Supabase Server (CRM Cloud)
+        </p>
+        {#if !cloudStatus}
+          <p class="text-[11px] font-bold text-pos-muted">
+            Runs on this terminal's server PC — this station talks to the LAN coordinator.
+          </p>
+        {:else if cloudStatus.enabled && cloudStatus.online}
+          <p class="flex items-center gap-1.5 text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            Connected to Supabase server / متصل بالخادم
+          </p>
+          <p class="text-[9px] font-mono text-pos-muted mt-1 truncate">
+            {cloudStatus.email || '—'} @{(cloudStatus.url || '').replace('https://', '')}
+          </p>
+          <p class="text-[9px] font-bold text-pos-muted mt-0.5">
+            {t('cloud_pending', $currentLocale)}: {cloudStatus.pending_outbox ?? 0}
+            {#if cloudStatus.last_error}<span class="text-rose-600"> · {String(cloudStatus.last_error).slice(0, 60)}</span>{/if}
+          </p>
+        {:else if cloudStatus.enabled}
+          <p class="flex items-center gap-1.5 text-[11px] font-black text-amber-600 dark:text-amber-400">
+            <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+            Reconnecting to Supabase… / إعادة الاتصال
+          </p>
+        {:else}
+          <p class="text-[11px] font-bold text-pos-muted">Cloud not configured / السحابة غير مهيأة</p>
+        {/if}
+      </div>
 
       <div class="grid grid-cols-2 gap-2 text-xs">
         <div class="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-pos-border/60">

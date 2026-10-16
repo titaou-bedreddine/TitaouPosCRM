@@ -61,8 +61,11 @@ pub fn record_employee_advance(db: &DbState, input: EmployeeAdvanceInput) -> Res
     // expected_cash update are handled by the same insert.
     // Real employee name for the expense recipient (was "Employee #3").
     let employee_name: String = {
+        // full_name is the real column — a past 'SELECT name' always errored
+        // and silently booked the recipient as "#<id>", killing the
+        // expense→employee link.
         let row = tx.query_row(
-            "SELECT name FROM employees WHERE id = ?1",
+            "SELECT full_name FROM employees WHERE id = ?1",
             [input.employee_id],
             |r| r.get::<_, String>(0),
         );

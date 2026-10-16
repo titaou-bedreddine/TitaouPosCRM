@@ -671,6 +671,16 @@ impl DbState {
             "INSERT OR IGNORE INTO roles (id, name, description, is_system) VALUES (3, 'Manager', 'Store operations and reports', 1);",
             [],
         );
+        // Owner (id 4): the business owner — treated as full admin by the
+        // app (same permission rows as Administrator).
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO roles (id, name, description, is_system) VALUES (4, 'Owner', 'Business owner — full access', 1);",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) SELECT 4, permission_id FROM role_permissions WHERE role_id = 1;",
+            [],
+        );
 
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM users WHERE username = 'admin'",
@@ -691,6 +701,28 @@ impl DbState {
                 "INSERT INTO users (username, display_name, password_hash, role_id, max_discount_percent, is_active)
                  VALUES ('admin', 'Administrator', ?1, 1, 100.0, 1)",
                 [&password_hash],
+            )?;
+        }
+
+        // Default OWNER account (tests the Owner role immediately; change the
+        // password from Settings → Accounts or the profile section).
+        let owner_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE username = 'owner'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        if owner_count == 0 {
+            let salt = SaltString::generate(&mut OsRng);
+            let argon2 = Argon2::default();
+            let owner_hash = argon2
+                .hash_password(b"owner123", &salt)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?
+                .to_string();
+
+            conn.execute(
+                "INSERT INTO users (username, display_name, password_hash, role_id, max_discount_percent, is_active)
+                 VALUES ('owner', 'Owner', ?1, 4, 100.0, 1)",
+                [&owner_hash],
             )?;
         }
 

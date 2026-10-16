@@ -19,7 +19,62 @@
   $: if ($invalidations.sales || $invalidations.expenses || $invalidations.products || $invalidations.sessions) {
     void loadStats();
   }
-  let selectedTab: 'financial' | 'debts' | 'inventory' | 'expenses' | 'versement' | 'caisse' = 'financial';
+  let selectedTab: 'financial' | 'debts' | 'inventory' | 'expenses' | 'versement' | 'caisse' | 'trucks' = 'financial';
+  // TRUCKS tab: per-truck analytics straight from the field (CRM trips).
+  let truckRows: any[] = [];
+  let truckNames = new Map<string, string>();
+  let trucksTabLoading = false;
+  let trucksTabError = '';
+
+  async function loadTrucksTab() {
+    if (truckRows.length > 0) return; // loaded once per mount
+    trucksTabLoading = true;
+    trucksTabError = '';
+    try {
+      const [trips, trucks] = await Promise.all([
+        invoke<any[]>('cloud_stats_truck_trips', { fromDate: null, toDate: null }).catch(() => []),
+        invoke<any[]>('cloud_list_trucks').catch(() => []),
+      ]);
+      truckNames = new Map((trucks ?? []).map((x) => [x.id, x.name]));
+      // group per truck
+      const byTruck = new Map<string, { sales: number; cash: number; credit: number; expenses: number; trips: number; clients: Set<string> }>();
+      for (const tp of trips ?? []) {
+        const id = tp.out_truck_id || '—';
+        const cur = byTruck.get(id) ?? { sales: 0, cash: 0, credit: 0, expenses: 0, trips: 0, clients: new Set<string>() };
+        cur.sales += Number(tp.out_sales_value ?? 0);
+        cur.cash += Number(tp.out_cash_value ?? 0);
+        cur.credit += Number(tp.out_outstanding ?? 0);
+        cur.expenses += Number(tp.out_expenses ?? 0);
+        cur.trips += 1;
+        byTruck.set(id, cur);
+      }
+      // clients visited per truck: count distinct via trip orders (best effort)
+      const loads = await invoke<any[]>('cloud_truck_loads').catch(() => []);
+      const ordersByLoad = new Map<string, Set<string>>();
+      await Promise.all((loads ?? []).map(async (l) => {
+        if (!byTruck.has(l.truck_id)) return;
+        const orders = await invoke<any[]>('cloud_trip_orders', { loadId: l.id }).catch(() => []);
+        const names = ordersByLoad.get(l.truck_id) ?? new Set<string>();
+        for (const o of orders ?? []) if (o?.client?.name) names.add(o.client.name);
+        ordersByLoad.set(l.truck_id, names);
+      }));
+      truckRows = [...byTruck.entries()].map(([id, v]) => ({
+        id,
+        name: truckNames.get(id) ?? id,
+        sales: v.sales / 100,
+        cash: v.cash / 100,
+        credit: v.credit / 100,
+        expenses: v.expenses / 100,
+        trips: v.trips,
+        clients: ordersByLoad.get(id)?.size ?? 0,
+      })).sort((a, b) => b.sales - a.sales);
+    } catch (e: any) {
+      trucksTabError = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      trucksTabLoading = false;
+    }
+  }
+
 
   onMount(async () => {
     await loadStats();
@@ -426,6 +481,10 @@
         on:click={() => selectedTab = 'caisse'}
         class="px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer {selectedTab === 'caisse' ? 'bg-sky-600 text-white shadow-xs' : 'bg-pos-card border border-pos-border text-pos-muted'}"
       >{t('dash_tab_caisse')}</button>
+      <button
+        on:click={() => { selectedTab = 'trucks'; loadTrucksTab(); }}
+        class="px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer {selectedTab === 'trucks' ? 'bg-sky-600 text-white shadow-xs' : 'bg-pos-card border border-pos-border text-pos-muted'}"
+      > Trucks / الشاحنات</button>
     </div>
 
     {#if selectedTab === 'financial' && stats}
@@ -934,4 +993,54 @@
       </div>
     </div>
   </div>
-{/if}
+
+  {:else if selectedTab === 'trucks'}
+    <!-- TRUCKS: per-truck analytics (field/CRM data) -->
+    {#if trucksTabLoading}
+      <div class="p-8 text-center text-pos-muted text-sm">Loading truck analytics…</div>
+    {:else if trucksTabError}
+      <div class="p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs font-bold text-rose-600">❌ {trucksTabError} — cloud connection required (runs on the server terminal).</div>
+    {:else if truckRows.length === 0}
+      <div class="p-8 text-center text-pos-muted text-sm">No truck trips recorded yet (Direct Sale).</div>
+    {:else}
+      <div class="overflow-x-auto bg-pos-card border border-pos-border rounded-2xl shadow-xs">
+        <table class="w-full text-xs border-collapse">
+          <thead class="bg-slate-50 dark:bg-slate-800/60 text-pos-muted font-black uppercase border-b border-pos-border">
+            <tr>
+              <th class="p-3 text-start">Truck / الشاحنة</th>
+              <th class="p-3 text-center">Trips</th>
+              <th class="p-3 text-center">Clients</th>
+              <th class="p-3 text-end">Sales</th>
+              <th class="p-3 text-end">Cash</th>
+              <th class="p-3 text-end">Credit (Debts)</th>
+              <th class="p-3 text-end">Expenses</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each truckRows as tr (tr.id)}
+              <tr class="border-t border-pos-border hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                <td class="p-3 font-black text-pos-text">🚚 {tr.name}</td>
+                <td class="p-3 text-center font-mono">{tr.trips}</td>
+                <td class="p-3 text-center font-mono">{tr.clients}</td>
+                <td class="p-3 text-end font-mono font-black text-sky-600">{tr.sales.toLocaleString()} DZD</td>
+                <td class="p-3 text-end font-mono text-emerald-600">{tr.cash.toLocaleString()} DZD</td>
+                <td class="p-3 text-end font-mono text-amber-600">{tr.credit.toLocaleString()} DZD</td>
+                <td class="p-3 text-end font-mono text-rose-600">{tr.expenses.toLocaleString()} DZD</td>
+              </tr>
+            {/each}
+          </tbody>
+          <tfoot class="bg-slate-50 dark:bg-slate-800/60 font-black">
+            <tr class="border-t-2 border-pos-border">
+              <td class="p-3">TOTAL</td>
+              <td class="p-3 text-center font-mono">{truckRows.reduce((s, t) => s + t.trips, 0)}</td>
+              <td class="p-3 text-center font-mono">{truckRows.reduce((s, t) => s + t.clients, 0)}</td>
+              <td class="p-3 text-end font-mono text-sky-600">{truckRows.reduce((s, t) => s + t.sales, 0).toLocaleString()} DZD</td>
+              <td class="p-3 text-end font-mono text-emerald-600">{truckRows.reduce((s, t) => s + t.cash, 0).toLocaleString()} DZD</td>
+              <td class="p-3 text-end font-mono text-amber-600">{truckRows.reduce((s, t) => s + t.credit, 0).toLocaleString()} DZD</td>
+              <td class="p-3 text-end font-mono text-rose-600">{truckRows.reduce((s, t) => s + t.expenses, 0).toLocaleString()} DZD</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    {/if}
+{/if}}

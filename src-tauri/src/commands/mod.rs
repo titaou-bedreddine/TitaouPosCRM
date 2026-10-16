@@ -2,8 +2,8 @@ use crate::auth::authenticate_user;
 use crate::database::DbState;
 pub mod network_cmds;
 use crate::models::{
-    CartItem, Category, Customer, CustomerPaymentInput, DashboardStats, Employee, Expense, HeldSale,
-    Payroll, EmployeeAdvance, EmployeeAdvanceInput, ProductPackaging, PackagingInput, Product, ProductInput, Purchase, PurchaseItem, CreatePurchaseInput, Sale, Supplier, SupplierPaymentInput, SupplierPaymentRow, Unit, User, UserAccount, Role,
+    CartItem, Category, Customer, CustomerPaymentInput, CustomerStats, DashboardStats, Employee, Expense, HeldSale,
+    Payroll, EmployeeAdvance, EmployeeAdvanceInput, ProductPackaging, PackagingInput, Product, ProductInput, Purchase, PurchaseItem, CreatePurchaseInput, Sale, Supplier, SupplierPaymentInput, SupplierPaymentRow, SupplierStats, Unit, User, UserAccount, Role,
     CashMovement, CashSession, CreateSaleInput, PriceHistoryEntry, QuantityHistoryEntry,
 };
 use crate::services::{
@@ -431,6 +431,11 @@ pub fn list_customers(db: State<'_, DbState>) -> Result<Vec<Customer>, String> {
 }
 
 #[tauri::command]
+pub fn get_customer_stats(db: State<'_, DbState>, customer_id: i64) -> Result<CustomerStats, String> {
+    customer_service::get_stats(&db, customer_id)
+}
+
+#[tauri::command]
 pub fn save_customer(
     db: State<'_, DbState>,
     name: String,
@@ -469,6 +474,11 @@ pub fn record_customer_debt_payment(db: State<'_, DbState>, input: CustomerPayme
 #[tauri::command]
 pub fn list_suppliers(db: State<'_, DbState>) -> Result<Vec<Supplier>, String> {
     supplier_service::list_suppliers(&db)
+}
+
+#[tauri::command]
+pub fn get_supplier_stats(db: State<'_, DbState>, supplier_id: i64) -> Result<SupplierStats, String> {
+    supplier_service::get_stats(&db, supplier_id)
 }
 
 #[tauri::command]

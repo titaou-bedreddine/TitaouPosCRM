@@ -192,6 +192,22 @@ export interface CashMovement {
   reference_id?: string;
 }
 
+/** Aggregates behind the client profile popup's stat tiles (Total Sales /
+ *  Total Profit / Debts / Returns). Debts = the customer's own balance. */
+export interface CustomerStats {
+  total_sales: number;
+  total_profit: number;
+  returns_amount: number;
+}
+
+/** Aggregates behind the supplier profile popup's stat tiles. Debts = the
+ *  supplier's own balance; returns to suppliers aren't tracked (0 → "—"). */
+export interface SupplierStats {
+  total_purchases: number;
+  total_profit: number;
+  returns_amount: number;
+}
+
 export interface Sale {
   id: number;
   sale_number: string;

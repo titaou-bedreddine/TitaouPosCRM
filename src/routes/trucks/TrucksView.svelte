@@ -5,7 +5,7 @@
   import {
     Truck, Plus, RefreshCw, X, Pencil, Play, ClipboardList, Lock, Wallet,
     Package, Search, CircleDollarSign, TrendingDown, CheckCircle2, Fuel,
-    Trash2, Archive, Printer,
+    Trash2, Archive, Printer, MapPin, Route as RouteIcon, Users
   } from 'lucide-svelte';
   import { printService } from '../../lib/services/printService';
   import { currentUser } from '../../lib/stores/auth';
@@ -17,6 +17,7 @@
   let products: any[] = [];
   let warehouseByProduct = new Map<string, number>();
   let trips: any[] = []; // stats_truck_trips rows (canonical totals)
+  let summaryTrips: any[] = []; // ALL-TIME trips (never date-filtered) → summary cards
   let loads: any[] = []; // truck_loads with items (the trips)
   let loading = true;
   let error = '';
@@ -26,6 +27,19 @@
   // Archived trucks disappear from the active list but stay reachable:
   // historical trips keep referencing them (soft-delete, no data loss).
   let showArchived = false;
+
+  // Clients-visited drill-down: every distinct client the truck sold to,
+  // with their receipts (loaded on demand — one cloud_trip_orders call per
+  // trip the truck ran).
+  let showVisited = false;
+  let visitedLoading = false;
+  let visitedError = '';
+  let visitedTruckName = '';
+  let visitedClients: { name: string; receipts: { number: string; date: string; total: number; credit: number }[]; total: number; credit: number }[] = [];
+
+  // App.svelte deep-link: open the Maps page on this truck (live position
+  // and/or its trip's client checkpoints).
+  export let onShowOnMap: (truckId: string, checkpoints: boolean) => void = () => {};
 
   $: selected = trucks.find((x) => x.id === selectedId) ?? null;
   $: visibleTrucks = showArchived ? trucks : trucks.filter((x) => x.is_active !== false);
@@ -40,6 +54,28 @@
     }
   }
   $: sellerName = (id: string | null) => staff.find((s) => s.id === id)?.full_name ?? '—';
+
+  // ── Per-truck money summary (ALL-TIME, from stats_truck_trips) ──────────
+  // The history filters must never distort these tiles, hence a separate
+  // unfiltered load kept in sync by load().
+  $: selSummary = summaryTrips.filter((tp) => tp.out_truck_id === selectedId);
+  $: truckSalesTotal = selSummary.reduce((s, t) => s + Number(t.out_sales_value ?? 0), 0);
+  $: truckDebtsTotal = selSummary.reduce((s, t) => s + Number(t.out_outstanding ?? 0), 0);
+  $: truckExpensesTotal = selSummary.reduce((s, t) => s + Number(t.out_expenses ?? 0), 0);
+  $: truckCashTotal = selSummary.reduce((s, t) => s + Number(t.out_cash_value ?? 0), 0);
+
+  // ── Truck lamp: what the truck is doing RIGHT NOW ────────────────────────
+  // in_progress = on the road (live position), loaded = being loaded,
+  // reconciling = back and settling, no active trip = idle.
+  function truckLamp(tr: any): { label: string; dot: string; cls: string } {
+    const at = loads.find(
+      (l) => l.truck_id === tr.id && ['loaded', 'in_progress', 'reconciling'].includes(l.status)
+    );
+    if (!at) return { label: 'IDLE / متركن', dot: 'bg-slate-400', cls: 'text-pos-muted bg-slate-100 dark:bg-slate-800' };
+    if (at.status === 'in_progress') return { label: 'ON TRIP / في الجولة', dot: 'bg-emerald-500 animate-pulse', cls: 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50' };
+    if (at.status === 'loaded') return { label: 'ON LOADING / تحميل', dot: 'bg-amber-500', cls: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50' };
+    return { label: 'SETTLING / تسوية', dot: 'bg-violet-500', cls: 'text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/50' };
+  }
   // Trip history filters (req: quick date filters + custom range + seller,
   // combinable, read-only). The truck dimension: selected truck, or ALL.
   let histFrom = '';
@@ -75,13 +111,16 @@
       // the 6th target — trips got the stock rows, loads got the stats and
       // the stock map was built from load rows (every product badge showed
       // 0, 'aucun produit en stock' survived two QA rounds).
-      [trucks, staff, products, warehouseStock, trips, loads] = await Promise.all([
+      [trucks, staff, products, warehouseStock, trips, loads, summaryTrips] = await Promise.all([
         invoke<any[]>('cloud_list_trucks').catch(() => []),
         invoke<any[]>('cloud_field_staff').catch(() => []),
         invoke<any[]>('cloud_products_for_promos').catch(() => []),
         invoke<any[]>('cloud_warehouse_stock').catch(() => []),
         invoke<any[]>('cloud_stats_truck_trips', { fromDate: histFrom || null, toDate: histTo || null }).catch(() => []),
         invoke<any[]>('cloud_truck_loads').catch(() => []),
+        // All-time rows for the summary tiles — NEVER narrowed by the
+        // history date filters.
+        invoke<any[]>('cloud_stats_truck_trips', { fromDate: null, toDate: null }).catch(() => []),
       ]);
       warehouseByProduct = new Map(warehouseStock.map((r: any) => [r.product_id, Number(r.current_stock ?? 0)]));
       if (!selectedId && trucks.length > 0) selectedId = trucks[0].id;
@@ -614,6 +653,41 @@
     }
   }
 
+  async function openVisitedClients(tr: any) {
+    showVisited = true;
+    visitedLoading = true;
+    visitedError = '';
+    visitedTruckName = tr.name;
+    visitedClients = [];
+    try {
+      const loadIds = (summaryTrips ?? [])
+        .filter((tp) => tp.out_truck_id === tr.id)
+        .map((tp) => tp.out_load_id);
+      const byClient = new Map<string, { name: string; receipts: any[]; total: number; credit: number }>();
+      await Promise.all(loadIds.map(async (loadId) => {
+        const orders = await invoke<any[]>('cloud_trip_orders', { loadId }).catch(() => []);
+        for (const o of orders ?? []) {
+          const name = o?.client?.name || '—';
+          const entry = byClient.get(name) ?? { name, receipts: [], total: 0, credit: 0 };
+          entry.receipts.push({
+            number: o.order_number ?? String(o.id).slice(0, 8),
+            date: String(o.created_at || '').slice(0, 16).replace('T', ' '),
+            total: Number(o.total_amount ?? 0) / 100,
+            credit: Number(o.amount_due ?? 0) / 100,
+          });
+          entry.total += Number(o.total_amount ?? 0) / 100;
+          entry.credit += Number(o.amount_due ?? 0) / 100;
+          byClient.set(name, entry);
+        }
+      }));
+      visitedClients = [...byClient.values()].sort((a, b) => b.total - a.total);
+    } catch (e: any) {
+      visitedError = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      visitedLoading = false;
+    }
+  }
+
   const statusBadge: Record<string, string> = {
     loaded: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
     in_progress: 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300',
@@ -622,7 +696,13 @@
     closed: 'bg-slate-100 text-pos-muted dark:bg-slate-800',
   };
 
-  onMount(load);
+  onMount(() => {
+    load();
+    // Auto-refresh: trips start/sell/close from OTHER terminals (seller app
+    // / LAN) — the page must catch up by itself (owner request).
+    const iv = setInterval(() => { if (!busy && !loading) load(); }, 30000);
+    return () => clearInterval(iv);
+  });
 </script>
 
 <div class="p-4 md:p-6 space-y-4">
@@ -653,11 +733,54 @@
     <p class="text-[11px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl px-3 py-2">{msg}</p>
   {/if}
 
+  <!-- Selected-truck ALL-TIME money summary (owner: cards on top) -->
+  {#if selected}
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="bg-white dark:bg-slate-900 border border-pos-border p-3 rounded-2xl shadow-xs flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-sky-50 dark:bg-sky-950 text-sky-600 flex items-center justify-center shrink-0"><CircleDollarSign class="w-4 h-4" /></div>
+        <div class="min-w-0">
+          <p class="text-[10px] font-black text-pos-muted uppercase">Total Sales / المبيعات</p>
+          <p class="text-base font-black font-mono text-pos-text">{fmt(truckSalesTotal)} DA</p>
+        </div>
+      </div>
+      <div class="bg-white dark:bg-slate-900 border border-pos-border p-3 rounded-2xl shadow-xs flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950 text-amber-600 flex items-center justify-center shrink-0"><Wallet class="w-4 h-4" /></div>
+        <div class="min-w-0">
+          <p class="text-[10px] font-black text-pos-muted uppercase">Debts / الديون</p>
+          <p class="text-base font-black font-mono text-amber-600">{fmt(truckDebtsTotal)} DA</p>
+        </div>
+      </div>
+      <div class="bg-white dark:bg-slate-900 border border-pos-border p-3 rounded-2xl shadow-xs flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950 text-rose-600 flex items-center justify-center shrink-0"><TrendingDown class="w-4 h-4" /></div>
+        <div class="min-w-0">
+          <p class="text-[10px] font-black text-pos-muted uppercase">Expenses / النفقات</p>
+          <p class="text-base font-black font-mono text-rose-600">{fmt(truckExpensesTotal)} DA</p>
+        </div>
+      </div>
+      <div class="bg-white dark:bg-slate-900 border border-pos-border p-3 rounded-2xl shadow-xs flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950 text-emerald-600 flex items-center justify-center shrink-0"><CheckCircle2 class="w-4 h-4" /></div>
+        <div class="min-w-0">
+          <p class="text-[10px] font-black text-pos-muted uppercase">Cash collected / النقد</p>
+          <p class="text-base font-black font-mono text-emerald-600">{fmt(truckCashTotal)} DA</p>
+        </div>
+      </div>
+      <button type="button" on:click={() => openVisitedClients(selected)}
+        class="bg-white dark:bg-slate-900 border border-pos-border p-3 rounded-2xl shadow-xs flex items-center gap-3 cursor-pointer hover:border-sky-400 transition text-start">
+        <div class="w-9 h-9 rounded-xl bg-violet-50 dark:bg-violet-950 text-violet-600 flex items-center justify-center shrink-0"><Users class="w-4 h-4" /></div>
+        <div class="min-w-0">
+          <p class="text-[10px] font-black text-pos-muted uppercase">Clients visited / العملاء</p>
+          <p class="text-base font-black font-mono text-violet-600">Voir / عرض →</p>
+        </div>
+      </button>
+    </div>
+  {/if}
+
   <div class="grid gap-4 lg:grid-cols-[280px_1fr]">
     <!-- Trucks list -->
     <div class="space-y-2">
       {#each visibleTrucks as tr (tr.id)}
         {@const at = loads.find((l) => l.truck_id === tr.id && ['loaded', 'in_progress', 'reconciling'].includes(l.status))}
+        {@const lamp = truckLamp(tr)}
         <button type="button" on:click={() => (selectedId = tr.id)}
           class="w-full text-start p-3 rounded-2xl border cursor-pointer transition {selectedId === tr.id ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/30' : 'border-pos-border bg-white dark:bg-slate-900 hover:border-pos-muted'} {tr.is_active === false ? 'opacity-50' : ''}">
           <div class="flex items-center justify-between">
@@ -666,6 +789,10 @@
               <span class="text-[9px] font-black px-2 py-0.5 rounded-full {statusBadge[at.status]}">{at.status}</span>
             {/if}
           </div>
+          <!-- State lamp: on trip / on loading / settling / idle -->
+          <span class="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black {lamp.cls}">
+            <span class="w-1.5 h-1.5 rounded-full {lamp.dot}"></span>{lamp.label}
+          </span>
           <p class="text-[10px] text-pos-muted font-mono">{tr.plate || '—'}</p>
           <p class="text-[10px] text-pos-muted">👤 {tr.driver_name || '—'} · 🛒 {sellerName(tr.seller_id)}</p>
         </button>
@@ -684,11 +811,26 @@
       <div class="space-y-3">
         <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border flex items-start justify-between">
           <div>
-            <p class="text-sm font-black text-pos-text">{selected.name} <span class="font-mono text-[10px] text-pos-muted">{selected.plate}</span></p>
+            <div class="flex items-center gap-2">
+              <p class="text-sm font-black text-pos-text">{selected.name} <span class="font-mono text-[10px] text-pos-muted">{selected.plate}</span></p>
+              <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black {truckLamp(selected).cls}">
+                <span class="w-1.5 h-1.5 rounded-full {truckLamp(selected).dot}"></span>{truckLamp(selected).label}
+              </span>
+            </div>
             <p class="text-[10px] text-pos-muted">👤 {selected.driver_name || '—'} · 🛒 {sellerName(selected.seller_id)} · {selected.is_active === false ? '📦 ARCHIVED / ARCHIVÉ' : '✓ Active'}</p>
             <p class="text-[10px] text-pos-muted mt-0.5">{t('trucks_status')}: {activeTrip ? activeTrip.status : (selected.is_active === false ? 'archived' : 'idle')}</p>
           </div>
-          <div class="flex gap-1.5">
+          <div class="flex flex-wrap gap-1.5 justify-end">
+            <button type="button" on:click={() => onShowOnMap(selected.id, false)}
+              class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer"
+              title="Live position on the map (pushed by the seller's app) / الموقع المباشر">
+              <MapPin class="w-3 h-3" />Position
+            </button>
+            <button type="button" on:click={() => onShowOnMap(selected.id, true)}
+              class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-pos-border rounded-xl cursor-pointer"
+              title="Trip checkpoints (clients) on the map / محطات الجولة">
+              <RouteIcon class="w-3 h-3" />Checkpoints
+            </button>
             <button type="button" on:click={() => openEditTruck(selected)} class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" title="Modifier"><Pencil class="w-3.5 h-3.5" /></button>
             <button type="button" on:click={() => openDeleteTruck(selected)}
               class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
@@ -889,6 +1031,49 @@
     {/if}
   </div>
 </div>
+
+<!-- Visited clients: every client + their receipts (drill-down) -->
+{#if showVisited}
+  <div class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" on:click={() => (showVisited = false)} role="presentation">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-2xl max-h-[85vh] flex flex-col" on:click|stopPropagation>
+      <div class="p-4 border-b border-pos-border flex items-center justify-between">
+        <h3 class="text-sm font-black text-pos-text flex items-center gap-2"><Users class="w-4 h-4 text-violet-500" />Clients visités — {visitedTruckName}</h3>
+        <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (showVisited = false)}><X class="w-4 h-4" /></button>
+      </div>
+      <div class="p-4 overflow-y-auto space-y-2">
+        {#if visitedLoading}
+          <p class="text-xs text-pos-muted text-center py-8">Loading…</p>
+        {:else if visitedError}
+          <p class="text-[11px] font-bold text-rose-600">{visitedError}</p>
+        {:else if visitedClients.length === 0}
+          <p class="text-xs text-pos-muted text-center py-8">No sales — this truck has no receipts yet.</p>
+        {:else}
+          {#each visitedClients as vc (vc.name)}
+            <details class="rounded-xl border border-pos-border bg-slate-50 dark:bg-slate-800/40">
+              <summary class="p-3 cursor-pointer flex items-center justify-between gap-2">
+                <span class="text-xs font-black text-pos-text truncate">{vc.name} <span class="text-pos-muted font-bold">· {vc.receipts.length} receipt(s)</span></span>
+                <span class="text-[10px] font-mono font-black shrink-0">
+                  <span class="text-pos-text">{vc.total.toLocaleString('fr-DZ')} DZD</span>
+                  {#if vc.credit > 0}<span class="text-rose-600 ms-1.5">Crédit {vc.credit.toLocaleString('fr-DZ')}</span>{/if}
+                </span>
+              </summary>
+              <div class="px-3 pb-3 space-y-1">
+                {#each vc.receipts as r}
+                  <div class="flex items-center justify-between text-[10px] px-2 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-pos-border/50">
+                    <span class="font-mono font-bold text-sky-600">#{r.number}</span>
+                    <span class="font-mono text-pos-muted">{r.date}</span>
+                    <span class="font-mono font-black text-pos-text">{r.total.toLocaleString('fr-DZ')} DZD</span>
+                    {#if r.credit > 0}<span class="font-mono font-bold text-rose-600">Crédit {r.credit.toLocaleString('fr-DZ')}</span>{/if}
+                  </div>
+                {/each}
+              </div>
+            </details>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- Truck create/edit modal -->
 {#if showTruckForm}

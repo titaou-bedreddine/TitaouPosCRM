@@ -117,6 +117,30 @@ pub fn update_user(
     is_active: bool,
     new_password: Option<String>,
 ) -> Result<(), String> {
+    // OWNER PROTECTION: the Owner account is outside admin control — the
+    // owner manages his own credentials from his own session (profile /
+    // change-password). Admins only see him in Accounts/ذات التبويب.
+    {
+        let conn = db.conn.lock().unwrap();
+        let target_role: String = conn
+            .query_row(
+                "SELECT COALESCE(r.name, '') FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.id = ?1",
+                [user_id],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        drop(conn);
+        if target_role == "Owner" && new_password.is_some() {
+            return Err(
+                "The Owner account manages itself: use the owner session's change-password (his own password). / حساب المالك يُدار من طرفه فقط"
+                    .to_string(),
+            );
+        }
+        if target_role == "Owner" {
+            return Err("The Owner account cannot be edited by admins / لا يمكن تعديل حساب المالك".to_string());
+        }
+    }
+
     let clean_username = username.trim().to_lowercase();
     if clean_username.is_empty() {
         return Err("Username cannot be empty".to_string());
@@ -168,6 +192,23 @@ pub fn update_user(
 pub fn delete_user(db: &DbState, user_id: i64) -> Result<(), String> {
     if user_id == 1 {
         return Err("Cannot delete the primary system administrator account".to_string());
+    }
+    // OWNER PROTECTION: the Owner account can never be deleted — by anyone.
+    {
+        let conn = db.conn.lock().unwrap();
+        let target_role: String = conn
+            .query_row(
+                "SELECT COALESCE(r.name, '') FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.id = ?1",
+                [user_id],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        drop(conn);
+        if target_role == "Owner" {
+            return Err(
+                "The Owner account cannot be deleted at all / لا يمكن حذف حساب المالك نهائياً".to_string(),
+            );
+        }
     }
 
     let conn = db.conn.lock().unwrap();

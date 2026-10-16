@@ -116,6 +116,7 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             commands::list_held_sales,
             commands::delete_held_sale,
             commands::list_customers,
+            commands::get_customer_stats,
             commands::save_customer,
             commands::delete_customer,
             commands::toggle_customer_pin,
@@ -124,6 +125,7 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             commands::clear_supplier_debt,
             commands::list_debt_clear_log,
             commands::list_suppliers,
+            commands::get_supplier_stats,
             commands::save_supplier,
             commands::delete_supplier,
             commands::toggle_supplier_pin,
@@ -266,6 +268,12 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
             cloudsync::cloud_cmds::cloud_truck_loads,
             // Direct Sale back-office (trucks + trips) — local-only like all cloud commands
             cloudsync::cloud_cmds::cloud_list_trucks,
+            // Maps page: client GPS + truck live positions (local-only).
+            cloudsync::cloud_cmds::cloud_clients_positions,
+            cloudsync::cloud_cmds::cloud_truck_positions,
+            // Client profile popup: surface FIELD-app sales (CRM orders).
+            cloudsync::cloud_cmds::cloud_client_id_for_customer,
+            cloudsync::cloud_cmds::cloud_client_orders,
             cloudsync::cloud_cmds::cloud_save_truck,
             cloudsync::cloud_cmds::cloud_start_truck_trip,
             cloudsync::cloud_cmds::cloud_open_truck_reconciliation,

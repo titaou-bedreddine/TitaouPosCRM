@@ -55,6 +55,23 @@
   // AZERTY-normalized mirror of the search box (scanners may emit & é " ...).
   $: searchQueryN = normalizeBarcode(searchQuery).toLowerCase();
   let liveSearchResults: Product[] = [];
+
+  // Page summary tiles: invoices, spend, debts and the top supplier.
+  $: purchaseCount = purchases.length;
+  $: purchaseSpend = purchases.reduce((s, p) => s + (p.total || 0), 0);
+  $: purchaseDebt = purchases.reduce((s, p) => s + Math.max(0, (p.total || 0) - (p.paid_amount || 0)), 0);
+  $: purchaseTopSupplier = (() => {
+    const byId = new Map<number, { name: string; total: number }>();
+    for (const p of purchases) {
+      const key = p.supplier_id ?? -1;
+      const cur = byId.get(key) ?? { name: p.supplier_name || '—', total: 0 };
+      cur.total += p.total || 0;
+      byId.set(key, cur);
+    }
+    let top = null;
+    for (const v of byId.values()) if (!top || v.total > top.total) top = v;
+    return top;
+  })();
   let isSearchDropdownOpen = false;
 
   interface ItemRow {
@@ -889,6 +906,27 @@
       placeholder="Search: #, supplier, amount, or scan invoice QR..."
       class="flex-1 min-w-[220px] px-3 py-1.5 bg-pos-card border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none"
     />
+  </div>
+
+  <!-- Summary tiles -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
+    <div class="bg-pos-card border border-pos-border p-3 rounded-2xl shadow-xs">
+      <p class="text-[10px] font-black text-pos-muted uppercase">Invoices / الفواتير</p>
+      <p class="text-base font-black font-mono text-pos-text">{purchaseCount}</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border p-3 rounded-2xl shadow-xs">
+      <p class="text-[10px] font-black text-pos-muted uppercase">Total Purchases</p>
+      <p class="text-base font-black font-mono text-sky-600">{purchaseSpend.toLocaleString()} DZD</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border p-3 rounded-2xl shadow-xs">
+      <p class="text-[10px] font-black text-pos-muted uppercase">Debts / الديون</p>
+      <p class="text-base font-black font-mono text-rose-600">{purchaseDebt.toLocaleString()} DZD</p>
+    </div>
+    <div class="bg-pos-card border border-pos-border p-3 rounded-2xl shadow-xs">
+      <p class="text-[10px] font-black text-pos-muted uppercase">Top Supplier</p>
+      <p class="text-[11px] font-black text-pos-text truncate">{purchaseTopSupplier ? purchaseTopSupplier.name : '—'}</p>
+      <p class="text-[9px] font-mono text-pos-muted">{purchaseTopSupplier ? purchaseTopSupplier.total.toLocaleString() + ' DZD' : ''}</p>
+    </div>
   </div>
 
   <!-- Purchases List Table -->

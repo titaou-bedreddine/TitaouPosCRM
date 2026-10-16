@@ -1,5 +1,5 @@
 use crate::database::DbState;
-use crate::models::{Customer, CustomerPaymentInput};
+use crate::models::{Customer, CustomerPaymentInput, CustomerStats};
 use rusqlite::Result;
 
 pub fn list_customers(db: &DbState) -> Result<Vec<Customer>, String> {
@@ -45,6 +45,64 @@ pub fn list_customers(db: &DbState) -> Result<Vec<Customer>, String> {
 
     let list: Vec<Customer> = rows.filter_map(|r| r.ok()).collect();
     Ok(list)
+}
+
+/// Per-customer aggregates for the client profile popup: Total Sales,
+/// Total Profit, Returns (Debts = the customer's balance, already shown).
+pub fn get_stats(db: &DbState, customer_id: i64) -> Result<CustomerStats, String> {
+    let conn = db.conn.lock().unwrap();
+
+    // Gross sales: refund carts carry NEGATIVE totals — exclude them here,
+    // their value surfaces in returns_amount (same rule as the dashboard).
+    let total_sales: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(total_amount), 0) FROM sales
+             WHERE customer_id = ?1 AND status = 'completed' AND total_amount > 0",
+            [customer_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // Refunded line value (is_refunded = refund-cart lines AND lines
+    // refunded through the sale-edit flow) — same source as returns_amount
+    // on the dashboard.
+    let returns_amount: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(si.total_price), 0)
+             FROM sale_items si
+             JOIN sales s ON si.sale_id = s.id
+             WHERE s.customer_id = ?1 AND s.status = 'completed' AND si.is_refunded = 1",
+            [customer_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // Goods cost per line, signed: refund lines take cost OUT (the shop got
+    // the bottles back) so their margin reverses instead of doubling.
+    let (normal_cost, refund_cost): (i64, i64) = conn
+        .query_row(
+            "SELECT
+                COALESCE(SUM(CASE WHEN si.is_refunded = 1 THEN 0 ELSE cost END), 0),
+                COALESCE(SUM(CASE WHEN si.is_refunded = 1 THEN cost ELSE 0 END), 0)
+             FROM (
+                SELECT ROUND(COALESCE(p.purchase_price, 0)
+                             * COALESCE(si.base_quantity, si.quantity)) AS cost,
+                       si.is_refunded
+                FROM sale_items si
+                JOIN sales s ON si.sale_id = s.id
+                JOIN products p ON p.id = si.product_id
+                WHERE s.customer_id = ?1 AND s.status = 'completed'
+             ) si",
+            [customer_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or((0, 0));
+
+    // The same math the per-sale Telegram alert uses (total − goods cost),
+    // aggregated: refund carts booked −total, so −returns + refund_cost.
+    let total_profit = total_sales - normal_cost - returns_amount + refund_cost;
+
+    Ok(CustomerStats { total_sales, total_profit, returns_amount })
 }
 
 pub fn save_customer(
@@ -226,9 +284,12 @@ pub fn clear_customer_debt(
         )
         .map_err(|e| format!("Client introuvable: {}", e))?;
 
-    if previous_debt <= 0 {
+    if previous_debt == 0 {
         return Err("This customer has no outstanding debt / لا يوجد دين مستحق".to_string());
     }
+    // NEGATIVE balances too: a deleted/paid-then-cancelled sale can leave
+    // the shop "owing" the client (credit). Clearing resets it to 0 and
+    // archives the previous value exactly like a positive forgiveness.
 
     tx.execute(
         "UPDATE customers SET balance = 0 WHERE id = ?1",

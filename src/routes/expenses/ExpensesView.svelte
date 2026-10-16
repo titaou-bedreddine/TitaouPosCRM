@@ -14,11 +14,20 @@
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import {
     Plus, DollarSign, Trash2, Eye, Printer, X, Check, Pencil,
-    TrendingDown, Calendar, User, Receipt, AlertTriangle,
+    TrendingDown, Calendar, User, Receipt, AlertTriangle, UserCheck,
     CreditCard, Banknote, Building
   } from 'lucide-svelte';
 
-  let expenses: Expense[] = [];
+// Salary-advance rows are booked with the EMPLOYEE NAME as the recipient
+  // and "Salary advance" in the notes — surface that as a clickable label
+  // that jumps to the employee on the Employees page (owner: every related
+  // thing in the app should be clickable and labeled).
+  export let onOpenEmployee: (employeeName: string) => void = () => {};
+  function isAdvanceExpense(exp: any): boolean {
+    return String(exp?.notes || '').includes('Salary advance') && !!exp?.recipient;
+  }
+
+    let expenses: Expense[] = [];
   let isAddOpen = false;
   let editingExpense: Expense | null = null;
   let deleteConfirmText = '';
@@ -341,7 +350,21 @@
               </td>
               <td class="p-3 font-mono text-pos-muted">{exp.date}</td>
               <td class="p-3 font-bold text-pos-text">{exp.category_name || 'Général'}</td>
-              <td class="p-3 text-pos-muted">{exp.recipient || 'Divers'}</td>
+              <td class="p-3">
+                {#if isAdvanceExpense(exp)}
+                  <button
+                    type="button"
+                    on:click={() => onOpenEmployee(exp.recipient)}
+                    class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900 text-xs font-black cursor-pointer transition"
+                    title="Open this employee (الموظف) on the Employees page"
+                  >
+                    <UserCheck class="w-3.5 h-3.5" />
+                    {exp.recipient}
+                  </button>
+                {:else}
+                  <span class="text-pos-muted">{exp.recipient || 'Divers'}</span>
+                {/if}
+              </td>
               <td class="p-3 text-pos-muted font-semibold">{exp.user_name || `User #${exp.user_id}`}</td>
               <td class="p-3">
                 {#if exp.terminal_name}

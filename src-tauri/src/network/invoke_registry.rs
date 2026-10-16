@@ -110,6 +110,7 @@ pub fn lookup(command: &str) -> Option<CommandSpec> {
 
         // --- customers ---
         "list_customers" => spec(Auth::User, None),
+        "get_customer_stats" => spec(Auth::User, None),
         "save_customer" => spec(Auth::User, Some("customer_updated")),
         "delete_customer" => spec(Auth::User, Some("customer_updated")),
         "toggle_customer_pin" => spec(Auth::User, Some("customer_updated")),
@@ -119,6 +120,7 @@ pub fn lookup(command: &str) -> Option<CommandSpec> {
 
         // --- suppliers ---
         "list_suppliers" => spec(Auth::User, None),
+        "get_supplier_stats" => spec(Auth::User, None),
         "save_supplier" => spec(Auth::User, Some("supplier_updated")),
         "delete_supplier" => spec(Auth::User, Some("supplier_updated")),
         "toggle_supplier_pin" => spec(Auth::User, Some("supplier_updated")),
@@ -187,9 +189,9 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "reorder_pinned_products", "list_packagings", "save_packagings", "get_price_history",
     "get_quantity_history", "resolve_scale_scan", "process_sale", "create_sale", "replace_sale",
     "list_sales", "get_sale_items", "get_last_sale", "get_sale_by_number", "hold_sale",
-    "list_held_sales", "delete_held_sale", "delete_sale", "list_customers", "save_customer",
+    "list_held_sales", "delete_held_sale", "delete_sale", "list_customers", "get_customer_stats", "save_customer",
     "delete_customer", "toggle_customer_pin", "record_customer_debt_payment",
-    "clear_customer_debt", "list_debt_clear_log", "list_suppliers", "save_supplier",
+    "clear_customer_debt", "list_debt_clear_log", "list_suppliers", "get_supplier_stats", "save_supplier",
     "delete_supplier", "toggle_supplier_pin", "record_supplier_debt_payment",
     "list_supplier_debt_payments", "clear_supplier_debt", "create_purchase", "update_purchase", "get_purchase_items",
     "delete_purchase", "list_purchases", "add_expense", "update_expense", "list_expenses",
@@ -677,6 +679,9 @@ pub fn dispatch(ctx: &InvokeContext, command: &str, args: &Value) -> Result<Valu
 
         // --- customers ---
         "list_customers" => as_json(crate::services::customer_service::list_customers(db)?)?,
+        "get_customer_stats" => {
+            as_json(crate::services::customer_service::get_stats(db, req_i64(args, "customer_id")?)?)?
+        }
         "save_customer" => as_json(crate::services::customer_service::save_customer(
             db,
             &req_str(args, "name")?,
@@ -739,6 +744,9 @@ pub fn dispatch(ctx: &InvokeContext, command: &str, args: &Value) -> Result<Valu
 
         // --- suppliers ---
         "list_suppliers" => as_json(crate::services::supplier_service::list_suppliers(db)?)?,
+        "get_supplier_stats" => {
+            as_json(crate::services::supplier_service::get_stats(db, req_i64(args, "supplier_id")?)?)?
+        }
         "save_supplier" => as_json(crate::services::supplier_service::save_supplier(
             db,
             &req_str(args, "name")?,

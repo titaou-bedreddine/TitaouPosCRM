@@ -118,6 +118,7 @@
     recap_interval_minutes: '60',
     app_license_status: 'activated',
     allow_negative_stock: 'false',
+    hide_name_ar: 'false',
     pos_autofocus_search: 'true',
     pos_autofocus_timer_seconds: '10',
     pos_auto_capture_barcode: 'true',
@@ -557,6 +558,7 @@
     'notify_recap_enabled',
     'telegram_master_enabled',
     'allow_negative_stock',
+    'hide_name_ar',
     'pos_autofocus_search',
     'pos_auto_capture_barcode',
     'require_pin_for_discount',
@@ -2899,6 +2901,14 @@
                 <p class="text-[10px] text-pos-muted font-normal">Permit cashiers to complete sales even when stock is zero or depleted</p>
               </div>
               <input type="checkbox" bind:checked={settings.allow_negative_stock} class="rounded text-sky-600 w-4 h-4 cursor-pointer" />
+            </label>
+
+            <label class="flex items-center justify-between text-xs font-bold text-pos-text cursor-pointer p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">
+              <div>
+                <span>Hide Arabic Product Name (العربية)</span>
+                <p class="text-[10px] text-pos-muted font-normal">Remove the Arabic product-name textbox from the add/edit product form (available again by unchecking this)</p>
+              </div>
+              <input type="checkbox" bind:checked={settings.hide_name_ar} class="rounded text-sky-600 w-4 h-4 cursor-pointer" />
             </label>
 
             <label class="flex items-center justify-between text-xs font-bold text-pos-text cursor-pointer p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-pos-border">

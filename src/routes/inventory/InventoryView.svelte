@@ -11,17 +11,20 @@
   import PrintLabelModal from '../../lib/components/PrintLabelModal.svelte';
   import BatchLabelPrintModal from '../../lib/components/BatchLabelPrintModal.svelte';
   import UniversalSearchBar from '../../lib/components/UniversalSearchBar.svelte';
+  import PromotionsView from '../promotions/PromotionsView.svelte';
   import {
   Printer,
     Package, Plus, Edit2, Trash2, QrCode,
     ArrowUpDown, AlertTriangle, Tag, LayoutGrid,
     List, DollarSign, TrendingUp, Boxes, Check, X,
-    Pin, PinOff
+    Pin, PinOff, Percent
   } from 'lucide-svelte';
 
   let products: Product[] = [];
   let isBatchLabelOpen = false;
   let batchLabelSettings: Record<string, string> = {};
+  // Promotions live on the Products page now (button next to Batch Labels).
+  let isPromotionsOpen = false;
 
   async function openBatchLabels() {
     try {
@@ -296,6 +299,15 @@
           <LayoutGrid class="w-4 h-4" />
         </button>
       </div>
+
+      <button
+        type="button"
+        on:click={() => (isPromotionsOpen = true)}
+        class="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs transition active:scale-95"
+      >
+        <Percent class="w-4 h-4" />
+        <span>Promotions (العروض الترويجية)</span>
+      </button>
 
       <button
         type="button"
@@ -726,6 +738,32 @@
         >
           {isDeleting ? 'Deleting...' : 'Delete Product / حذف'}
         </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Promotions manager (moved off the sidebar into its Products page home) -->
+{#if isPromotionsOpen}
+  <div class="fixed inset-0 z-[70] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-pos-bg border border-pos-border rounded-3xl shadow-2xl w-full max-w-6xl h-[90vh] overflow-hidden flex flex-col">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-pos-border bg-pos-card shrink-0">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-600 flex items-center justify-center">
+            <Percent class="w-4 h-4" />
+          </div>
+          <h3 class="font-black text-sm text-pos-text">Promotions (العروض الترويجية)</h3>
+        </div>
+        <button
+          type="button"
+          on:click={() => (isPromotionsOpen = false)}
+          class="p-1.5 text-pos-muted hover:text-pos-text rounded-xl cursor-pointer"
+        >
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        <PromotionsView />
       </div>
     </div>
   </div>

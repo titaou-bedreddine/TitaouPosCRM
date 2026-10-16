@@ -19,6 +19,6 @@ export function logout() {
 
 export function hasPermission(user: User | null, permissionCode: string): boolean {
   if (!user) return false;
-  if (user.role_name === 'Administrator' || user.role_id === 1) return true;
+  if (user.role_name === 'Administrator' || user.role_name === 'Owner' || user.role_id === 1 || user.role_id === 4) return true;
   return user.permissions.includes(permissionCode);
 }

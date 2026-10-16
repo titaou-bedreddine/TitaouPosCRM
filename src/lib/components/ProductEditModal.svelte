@@ -331,6 +331,8 @@
   // margin for NEW products (existing products reuse their own margin).
   let priceRoundStep = 5;
   let defaultMarginPercent = 20;
+  // Settings option: hide/show the Arabic product-name textbox (العربية).
+  let hideNameAr = false;
 
   // Stock fields are linked: current (already in shop) + new (being added now)
   // = total (what current_stock will become on save).
@@ -342,6 +344,7 @@
       const s = await invoke<Record<string, string>>('get_all_settings');
       priceRoundStep = parseInt(s['price_round_step'] ?? '5', 10) || 0;
       defaultMarginPercent = parseFloat(s['default_margin_percent'] ?? '20') || 0;
+      hideNameAr = s['hide_name_ar'] === 'true';
     } catch (e) {
       console.warn('Could not load pricing defaults:', e);
     }
@@ -1139,7 +1142,7 @@
             <!-- Names (with live DB autosuggest: Tab or click accepts) -->
             <div class="md:col-span-3 space-y-2.5">
               <div class="grid grid-cols-2 gap-3">
-                <div class="relative">
+                <div class="relative {hideNameAr ? 'col-span-2' : ''}">
                   <label class="block text-xs font-bold text-pos-muted mb-1">Product Name (Français) *</label>
                   <input
                     type="text"
@@ -1166,6 +1169,7 @@
                     </div>
                   {/if}
                 </div>
+                {#if !hideNameAr}
                 <div>
                   <label class="block text-xs font-bold text-pos-muted mb-1">Product Name (العربية)</label>
                   <input
@@ -1177,6 +1181,7 @@
                     class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl text-xs font-bold text-pos-text outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
+                {/if}
               </div>
 
               <div class="grid grid-cols-3 gap-3">

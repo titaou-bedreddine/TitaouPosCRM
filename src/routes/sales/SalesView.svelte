@@ -188,17 +188,52 @@
     }
   }
 
-  async function deleteAndroidOrder(o: AndroidOrder) {
-    const confirmed = window.confirm(
-      'Supprimer cette vente ? Stock et solde client restaurés. Notification Telegram envoyée. / حذف هذا البيع؟ سيُستعاد المخزون ورصيد العميل وسيُرسل إشعار تيليغرام.'
-    );
-    if (!confirmed) return;
+  // Android (field) sale delete — same protected in-app modal as the POS
+  // sales (owner: no browser popups). cancel_truck_sale enforces ON-Trip
+  // edits: closed trips refuse with a human explanation below.
+  let androidDeleteTarget: AndroidOrder | null = null;
+  let androidDeletePassword = '';
+  let androidDeleteError = '';
+  let androidDeleting = false;
+
+  function openAndroidDelete(o: AndroidOrder) {
+    androidDeleteTarget = o;
+    androidDeletePassword = '';
+    androidDeleteError = '';
+  }
+
+  async function confirmDeleteAndroidOrder() {
+    if (!androidDeleteTarget) return;
+    androidDeleting = true;
+    androidDeleteError = '';
     try {
-      await invoke('cloud_cancel_direct_order', { orderId: o.id, userId: null });
+      await invoke('cloud_cancel_direct_order', {
+        orderId: androidDeleteTarget.id,
+        userId: null,
+        adminPassword: androidDeletePassword || null,
+      });
+      androidDeleteTarget = null;
       await loadAndroidOrders();
     } catch (e: any) {
-      window.alert(typeof e === 'string' ? e : e?.message || 'Failed');
+      const raw = typeof e === 'string' ? e : e?.message || 'Failed';
+      androidDeleteError = friendlyTripError(raw);
+    } finally {
+      androidDeleting = false;
     }
+  }
+
+  // The RPC guards are strict SQL messages — translate the ones the owner
+  // hits into what they mean.
+  function friendlyTripError(raw: string): string {
+    const r = raw.toLowerCase();
+    if (r.includes('trip') && (r.includes('not active') || r.includes('closed') || r.includes('cancel_truck'))) {
+      return 'Cette vente appartient à une tournée FERMÉE — impossible de la supprimer après clôture: le stock a déjà été réconcilié. ' +
+        'Utilisez la réconciliation/audit de la tournée pour corriger. / This sale belongs to a CLOSED trip — deleting is refused because its stock was already reconciled. Open the trip audit to correct.';
+    }
+    if (r.includes('password') || r.includes('admin')) {
+      return 'Admin password refused / كلمة مرور المسؤول غير صحيحة';
+    }
+    return raw;
   }
 
   /// A4 print of an Android direct sale (owner: print on PC = A4).
@@ -415,6 +450,25 @@
       setTimeout(() => (invoiceCopied = false), 1800);
     } catch {
       console.warn('clipboard write failed');
+    }
+  }
+
+  // ANDROID sale detail view (eye): lines + payments from the CRM.
+  let isAndroidDetailOpen = false;
+  let androidDetail: { order: AndroidOrder; lines: any[]; pays: any[] } | null = null;
+  let androidDetailLoading = false;
+
+  async function openAndroidDetail(o: AndroidOrder) {
+    isAndroidDetailOpen = true;
+    androidDetailLoading = true;
+    androidDetail = null;
+    try {
+      const detail = await invoke<any>('cloud_direct_order_detail', { orderId: o.id });
+      androidDetail = { order: o, lines: detail?.lines ?? [], pays: detail?.payments ?? [] };
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      androidDetailLoading = false;
     }
   }
 
@@ -745,6 +799,14 @@
                 <div class="flex items-center justify-end gap-1">
                   <button
                     type="button"
+                    on:click={(e) => { e.stopPropagation(); openAndroidDetail(o); }}
+                    class="p-1.5 text-pos-muted hover:text-sky-600 rounded-lg cursor-pointer"
+                    title="Voir la vente / View sale"
+                  >
+                    <Eye class="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
                     on:click={(e) => { e.stopPropagation(); printAndroidOrder(o); }}
                     class="p-1.5 text-pos-muted hover:text-sky-600 rounded-lg cursor-pointer"
                     title="Imprimer A4 / Print A4"
@@ -761,7 +823,7 @@
                   </button>
                   <button
                     type="button"
-                    on:click={(e) => { e.stopPropagation(); deleteAndroidOrder(o); }}
+                    on:click={(e) => { e.stopPropagation(); openAndroidDelete(o); }}
                     class="p-1.5 text-pos-muted hover:text-rose-600 rounded-lg cursor-pointer"
                     title="Supprimer (tournée active) / Delete — notifie Telegram"
                   >
@@ -1107,6 +1169,116 @@
   </div>
 {/if}
 
+
+<!-- Android (field) sale DELETE — same in-app protected style, admin password -->
+{#if androidDeleteTarget}
+  <div class="fixed inset-0 z-[60] bg-black/60 backdrop-blur-2xs flex items-center justify-center p-4">
+    <div class="bg-pos-card border border-pos-border rounded-2xl shadow-2xl p-6 max-w-sm w-full space-y-4 animate-in zoom-in-95">
+      <div class="flex items-center gap-3 text-rose-600">
+        <ShieldAlert class="w-6 h-6 shrink-0" />
+        <h3 class="font-black text-sm text-pos-text">Delete Field Sale / حذف بيع</h3>
+      </div>
+      <p class="text-xs text-pos-muted">
+        Delete invoice <strong class="text-pos-text">{androidDeleteTarget.order_number || String(androidDeleteTarget.id).slice(0, 8)}</strong>
+        {#if androidDeleteTarget.client?.name}for <strong class="text-pos-text">{androidDeleteTarget.client.name}</strong>{/if}?
+        Stock and the client balance are restored; Telegram is notified. Only trips still OPEN accept deletion.
+        <br/>المخزون ورصيد العميل يُستعادان. الجولات المغلقة لا تقبل الحذف.
+      </p>
+      <div>
+        <label class="block text-xs font-bold text-pos-muted mb-1">Admin password / كلمة مرور المسؤول *</label>
+        <input
+          type="password"
+          bind:value={androidDeletePassword}
+          placeholder="••••••••"
+          on:keydown={(e) => e.key === 'Enter' && confirmDeleteAndroidOrder()}
+          class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-rose-500"
+        />
+      </div>
+      {#if androidDeleteError}
+        <div class="p-2 bg-rose-100 text-rose-800 text-xs font-bold rounded-lg">{androidDeleteError}</div>
+      {/if}
+      <div class="flex justify-end gap-2 pt-2 border-t border-pos-border">
+        <button on:click={() => (androidDeleteTarget = null)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer">Cancel</button>
+        <button on:click={confirmDeleteAndroidOrder} disabled={androidDeleting || !androidDeletePassword.trim()}
+          class="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white text-xs font-black rounded-xl cursor-pointer shadow-md">
+          {androidDeleting ? 'Deleting...' : 'Confirm Delete'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Android (field) sale VIEW — the eye near the printer: a real detail
+     modal, same money math as the table (cloud centimes → DA). -->
+{#if isAndroidDetailOpen}
+  <div class="fixed inset-0 z-[60] bg-black/60 backdrop-blur-2xs flex items-center justify-center p-4">
+    <div class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col animate-in zoom-in-95">
+      <div class="flex items-start justify-between px-5 py-3 border-b border-pos-border shrink-0">
+        <div>
+          <h3 class="font-black text-sm text-pos-text">
+            Field Sale — {androidDetail?.order.order_number || String(androidDetail?.order.id || '').slice(0, 8)}
+          </h3>
+          <p class="text-[10px] text-pos-muted">
+            {androidDetail?.order.client?.name || '—'} · {String(androidDetail?.order.created_at || '').slice(0, 16).replace('T', ' ')}
+            · 🚚 {androidDetail?.order.truck_name || '—'}
+          </p>
+        </div>
+        <button on:click={() => (isAndroidDetailOpen = false)} class="text-pos-muted hover:text-pos-text p-1 rounded cursor-pointer"><X class="w-5 h-5" /></button>
+      </div>
+      <div class="p-5 space-y-3 overflow-y-auto">
+        {#if androidDetailLoading}
+          <p class="text-xs text-pos-muted text-center py-6">Loading…</p>
+        {:else if androidDetail}
+          <div class="rounded-xl border border-pos-border overflow-hidden">
+            <table class="w-full text-[11px]">
+              <thead class="bg-slate-50 dark:bg-slate-800/60 text-pos-muted font-black uppercase">
+                <tr><th class="p-2 text-start">Product</th><th class="p-2 text-end">Qty</th><th class="p-2 text-end">Total</th></tr>
+              </thead>
+              <tbody>
+                {#each androidDetail.lines as ln}
+                  <tr class="border-t border-pos-border">
+                    <td class="p-2 font-bold text-pos-text">{ln.product?.name ?? '—'}</td>
+                    <td class="p-2 text-end font-mono">{Number(ln.quantity ?? 0) % 1 === 0 ? Number(ln.quantity) : Number(ln.quantity).toFixed(3)}</td>
+                    <td class="p-2 text-end font-mono">{(Number(ln.line_total ?? 0) / 100).toLocaleString('fr-DZ')} DZD</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="p-2 bg-sky-50 dark:bg-sky-950/40 rounded-xl">
+              <p class="text-[8px] font-black text-sky-600 uppercase">Total</p>
+              <p class="text-xs font-black font-mono text-pos-text">{((androidDetail.order.total_amount ?? 0) / 100).toLocaleString('fr-DZ')} DZD</p>
+            </div>
+            <div class="p-2 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl">
+              <p class="text-[8px] font-black text-emerald-600 uppercase">Paid</p>
+              <p class="text-xs font-black font-mono text-emerald-700">
+                {((androidDetail.pays ?? []).reduce((s, pp) => s + Number(pp.amount ?? 0), 0) / 100).toLocaleString('fr-DZ')} DZD
+              </p>
+            </div>
+            <div class="p-2 bg-rose-50 dark:bg-rose-950/40 rounded-xl">
+              <p class="text-[8px] font-black text-rose-600 uppercase">Credit</p>
+              <p class="text-xs font-black font-mono text-rose-600">{(((androidDetail.order.total_amount ?? 0) - (androidDetail.order.amount_paid ?? 0)) / 100).toLocaleString('fr-DZ')} DZD</p>
+            </div>
+          </div>
+          {#if (androidDetail.pays ?? []).length > 0}
+            <div class="text-[11px] space-y-1">
+              {#each androidDetail.pays as pay}
+                <div class="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-800/60 rounded-lg">
+                  <span class="font-bold text-pos-muted uppercase">{pay.method || 'cash'}</span>
+                  <span class="font-mono font-black text-pos-text">{(Number(pay.amount ?? 0) / 100).toLocaleString('fr-DZ')} DZD</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+      </div>
+      <div class="px-5 py-3 border-t border-pos-border flex justify-end shrink-0">
+        <button on:click={() => (isAndroidDetailOpen = false)} class="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">Close</button>
+      </div>
+    </div>
+  </div>
+{/if}
 <!-- Protected Delete Modal (z-index above the sale-detail modal it opens from) -->
 {#if isDeleteModalOpen && selectedSale}
   <div class="fixed inset-0 z-[60] bg-black/60 backdrop-blur-2xs flex items-center justify-center p-4">

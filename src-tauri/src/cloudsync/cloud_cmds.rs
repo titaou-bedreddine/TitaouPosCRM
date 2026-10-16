@@ -435,6 +435,78 @@ pub fn cloud_list_trucks() -> Result<Value, String> {
     Ok(Value::Array(rows))
 }
 
+/// Client positions for the Maps page (CRM clients carry lat/lng). RLS
+/// scopes to the org; is_active filters the walk-in/hidden ones out.
+#[tauri::command]
+pub fn cloud_clients_positions() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "clients",
+        "id, name, owner_name, address, latitude, longitude, current_balance, is_active, updated_at",
+        &[
+            ("is_active", "eq.true".into()),
+            ("order", "name.asc".into()),
+        ],
+    )?;
+    Ok(Value::Array(rows))
+}
+
+/// Last known truck positions (the seller app pushes while a trip runs).
+/// Newest-first; the Maps view keeps the LATEST row per truck and treats
+/// older ones as history. Accepts 404/PGRST205 when the migration hasn't
+/// been applied yet — the map just shows no trucks instead of erroring.
+#[tauri::command]
+pub fn cloud_truck_positions() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "truck_positions",
+        "id, truck_id, seller_id, trip_load_id, latitude, longitude, recorded_at",
+        &[("order", "recorded_at.desc".into()), ("limit", "600".into())],
+    );
+    match rows {
+        Ok(rows) => Ok(Value::Array(rows)),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("PGRST205") || msg.contains("does not exist") || msg.contains("schema cache") {
+                Ok(Value::Array(Vec::new()))
+            } else {
+                Err(msg)
+            }
+        }
+    }
+}
+
+/// CRM uuid behind a local POS customer (sync_map) — used so the client
+/// profile popup can ALSO show the sales made on the FIELD app (they live
+/// only in Supabase, never in the POS's local sales ledger).
+#[tauri::command]
+pub fn cloud_client_id_for_customer(db: State<'_, DbState>, customer_id: i64) -> Result<Value, String> {
+    let conn = db.conn.lock().unwrap();
+    let crm_id = crate::cloudsync::outbox::remote_id(&conn, "customer", customer_id);
+    Ok(serde_json::json!({ "crm_id": crm_id }))
+}
+
+/// A CRM client's orders (field-app sales included), newest first. Same
+/// metric names as the POS-local rows the popup merges them with.
+#[tauri::command]
+pub fn cloud_client_orders(crm_client_id: String) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "orders",
+        // pos_ref: POS-pushed orders carry it — the popup skips those (the
+        // local ledger already lists them) and keeps FIELD-app sales only.
+        "id, order_number, created_at, status, payment_status, total_amount, amount_paid, amount_due, pos_ref",
+        &[
+            ("client_id", format!("eq.{crm_client_id}")),
+            ("status", "neq.cancelled".into()),
+            ("order", "created_at.desc".into()),
+            ("limit", "200".into()),
+        ],
+    )?;
+    Ok(Value::Array(rows))
+}
+
+
 /// Create or update a truck (admin; RLS enforces organization + role).
 #[tauri::command]
 pub fn cloud_save_truck(
@@ -612,7 +684,13 @@ pub fn cloud_cancel_direct_order(
     order_id: String,
     db: State<'_, DbState>,
     user_id: Option<i64>,
+    admin_password: Option<String>,
 ) -> Result<Value, String> {
+    // The protective gate is REAL now: without the caller's admin password
+    // the RPC is refused (the trip-active guard on the CRM side stays).
+    if !crate::auth::verify_admin_password(&db, admin_password.as_deref().unwrap_or(""))? {
+        return Err("Admin password required / كلمة مرور المسؤول مطلوبة".into());
+    }
     let client = cloud::ensure_session()?;
     let res = client.rpc(
         "cancel_truck_sale",

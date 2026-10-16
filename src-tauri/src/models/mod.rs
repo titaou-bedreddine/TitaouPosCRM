@@ -613,6 +613,35 @@ pub struct DashboardStats {
     pub new_stock: NewStockStat,
 }
 
+/// Per-customer aggregates for the client profile popup (Tiles: Total
+/// Sales / Total Profit / Debts / Returns). Debts come from the customer's
+/// balance — not duplicated here.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct CustomerStats {
+    /// Gross completed sales booked to this customer (refund carts —
+    /// negative totals — are excluded; their value surfaces in returns).
+    pub total_sales: i64,
+    /// Realized gross margin: sales − goods cost (products.purchase_price ×
+    /// base qty), with refund lines reversing the margin they gave back.
+    pub total_profit: i64,
+    /// Returned/refunded line value on this customer's sales.
+    pub returns_amount: i64,
+}
+
+/// Per-supplier aggregates for the supplier profile popup. Debts come from
+/// the supplier's balance — not duplicated here.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SupplierStats {
+    /// Total invoiced purchases from this supplier (our spend = their sales).
+    pub total_purchases: i64,
+    /// Resale margin on the goods bought: current sale price × base qty −
+    /// what the line actually cost, summed over this supplier's invoices.
+    pub total_profit: i64,
+    /// Returns to suppliers are not tracked yet — always 0; the popup tile
+    /// shows "—" for it.
+    pub returns_amount: i64,
+}
+
 /// One terminal's share of today's sales (LAN multi-PC).
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TerminalSalesStat {

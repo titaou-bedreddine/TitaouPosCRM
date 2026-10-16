@@ -7,10 +7,10 @@
   import { sortRows, clickSort } from '../../lib/utils/tableSort';
   import SupplierDebtModal from '../../lib/components/SupplierDebtModal.svelte';
   import { entityQrPayload, entityQrDataUrl, printHtmlSilently } from '../../lib/utils/printer';
-  import type { Supplier } from '../../lib/types';
+  import type { Supplier, SupplierStats } from '../../lib/types';
   import {
     Truck, Plus, QrCode, Edit2, Trash2, Search, X, Check, DollarSign, Eye, ShieldAlert,
-    Phone, Mail, MapPin, Building, FileSpreadsheet, Pin, PinOff
+    Phone, Mail, MapPin, Building, FileSpreadsheet, Pin, PinOff, BadgeCheck, Undo2, TrendingUp, ShoppingBag
   } from 'lucide-svelte';
 
   let suppliers: Supplier[] = [];
@@ -20,6 +20,8 @@
   let isModalOpen = false;
   let previewSupplier: Supplier | null = null;
   let supplierHistory: any[] = [];
+  // Lifetime aggregates behind the popup's stat tiles.
+  let supplierStats: SupplierStats | null = null;
   // Clicking an invoice in the supplier's history opens it on the Purchases
   // page (App.svelte routes via the same deep-link the QR scan uses).
   export let onOpenPurchase: (invoiceNumber: string) => void = () => {};
@@ -97,6 +99,33 @@
     } catch {
       supplierHistory = [];
     }
+  }
+
+  // Lifetime aggregates behind the popup's stat tiles.
+  async function loadSupplierStats(x: Supplier | null) {
+    if (!x) {
+      supplierStats = null;
+      return;
+    }
+    try {
+      supplierStats = await invoke<SupplierStats>('get_supplier_stats', { supplierId: x.id });
+    } catch {
+      supplierStats = null; // tiles fall back to "—"
+    }
+  }
+
+  /// Opens the profile popup: identity, stat tiles, history, QR.
+  async function openSupplierPreview(s: Supplier) {
+    previewSupplier = s;
+    supplierStats = null;
+    loadSupplierHistory(s);
+    loadSupplierStats(s);
+  }
+
+  function closeSupplierPreview() {
+    previewSupplier = null;
+    supplierStats = null;
+    loadSupplierHistory(null);
   }
   let isDebtModalOpen = false;
   let supplierToDelete: Supplier | null = null;
@@ -228,6 +257,7 @@
       const fresh = suppliers.find((s) => s.id === previewSupplier!.id);
       if (fresh) previewSupplier = fresh;
       await loadSupplierHistory(previewSupplier);
+      await loadSupplierStats(previewSupplier);
     }
   }
 </script>
@@ -299,7 +329,7 @@
         {:else}
           {#each sortedSuppliers as s}
             <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-              <td class="p-3 font-bold text-pos-text cursor-pointer" on:click={() => { previewSupplier = s; loadSupplierHistory(s); }}>
+              <td class="p-3 font-bold text-pos-text cursor-pointer" on:click={() => openSupplierPreview(s)}>
                 {s.name}
               </td>
               <td class="p-3 text-pos-muted">{s.contact_person || '—'}</td>
@@ -334,7 +364,7 @@
                   </button>
                   <button
                     type="button"
-                    on:click={() => { previewSupplier = s; loadSupplierHistory(s); }}
+                    on:click={() => openSupplierPreview(s)}
                     class="p-1.5 text-pos-muted hover:text-sky-600 rounded-lg cursor-pointer"
                     title="View details (عرض)"
                   >
@@ -468,7 +498,7 @@
               <p class="text-xs text-pos-muted">{previewSupplier.contact_person || 'Principal Commercial Contact'}</p>
             </div>
           </div>
-          <button on:click={() => { previewSupplier = null; loadSupplierHistory(null); }} class="text-pos-muted hover:text-pos-text p-1.5 rounded-xl cursor-pointer shrink-0">
+          <button on:click={closeSupplierPreview} class="text-pos-muted hover:text-pos-text p-1.5 rounded-xl cursor-pointer shrink-0">
             <X class="w-5 h-5" />
           </button>
         </div>
@@ -524,13 +554,44 @@
                 <p class="font-mono text-pos-text">{previewSupplier.qr_code || 'SUP-' + previewSupplier.id}</p>
               </div>
             </div>
-            <button
-              type="button"
-              on:click={() => printSupplierCard(previewSupplier!)}
-              class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-black rounded-xl cursor-pointer shadow-md"
-            >
-              Print QR Card (طباعة البطاقة)
-            </button>
+          </div>
+        </div>
+
+        <!-- Lifetime stat tiles: Total Purchases / Total Profit / Debts / Returns -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="p-3 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 rounded-2xl" title="Total invoiced from this supplier (our purchases)">
+            <div class="flex items-center gap-1.5 text-[10px] uppercase font-black tracking-wider text-sky-700 dark:text-sky-400">
+              <ShoppingBag class="w-3.5 h-3.5" />
+              <span>Total Purchases (المشتريات)</span>
+            </div>
+            <p class="text-lg font-black font-mono text-pos-text mt-1">
+              {supplierStats ? supplierStats.total_purchases.toLocaleString() + ' DZD' : '—'}
+            </p>
+          </div>
+          <div class="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 rounded-2xl" title="Margin if the goods bought from this supplier sold at current sale prices">
+            <div class="flex items-center gap-1.5 text-[10px] uppercase font-black tracking-wider text-emerald-700 dark:text-emerald-400">
+              <TrendingUp class="w-3.5 h-3.5" />
+              <span>Total Profit (الربح)</span>
+            </div>
+            <p class="text-lg font-black font-mono text-pos-text mt-1">
+              {supplierStats ? supplierStats.total_profit.toLocaleString() + ' DZD' : '—'}
+            </p>
+          </div>
+          <div class="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-2xl" title="Outstanding balance we still owe this supplier">
+            <div class="flex items-center gap-1.5 text-[10px] uppercase font-black tracking-wider text-rose-700 dark:text-rose-400">
+              <BadgeCheck class="w-3.5 h-3.5" />
+              <span>Debts (الديون)</span>
+            </div>
+            <p class="text-lg font-black font-mono text-pos-text mt-1">{(previewSupplier.balance || 0).toLocaleString()} DZD</p>
+          </div>
+          <div class="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-2xl" title="Returns to suppliers are not tracked yet">
+            <div class="flex items-center gap-1.5 text-[10px] uppercase font-black tracking-wider text-amber-700 dark:text-amber-400">
+              <Undo2 class="w-3.5 h-3.5" />
+              <span>Returns (المرتجعات)</span>
+            </div>
+            <p class="text-lg font-black font-mono text-pos-text mt-1">
+              {supplierStats && supplierStats.returns_amount > 0 ? supplierStats.returns_amount.toLocaleString() + ' DZD' : '—'}
+            </p>
           </div>
         </div>
 
@@ -551,7 +612,7 @@
               <tbody class="divide-y divide-pos-border/40">
                 {#each supplierHistory as pur (pur.id)}
                   <tr class="bg-pos-card hover:bg-sky-50 dark:hover:bg-sky-950/30 cursor-pointer transition"
-                    on:click={() => { previewSupplier = null; loadSupplierHistory(null); onOpenPurchase(pur.invoice_number); }}
+                    on:click={() => { closeSupplierPreview(); onOpenPurchase(pur.invoice_number); }}
                     title="Open this invoice on the Purchases page">
                     <td class="p-2 font-mono font-bold text-sky-600">#{pur.invoice_number}</td>
                     <td class="p-2 font-mono text-pos-muted">{pur.date}</td>
@@ -580,8 +641,16 @@
         {/if}
       </div>
 
-      <div class="px-6 py-4 border-t border-pos-border bg-slate-50 dark:bg-slate-800/60 flex items-center justify-end">
-        <button on:click={() => { previewSupplier = null; loadSupplierHistory(null); }} class="px-5 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">Close</button>
+      <div class="px-6 py-4 border-t border-pos-border bg-slate-50 dark:bg-slate-800/60 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          on:click={() => printSupplierCard(previewSupplier!)}
+          class="px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white text-xs font-black rounded-xl cursor-pointer shadow-xs flex items-center gap-1.5"
+        >
+          <QrCode class="w-4 h-4" />
+          Print QR Card (طباعة البطاقة)
+        </button>
+        <button on:click={closeSupplierPreview} class="px-5 py-2 bg-slate-200 dark:bg-slate-700 text-pos-text font-bold text-xs rounded-xl cursor-pointer">Close</button>
       </div>
     </div>
   </div>

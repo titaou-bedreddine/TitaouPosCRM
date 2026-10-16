@@ -21,11 +21,9 @@
   import NotificationsView from './routes/notifications/NotificationsView.svelte';
   import LoginView from './routes/auth/LoginView.svelte';
   import FieldOrdersView from './routes/fieldorders/FieldOrdersView.svelte';
-  import TeamView from './routes/team/TeamView.svelte';
   import TruckLoadsView from './routes/truckloads/TruckLoadsView.svelte';
   import TrucksView from './routes/trucks/TrucksView.svelte';
-  import DeletionRequestsView from './routes/deletionrequests/DeletionRequestsView.svelte';
-  import PromotionsView from './routes/promotions/PromotionsView.svelte';
+  import MapsView from './routes/maps/MapsView.svelte';
   import RoutesView from './routes/routes/RoutesView.svelte';
   import CashDrawerModal from './lib/components/CashDrawerModal.svelte';
   import FirstSetupWizard from './lib/components/FirstSetupWizard.svelte';
@@ -41,9 +39,9 @@
 
   // Icons
   import {
-    LayoutDashboard, ShoppingCart, Receipt, DollarSign, UsersRound, FileWarning,
+    LayoutDashboard, ShoppingCart, Receipt, DollarSign,
     Package, TrendingDown, Users, Settings, LogOut,
-    Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle, Percent, Route, FileText
+    Truck, FileSpreadsheet, UserCheck, Wifi, Moon, Sun, CreditCard, Bell, Lock, AlertTriangle, Route, FileText, Map
   } from 'lucide-svelte';
 
   let currentRoute = 'pos';
@@ -52,6 +50,14 @@
   let purchasesFocusInvoice: string | null = null;
   // Customer popup → Sales page deep-link: the exact sale row to open.
   let salesFocusSale: any = null;
+  // Trucks page → Maps deep-link: which truck to show (and whether to
+  // highlight its trip's client checkpoints).
+  let mapsFocusTruckId = '';
+  let mapsFocusCheckpoints = false;
+  // Clients page map-button → focus that client's position + money card.
+  let mapsFocusClientId = '';
+  // Expense advance row → Employees page, pre-filtered to that person.
+  let employeesFocusName = '';
   // Sidebar drawer-kick feedback (success/failure shown under the button).
   let drawerMsg = '';
   let netToast = '';
@@ -62,7 +68,7 @@
   // roles) keeps full navigation.
   const CASHIER_ALLOWED = new Set(['pos', 'sales', 'expenses', 'customers']);
   function isAdmin(user: any): boolean {
-    return user?.role_id === 1 || user?.role_name === 'Administrator';
+    return user?.role_id === 1 || user?.role_id === 4 || user?.role_name === 'Administrator' || user?.role_name === 'Owner';
   }
   function isCashier(user: any): boolean {
     return user?.role_id === 2 || user?.role_name === 'Cashier';
@@ -107,13 +113,62 @@
     }
   }
 
-  function settingsAllowed(user: any): boolean {
-    return true;
-  }
   // Bounce unauthorized routes (e.g. after login or logout).
   $: if (!routeAllowed(currentRoute, $currentUser)) {
     currentRoute = 'pos';
   }
+
+  // ── Sidebar navigation: grouped with slim separators, most-used on top
+  // (owner's order: POS / cash register / expenses, then sales+customers,
+  // purchases+suppliers, products, trucks+employees, analytics, alerts).
+  // Deletion requests moved inside the Customers page. A group with no
+  // visible item for this role is skipped entirely (so are its separators).
+  type NavEntry = { route: string; label: string; icon: any; iconClass?: string };
+  function navEntry(route: string, labelKey: string, icon: any, locale: string, iconClass = ''): NavEntry {
+    return { route, label: t(labelKey, locale), icon, iconClass };
+  }
+  $: navGroups = buildNavGroups($currentUser, $currentLocale, salesMode);
+  function buildNavGroups(user: any, locale: string, mode: string): NavEntry[][] {
+    if (!user) return [];
+    const admin = isAdmin(user);
+    const allowed = (r: string) => routeAllowed(r, user);
+    return [
+      // Everyday counter surface: POS, cash register, expenses.
+      [
+        navEntry('pos', 'nav_pos', ShoppingCart, locale),
+        ...(allowed('cash') ? [navEntry('cash', 'nav_cash', DollarSign, locale, 'text-emerald-500')] : []),
+        navEntry('expenses', 'nav_expenses', TrendingDown, locale),
+      ],
+      // The day's business: sale history + customers.
+      [
+        navEntry('sales', 'nav_sales', Receipt, locale),
+        navEntry('customers', 'nav_customers', Users, locale),
+      ],
+      // Buying — purchase invoices & the companies we buy from.
+      [
+        ...(allowed('purchases') ? [navEntry('purchases', 'nav_purchases', FileSpreadsheet, locale)] : []),
+        ...(allowed('suppliers') ? [navEntry('suppliers', 'nav_suppliers', Truck, locale)] : []),
+      ],
+      // Catalog.
+      ...(allowed('inventory') ? [[navEntry('inventory', 'nav_inventory', Package, locale)]] : []),
+      // Trucks/field + people (Direct Sale hides pre-sale-only routes).
+      [
+        ...(admin && mode !== 'direct_sale' ? [
+          navEntry('fieldorders', 'nav_fieldorders', Truck, locale),
+          navEntry('routes', 'nav_routes', Route, locale),
+          navEntry('truckloads', 'nav_truckloads', FileSpreadsheet, locale, 'text-amber-500'),
+        ] : []),
+        ...(admin ? [navEntry('trucks', 'nav_trucks', Truck, locale, 'text-sky-500')] : []),
+        ...(allowed('maps') ? [navEntry('maps', 'nav_maps', Map, locale, 'text-emerald-600')] : []),
+        ...(allowed('payroll') ? [navEntry('payroll', 'nav_payroll', UserCheck, locale)] : []),
+      ],
+      // Insight.
+      ...(allowed('dashboard') ? [[navEntry('dashboard', 'nav_dashboard', LayoutDashboard, locale)]] : []),
+      // Alerts.
+      ...(allowed('notifications') ? [[navEntry('notifications', 'nav_notifications', Bell, locale)]] : []),
+    ].filter(g => g.length > 0);
+  }
+
   let isDarkMode = false;
   // Telegram master switch (quick toggle): false = silent. Flip requires
   // the admin password. Quiet windows ("HH:MM-HH:MM" list) live in the
@@ -281,6 +336,7 @@
   }
 
   onMount(async () => {
+    loadSavedDarkMode();
     loadShopName();
     try {
       salesMode = (await invoke<string>('get_setting', { key: 'sales_mode' })) || 'pre_sale';
@@ -413,12 +469,24 @@
 
   function toggleTheme() {
     isDarkMode = !isDarkMode;
-    if (isDarkMode) {
+    applyDark(isDarkMode);
+    // Persist — dark mode used to reset on every restart (owner: dark theme
+    // was broken for daily use).
+    localStorage.setItem('titaou_dark', isDarkMode ? '1' : '0');
+  }
+
+  function applyDark(on: boolean) {
+    if (on) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
     // The skin re-asserts itself: data-theme stays set, only .dark changed.
+  }
+
+  function loadSavedDarkMode() {
+    isDarkMode = localStorage.getItem('titaou_dark') === '1';
+    applyDark(isDarkMode);
   }
 
   function handleLogout() {
@@ -460,199 +528,27 @@
         </div>
       </div>
 
-      <!-- Navigation Menu Links -->
-      <nav class="flex-1 overflow-y-auto p-2.5 space-y-1">
-        <button
-          type="button"
-          on:click={() => currentRoute = 'pos'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'pos' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <ShoppingCart class="w-4 h-4" />
-          <span>{t('nav_pos', $currentLocale)}</span>
-        </button>
-
-        <button
-          type="button"
-          on:click={() => currentRoute = 'sales'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'sales' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Receipt class="w-4 h-4" />
-          <span>{t('nav_sales', $currentLocale)}</span>
-        </button>
-
-        {#if routeAllowed('cash', $currentUser)}
-        <button
-          type="button"
-          on:click={() => currentRoute = 'cash'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'cash' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <DollarSign class="w-4 h-4 text-emerald-500" />
-          <span>{t('nav_cash', $currentLocale)}</span>
-        </button>
-        {/if}
-
-        {#if routeAllowed('purchases', $currentUser)}
-        <button
-          type="button"
-          on:click={() => currentRoute = 'purchases'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'purchases' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <FileSpreadsheet class="w-4 h-4" />
-          <span>{t('nav_purchases', $currentLocale)}</span>
-        </button>
-        {/if}
-
-        {#if isAdmin($currentUser)}
-        {#if salesMode !== 'direct_sale'}
-          <button
-          type="button"
-          on:click={() => currentRoute = 'fieldorders'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'fieldorders' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Truck class="w-4 h-4" />
-          <span>{t('nav_fieldorders', $currentLocale)}</span>
-        </button>
+      <!-- Navigation Menu Links — grouped, separators between groups -->
+      <nav class="flex-1 overflow-y-auto p-2.5">
+        {#each navGroups as group, gi}
+          {#if group.length > 0}
+            {#if gi > 0}
+              <div class="my-1 mx-2 border-t border-pos-border/40"></div>
+            {/if}
+            <div class="space-y-1">
+              {#each group as item}
+                <button
+                  type="button"
+                  on:click={() => currentRoute = item.route}
+                  class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === item.route ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
+                >
+                  <item.icon class="w-4 h-4 {item.iconClass || ''}" />
+                  <span>{item.label}</span>
+                </button>
+              {/each}
+            </div>
           {/if}
-        {#if salesMode !== 'direct_sale'}
-          <button
-          type="button"
-          on:click={() => currentRoute = 'routes'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'routes' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Route class="w-4 h-4" />
-          <span>{t('nav_routes', $currentLocale)}</span>
-        </button>
-          {/if}
-        {#if salesMode !== 'direct_sale'}
-          <button
-          type="button"
-          on:click={() => currentRoute = 'truckloads'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'truckloads' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <FileSpreadsheet class="w-4 h-4 text-amber-500" />
-          <span>{t('nav_truckloads', $currentLocale)}</span>
-        </button>
-          {/if}
-        <button
-          type="button"
-          on:click={() => currentRoute = 'trucks'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'trucks' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Truck class="w-4 h-4 text-sky-500" />
-          <span>{t('nav_trucks', $currentLocale)}</span>
-        </button>
-        <button
-          type="button"
-          on:click={() => currentRoute = 'promotions'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'promotions' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Percent class="w-4 h-4 text-amber-500" />
-          <span>{t('nav_promotions', $currentLocale)}</span>
-        </button>
-        <button
-          type="button"
-          on:click={() => currentRoute = 'team'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'team' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <UsersRound class="w-4 h-4" />
-          <span>{t('nav_team', $currentLocale)}</span>
-        </button>
-        <button
-          type="button"
-          on:click={() => currentRoute = 'deletionrequests'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'deletionrequests' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <FileWarning class="w-4 h-4 text-amber-500" />
-          <span>{t('nav_deletionrequests', $currentLocale)}</span>
-        </button>
-        {/if}
-
-        <button
-          type="button"
-          on:click={() => currentRoute = 'customers'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'customers' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Users class="w-4 h-4" />
-          <span>{t('nav_customers', $currentLocale)}</span>
-        </button>
-
-        {#if routeAllowed('suppliers', $currentUser)}
-        <button
-          type="button"
-          on:click={() => currentRoute = 'suppliers'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'suppliers' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Truck class="w-4 h-4" />
-          <span>{t('nav_suppliers', $currentLocale)}</span>
-        </button>
-        {/if}
-
-        {#if routeAllowed('inventory', $currentUser)}
-        <button
-          type="button"
-          on:click={() => currentRoute = 'inventory'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'inventory' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Package class="w-4 h-4" />
-          <span>{t('nav_inventory', $currentLocale)}</span>
-        </button>
-        {/if}
-
-        <button
-          type="button"
-          on:click={() => currentRoute = 'expenses'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'expenses' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <TrendingDown class="w-4 h-4" />
-          <span>{t('nav_expenses', $currentLocale)}</span>
-        </button>
-
-        {#if routeAllowed('payroll', $currentUser)}
-        <button
-          type="button"
-          on:click={() => currentRoute = 'payroll'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'payroll' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <UserCheck class="w-4 h-4" />
-          <span>{t('nav_payroll', $currentLocale)}</span>
-        </button>
-        {/if}
-
-        {#if routeAllowed('dashboard', $currentUser)}
-        <button
-          type="button"
-          on:click={() => currentRoute = 'dashboard'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'dashboard' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <LayoutDashboard class="w-4 h-4" />
-          <span>{t('nav_dashboard', $currentLocale)}</span>
-        </button>
-        {/if}
-
-        {#if routeAllowed('notifications', $currentUser)}
-        <button
-          type="button"
-          on:click={() => currentRoute = 'notifications'}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'notifications' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Bell class="w-4 h-4" />
-          <span>{t('nav_notifications')}</span>
-        </button>
-        {/if}
-
-        {#if settingsAllowed($currentUser)}
-        <button
-          type="button"
-          on:click={handleNavigateSettings}
-          class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer {currentRoute === 'settings' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-pos-text'}"
-        >
-          <Settings class="w-4 h-4" />
-          <span>{t('nav_settings', $currentLocale)}</span>
-          {#if !isAdmin($currentUser) && !adminSettingsUnlocked}
-            <Lock class="w-3.5 h-3.5 ms-auto text-pos-muted/60" />
-          {/if}
-        </button>
-        {/if}
+        {/each}
       </nav>
 
       <!-- Bottom User Profile & Network Status -->
@@ -734,9 +630,20 @@
             </div>
           </div>
 
-          <!-- Compact Mini Language Toggle -->
+          <!-- Settings + compact language toggles on one row -->
           <div class="flex items-center justify-between gap-1 pt-1.5 border-t border-pos-border/40 text-[10px]">
-            <span></span>
+            <button
+              type="button"
+              on:click={handleNavigateSettings}
+              class="flex items-center gap-1 px-1.5 py-0.5 rounded-lg font-bold transition cursor-pointer {currentRoute === 'settings' ? 'text-sky-600' : 'text-pos-muted hover:text-pos-text'}"
+              title="Settings / الإعدادات"
+            >
+              <Settings class="w-3.5 h-3.5" />
+              <span>{t('nav_settings', $currentLocale)}</span>
+              {#if !isAdmin($currentUser) && !adminSettingsUnlocked}
+                <Lock class="w-3 h-3 text-pos-muted/60" />
+              {/if}
+            </button>
             <div class="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-lg">
               <button
                 type="button"
@@ -761,11 +668,6 @@
               </button>
             </div>
           </div>
-        </div>
-
-        <!-- Developer Credit Horizontal Bar -->
-        <div class="px-2 py-1 bg-white dark:bg-slate-900 rounded-lg text-[9px] text-pos-muted text-center border border-pos-border/40 truncate">
-          Created by <span class="font-bold text-sky-600">Titaou Bedreddine</span> (0553444057)
         </div>
       </div>
     </aside>
@@ -831,28 +733,27 @@
           <PurchasesView bind:focusInvoice={purchasesFocusInvoice} />
         {:else if currentRoute === 'fieldorders'}
           <FieldOrdersView />
-        {:else if currentRoute === 'team'}
-          <TeamView />
         {:else if currentRoute === 'routes'}
           <RoutesView />
         {:else if currentRoute === 'truckloads'}
           <TruckLoadsView />
         {:else if currentRoute === 'trucks'}
-          <TrucksView />
-        {:else if currentRoute === 'deletionrequests'}
-          <DeletionRequestsView />
-        {:else if currentRoute === 'promotions'}
-          <PromotionsView />
+          <TrucksView onShowOnMap={(truckId, checkpoints) => { mapsFocusTruckId = truckId; mapsFocusCheckpoints = checkpoints; mapsFocusClientId = ''; currentRoute = 'maps'; }} />
+        {:else if currentRoute === 'maps'}
+          <MapsView focusTruckId={mapsFocusTruckId} focusCheckpoints={mapsFocusCheckpoints} focusClientId={mapsFocusClientId} />
         {:else if currentRoute === 'customers'}
-        <CustomersView onOpenSale={(sale) => { salesFocusSale = sale; currentRoute = 'sales'; }} />
+        <CustomersView
+          onOpenSale={(sale) => { salesFocusSale = sale; currentRoute = 'sales'; }}
+          onShowClientOnMap={(crmId) => { mapsFocusTruckId = ''; mapsFocusClientId = crmId; mapsFocusCheckpoints = false; currentRoute = 'maps'; }}
+        />
       {:else if currentRoute === 'suppliers'}
         <SuppliersView onOpenPurchase={(inv) => { purchasesFocusInvoice = inv; currentRoute = 'purchases'; }} />
       {:else if currentRoute === 'inventory'}
         <InventoryView />
       {:else if currentRoute === 'expenses'}
-        <ExpensesView />
+        <ExpensesView onOpenEmployee={(name) => { employeesFocusName = name; currentRoute = 'payroll'; }} />
       {:else if currentRoute === 'payroll'}
-        <PayrollView />
+        <PayrollView focusName={employeesFocusName} />
       {:else if currentRoute === 'dashboard'}
         <DashboardView
           onEditSaleInPos={async (sale) => {

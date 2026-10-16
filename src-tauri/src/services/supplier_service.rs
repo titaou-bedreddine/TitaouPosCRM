@@ -1,5 +1,5 @@
 use crate::database::DbState;
-use crate::models::{Supplier, SupplierPaymentInput, SupplierPaymentRow};
+use crate::models::{Supplier, SupplierPaymentInput, SupplierPaymentRow, SupplierStats};
 use rusqlite::Result;
 
 pub fn list_suppliers(db: &DbState) -> Result<Vec<Supplier>, String> {
@@ -40,6 +40,43 @@ pub fn list_suppliers(db: &DbState) -> Result<Vec<Supplier>, String> {
 
     let list: Vec<Supplier> = rows.filter_map(|r| r.ok()).collect();
     Ok(list)
+}
+
+/// Per-supplier aggregates for the supplier profile popup: Total Purchases,
+/// resale margin, Returns (Debts = the supplier's balance, already shown).
+pub fn get_stats(db: &DbState, supplier_id: i64) -> Result<SupplierStats, String> {
+    let conn = db.conn.lock().unwrap();
+
+    // Our total spend at this supplier = their "sales" tile.
+    let total_purchases: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(total), 0) FROM purchases WHERE supplier_id = ?1",
+            [supplier_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // Resale margin on the goods bought from this supplier: what the line's
+    // base units would retail for at the CURRENT sale price, minus what the
+    // line actually cost (pi.total — net of its discount/tax). unit_cost is
+    // per package, so the retail side weights by base_quantity.
+    let total_profit: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(
+                ROUND(COALESCE(p.sale_price, 0) * COALESCE(pi.base_quantity, pi.quantity))
+                - COALESCE(pi.total, 0)), 0)
+             FROM purchase_items pi
+             JOIN purchases pu ON pi.purchase_id = pu.id
+             LEFT JOIN products p ON p.id = pi.product_id
+             WHERE pu.supplier_id = ?1",
+            [supplier_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // Returns to suppliers are not tracked (deleting a purchase invoice is
+    // the only reversal). The popup tile renders "—" for the 0.
+    Ok(SupplierStats { total_purchases, total_profit, returns_amount: 0 })
 }
 
 pub fn save_supplier(
