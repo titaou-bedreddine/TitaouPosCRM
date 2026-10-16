@@ -216,7 +216,6 @@
         {/if}
       </div>
 
-      <!-- Discovery diagnostics: what the wire REALLY did -->
       <div class="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-pos-border/60">
         <p class="text-[9px] font-black text-pos-muted uppercase mb-2">
           Discovery (UDP 50110)

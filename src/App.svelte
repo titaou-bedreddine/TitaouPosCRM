@@ -165,9 +165,11 @@
       ],
       // Insight.
       ...(allowed('dashboard') ? [[navEntry('dashboard', 'nav_dashboard', LayoutDashboard, locale)]] : []),
-      // Alerts + team messaging.
-      ...(allowed('messages') ? [navEntry('messages', 'nav_chat', MessageSquare, locale)] : []),
-      ...(allowed('notifications') ? [[navEntry('notifications', 'nav_notifications', Bell, locale)]] : []),
+      // Alerts + team messaging — ONE group (owner: messages under
+      // notifications).
+      [ ...(allowed('messages') ? [navEntry('messages', 'nav_chat', MessageSquare, locale)] : []),
+        ...(allowed('notifications') ? [navEntry('notifications', 'nav_notifications', Bell, locale)] : []),
+      ],
     ].filter(g => g.length > 0);
   }
 

@@ -386,7 +386,7 @@
         <MapPin class="w-5 h-5 text-sky-500" />
         {t('maps_title', $currentLocale)}
       </h1>
-      <p class="text-[10px] text-pos-muted">{t('maps_subtitle', $currentLocale)}</p>
+      <p class="text-[10px] text-pos-muted">Positions des camions en temps réel + clients / مواقع الشاحنات المباشرة والعملاء</p>
     </div>
     <div class="flex items-center gap-2">
       <!-- Side list toggles: every label on the map is a button -->
@@ -575,5 +575,5 @@
     <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400 border-2 border-amber-600"></span><RouteIcon class="w-3 h-3" />Checkpoint</span>
     {#if lastRefresh}<span class="ms-auto font-mono">{t('net_recent_activity', $currentLocale)}: {lastRefresh}</span>{/if}
   </div>
-  <p class="text-[9px] text-pos-muted font-mono shrink-0 mt-1">{t('maps_hint', $currentLocale)}</p>
+  <p class="text-[9px] text-pos-muted font-mono shrink-0 mt-1">Historique des positions: 7 derniers jours / سجل المواقع: آخر 7 أيام</p>
 </div>
