@@ -2,6 +2,8 @@
   // Messages — chat between the POS desk (this software) and the field app
   // users, over Supabase chat_messages (free-plan friendly text rows).
   // recipient_id NULL = the desk thread (any field user can write there).
+  // OWNER RULE: the left panel ALWAYS lists every team member — tap one to
+  // open a chat, even with no messages yet (first message starts it).
   import { onMount, onDestroy, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { MessageSquare, RefreshCw, Send, UserCheck, X } from 'lucide-svelte';
@@ -13,12 +15,12 @@
   let busy = false;
   let lastRefresh = '';
 
-  let selectedPeerId: string | null = null; // null = desk thread (incoming broadcasts)
+  let selectedPeerId: string | null = null;
+
   let draft = '';
   let refreshTimer: any = null;
 
   function nameOf(id: string | null): string {
-    if (!id) return 'Desk (POS) / المكتب';
     return (members ?? []).find((m) => m.id === id)?.full_name ?? '—';
   }
 
@@ -28,38 +30,25 @@
     return m.sender_id; // they wrote to the desk
   }
 
-  $: threads = (() => {
-    const byPeer = new Map<string | null, any[]>();
-    for (const m of msgs ?? []) {
-      const peer = partnerOf(m);
-      if (peer === null) continue; // shouldn't happen from the desk view
-      const list = byPeer.get(peer) ?? [];
-      list.push(m);
-      byPeer.set(peer, list);
-    }
-    return [...byPeer.entries()]
-      .map(([peer, list]) => ({
-        peer,
-        name: nameOf(peer),
-        last: list[list.length - 1],
-        unread: list.filter((m) => m.recipient_id != null && !m.read_at).length,
-      }))
-      .sort((a, b) => String(b.last?.created_at || '').localeCompare(String(a.last?.created_at || '')));
-  })();
-
-  $: threadMsgs = (msgs ?? []).filter((m) => {
-    const peer = partnerOf(m);
-    if (selectedPeerId == null) {
-      // "All field team" view on the desk: every incoming desk message.
-      return m.sender_id != null && m.recipient_id == null;
-    }
-    return peer === selectedPeerId;
+  $: memberRows = (members ?? []).map((m) => {
+    const list = (msgs ?? []).filter((mm) => partnerOf(mm) === m.id);
+    const last = list[list.length - 1] ?? null;
+    return {
+      id: m.id,
+      name: m.full_name,
+      role: m.role,
+      last,
+      unread: list.filter((mm) => mm.recipient_id != null && !mm.read_at).length,
+    };
   });
+
+  $: threadMsgs = selectedPeerId == null
+    ? []
+    : (msgs ?? []).filter((m) => partnerOf(m) === selectedPeerId);
 
   async function load() {
     error = '';
     try {
-      // Members first so thread names resolve.
       try {
         members = await invoke<any[]>('cloud_team_members');
       } catch {
@@ -76,17 +65,16 @@
 
   async function send() {
     const body = draft.trim();
-    if (!body || busy) return;
+    if (!body || busy || selectedPeerId == null) return;
     busy = true;
     error = '';
     try {
-      await invoke('cloud_chat_send', {
-        recipientId: selectedPeerId,
-        body,
-      });
+      await invoke('cloud_chat_send', { recipientId: selectedPeerId, body });
       draft = '';
       await load();
       await tick();
+      const el = document.getElementById('chatScroll');
+      el?.scrollTo({ top: el.scrollHeight });
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Send failed';
     } finally {
@@ -96,7 +84,6 @@
 
   async function openThread(peer: string | null) {
     selectedPeerId = peer;
-    // Mark received messages of this thread read.
     const peerMsgs = (msgs ?? []).filter(
       (m) => m.recipient_id != null && !m.read_at && partnerOf(m) === peer
     );
@@ -127,7 +114,7 @@
         <MessageSquare class="w-5 h-5 text-sky-500" />
         Messages / الرسائل
       </h1>
-      <p class="text-[10px] text-pos-muted">Chat with the field app users — the desk thread reaches everyone</p>
+      <p class="text-[10px] text-pos-muted">اضغط على عضو لبدء المحادثة · Tap a team member to chat</p>
     </div>
     <button type="button" on:click={load} disabled={loading}
       class="p-2 text-pos-muted hover:text-sky-600 border border-pos-border rounded-xl cursor-pointer">
@@ -139,27 +126,32 @@
     <p class="mt-2 text-[11px] font-bold text-rose-600 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl px-3 py-2 shrink-0">❌ {error}</p>
   {/if}
 
-  <div class="flex-1 min-h-0 mt-3 grid grid-cols-[240px_1fr] gap-3">
-    <!-- Threads -->
+  <div class="flex-1 min-h-0 mt-3 grid grid-cols-[250px_1fr] gap-3">
+    <!-- People panel: ALWAYS lists every team member -->
     <div class="bg-pos-card border border-pos-border rounded-2xl overflow-y-auto">
-      <p class="px-3 py-2 text-[10px] font-black text-pos-muted uppercase border-b border-pos-border/60 sticky top-0 bg-pos-card">Conversations</p>
-      {#if threads.length === 0}
-        <p class="text-[11px] text-pos-muted p-3">No messages yet — the field app users appear here when they write.</p>
+      <p class="px-3 py-2 text-[10px] font-black text-pos-muted uppercase border-b border-pos-border/60 sticky top-0 bg-pos-card">Team / الفريق — {memberRows.length}</p>
+      {#if memberRows.length === 0}
+        <p class="text-[11px] text-pos-muted p-3">
+          No team members yet — add them on the Employees page (Field Team toggle) and they appear here.
+        </p>
       {/if}
-      {#each threads as th (th.peer ?? 'desk')}
-        <button type="button" on:click={() => openThread(th.peer)}
+      {#each memberRows as m (m.id)}
+        <button type="button" on:click={() => openThread(m.id)}
           class="w-full text-start px-3 py-2.5 border-b border-pos-border/40 hover:bg-sky-50 dark:hover:bg-sky-950/40 transition cursor-pointer
-          {selectedPeerId === th.peer ? 'bg-sky-100/70 dark:bg-sky-950/60' : ''}">
+          {selectedPeerId === m.id ? 'bg-sky-100/70 dark:bg-sky-950/60' : ''}">
           <div class="flex items-center justify-between gap-1">
             <span class="text-[11px] font-black text-pos-text truncate">
-              <UserCheck class="w-3 h-3 inline -mt-0.5 {th.peer ? 'text-sky-500' : 'text-emerald-500'}" />
-              {th.peer ? th.name : 'Field team / الفريق'}
+              <UserCheck class="w-3 h-3 inline -mt-0.5 text-sky-500" />
+              {m.name}
             </span>
-            {#if th.unread > 0}
-              <span class="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[9px] font-black shrink-0">{th.unread}</span>
+            {#if m.unread > 0}
+              <span class="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[9px] font-black shrink-0">{m.unread}</span>
             {/if}
           </div>
-          <p class="text-[10px] text-pos-muted truncate">{th.last?.body || ''}</p>
+          <p class="text-[10px] text-pos-muted truncate">
+            {#if m.role}<span class="uppercase font-bold">{m.role}</span> · {/if}
+            {#if m.last}{m.last.body}{:else}Tap to start / ابدأ المحادثة{/if}
+          </p>
         </button>
       {/each}
     </div>
@@ -169,7 +161,7 @@
       <div class="px-4 py-2.5 border-b border-pos-border flex items-center justify-between shrink-0">
         <p class="text-xs font-black text-pos-text">
           {#if selectedPeerId == null}
-            Field team / الفريق الميداني (desk thread)
+            <span class="text-pos-muted font-bold">اختر عضواً من القائمة / Pick a team member →</span>
           {:else}
             {nameOf(selectedPeerId)}
           {/if}
@@ -178,22 +170,26 @@
       </div>
 
       <div id="chatScroll" class="flex-1 overflow-y-auto p-4 space-y-2">
-        {#each threadMsgs as m (m.id)}
-          <div class="flex {m.sender_id != null && m.recipient_id != null && m.recipient_id !== '' && m.recipient_id != null ? '' : ''}">
-            <div class="max-w-[75%] px-3 py-2 rounded-2xl text-xs
-              {m.recipient_id == null && m.sender_id != null
-                ? 'bg-slate-100 dark:bg-slate-800 text-pos-text'
-                : 'bg-sky-600 text-white'}">
-              {#if m.recipient_id == null}
-                <p class="text-[9px] font-black opacity-70 uppercase">{nameOf(m.sender_id)}</p>
-              {/if}
-              <p class="font-bold whitespace-pre-wrap">{m.body}</p>
-              <p class="text-[9px] opacity-70 font-mono mt-0.5">{String(m.created_at || '').slice(0, 16).replace('T', ' ')}</p>
-            </div>
+        {#if selectedPeerId == null}
+          <div class="h-full flex flex-col items-center justify-center text-center gap-2">
+            <MessageSquare class="w-8 h-8 text-sky-300" />
+            <p class="text-xs font-bold text-pos-text">Select a person on the left →</p>
+            <p class="text-[11px] text-pos-muted">Their chat opens here. Your first message starts the conversation on their Android app.</p>
           </div>
-        {/each}
-        {#if threadMsgs.length === 0}
-          <p class="text-[11px] text-pos-muted text-center py-8">No messages in this view yet.</p>
+        {:else if threadMsgs.length === 0}
+          <p class="text-[11px] text-pos-muted text-center py-8">
+            No messages with {nameOf(selectedPeerId)} yet — say hello! 👋
+          </p>
+        {:else}
+          {#each threadMsgs as m (m.id)}
+            <div class="flex {partnerOf(m) === m.sender_id ? 'justify-start' : 'justify-end'}">
+              <div class="max-w-[75%] px-3 py-2 rounded-2xl text-xs
+                {partnerOf(m) === m.sender_id ? 'bg-slate-100 dark:bg-slate-800 text-pos-text' : 'bg-sky-600 text-white'}">
+                <p class="font-bold whitespace-pre-wrap">{m.body}</p>
+                <p class="text-[9px] opacity-70 font-mono mt-0.5">{String(m.created_at || '').slice(0, 16).replace('T', ' ')}</p>
+              </div>
+            </div>
+          {/each}
         {/if}
       </div>
 
@@ -211,7 +207,7 @@
             <Send class="w-4 h-4" />Send
           </button>
         {:else}
-          <p class="text-[11px] text-pos-muted font-bold w-full">Pick a person on the left to answer them privately — desk messages reach every field app user.</p>
+          <p class="text-[11px] text-pos-muted font-bold w-full">…then write here. The message lands on their Android app.</p>
         {/if}
       </div>
     </div>
