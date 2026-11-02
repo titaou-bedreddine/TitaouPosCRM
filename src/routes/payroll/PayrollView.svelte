@@ -82,6 +82,13 @@
   // Active advance/absence maps by employee ID for current cycle
   let advancesMap: Record<number, number> = {};
   let absencesMap: Record<number, number> = {};
+  // Dual-role extra earnings (owner: driver covering seller shifts...):
+  // rows are (id, employee_id, amount, date, note) from employee_extra_days.
+  let allExtraDays: any[] = [];
+  let extraDaysMap: Record<number, number> = {};
+  let extraAmountIn: Record<number, number> = {};
+  let extraDaysIn: Record<number, number> = {};
+  let extraBusy: Record<number, boolean> = {};
 
   // Full advance log per employee for the history section.
   let advanceLog: any[] = [];
@@ -187,6 +194,11 @@
         .filter((a) => a[1] === emp.id && a[4] >= period.startStr && a[4] <= period.endStr)
         .reduce((sum, a) => sum + (a[2] || 0), 0);
       absencesMap[emp.id] = absTotal;
+
+      const exTotal = allExtraDays
+        .filter((a) => a[1] === emp.id && (a[3] || '') >= period.startStr && (a[3] || '') <= period.endStr)
+        .reduce((sum, a) => sum + (a[2] || 0), 0);
+      extraDaysMap[emp.id] = exTotal;
     }
   }
 
@@ -219,7 +231,8 @@
     const adv = advancesMap[emp.id] || 0;
     const absent = absencesMap[emp.id] || 0;
     const dailyRate = Math.round(emp.base_salary / 30);
-    return Math.max(0, emp.base_salary - adv - absent * dailyRate);
+    const extra = extraDaysMap[emp.id] || 0;
+    return Math.max(0, emp.base_salary - adv - absent * dailyRate + extra);
   }
 
   // Presence days for the cycle: cycle length minus absent days.
@@ -312,6 +325,27 @@
       fieldMembers = [];
     }
   }
+  // Delete ONLY the linked mobile-app account (auth user + profile).
+  // The payroll employee record and all history stay untouched.
+  async function removeAppAccess() {
+    const emp = editingEmployee;
+    if (!emp) return;
+    const member = fieldMemberFor(emp);
+    if (!member) return;
+    if (!confirm('Delete the mobile-app account of ' + (member.email || member.full_name) + ' from the cloud? / حذف حساب التطبيق فقط؟')) return;
+    appAccessBusy = true;
+    try {
+      await invoke('cloud_team_delete', {
+        userId: member.id,
+        adminPassword: fieldAdminPassword || null,
+      });
+      appAccessMsg = 'App account deleted ✓';
+      await loadFieldMembers();
+    } catch (e: any) {
+      appAccessMsg = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally { appAccessBusy = false; }
+  }
+
   function fieldMemberFor(emp: Employee | null): any | null {
     if (!emp) return null;
     const mail = ((emp as any).email || '').trim().toLowerCase();
@@ -323,6 +357,7 @@
     await loadEmployees();
     await loadAdvances();
     await loadAbsences();
+    await loadExtraDays();
     await loadFieldMembers();
   });
 
@@ -336,6 +371,47 @@
     } catch (e) {
       console.warn('Could not load advances:', e);
     }
+  }
+
+  async function loadExtraDays() {
+    try {
+      allExtraDays = await invoke<any[]>('list_employee_extra_days', { employeeId: null });
+      rebuildMaps();
+    } catch (e) {
+      console.warn('Could not load extra days:', e);
+    }
+  }
+
+  // One click books N days of the SECOND role at the given daily amount.
+  async function addExtraDay(emp: Employee) {
+    const days = Math.floor(extraDaysIn[emp.id] ?? 1);
+    const amount = Math.round(extraAmountIn[emp.id] ?? 0);
+    if (days <= 0 || amount <= 0) return;
+    extraBusy[emp.id] = true;
+    try {
+      await invoke('record_employee_extra_day', {
+        employeeId: emp.id,
+        amount: amount * days,
+        date: new Date().toISOString().slice(0, 10),
+        note: days + ' day(s) second role @ ' + amount,
+      });
+      extraAmountIn[emp.id] = 0;
+      extraDaysIn[emp.id] = 1;
+      await loadExtraDays();
+    } catch (e: any) { showError(typeof e === 'string' ? e : e?.message || 'Failed'); }
+    finally { extraBusy[emp.id] = false; }
+  }
+
+  // Undo the newest extra-day row of this employee.
+  async function removeLastExtraDay(emp: Employee) {
+    const rows = allExtraDays.filter((a) => a[1] === emp.id);
+    if (rows.length === 0) return;
+    extraBusy[emp.id] = true;
+    try {
+      await invoke('delete_employee_extra_day', { id: rows[0][0] });
+      await loadExtraDays();
+    } catch (e: any) { showError(typeof e === 'string' ? e : e?.message || 'Failed'); }
+    finally { extraBusy[emp.id] = false; }
   }
 
   async function loadAbsences() {
@@ -397,6 +473,7 @@
     fieldAdminPassword = '';
     fieldResult = '';
     fieldError = '';
+    editingEmployee = null;
     isAddOpen = true;
     // The form sits above the card grid — bring it into view (owner: the
     // button 'didn't work' when the field-team cards pushed it out of sight).
@@ -405,7 +482,10 @@
     }, 60);
   }
 
+  let editingEmployee: Employee | null = null;
+
   function openEditEmployee(emp: Employee) {
+    editingEmployee = emp;
     editingEmployeeId = emp.id;
     code = emp.employee_code || '';
     name = emp.full_name || '';
@@ -514,7 +594,18 @@
         // invites a fresh account. Either way the payroll row is kept.
         const existingMember =
           fieldMembers.find((m) => (m.email || '').trim().toLowerCase() === email.trim().toLowerCase()) || null;
-        if (existingMember) {
+        // Editing without touching the field account (no new password and
+        // the same name/role) must not call the cloud — that call is what
+        // hung the editor on slow networks. Only real account changes
+        // (password typed / role renamed) hit the management edge function.
+        const accountUnchanged =
+          existingMember &&
+          !fieldPassword.trim() &&
+          (existingMember.role || 'seller') === fieldRole &&
+          (existingMember.full_name || '').trim() === name.trim();
+        if (accountUnchanged) {
+          fieldResult = 'Saved locally — field account unchanged.';
+        } else if (existingMember) {
           await invoke('cloud_team_update', {
             userId: existingMember.id,
             fullName: name.trim(),
@@ -596,6 +687,8 @@
         date: absenceDate || localDateStr(),
       });
       await loadAbsences();
+      await loadExtraDays();
+    await loadExtraDays();
     } catch (e) {
       console.error('Could not record absence:', e);
       showError('Could not record absence: ' + e);
@@ -623,7 +716,8 @@
     const daysAbsent = absencesMap[emp.id] || 0;
     const dailyRate = Math.round(emp.base_salary / 30);
     const absenceDeduction = daysAbsent * dailyRate;
-    const netSalary = Math.max(0, emp.base_salary - advances - absenceDeduction);
+    const extraEarned = extraDaysMap[emp.id] || 0;
+    const netSalary = Math.max(0, emp.base_salary + extraEarned - advances - absenceDeduction);
 
     try {
       const r = await printService.printPayment({
@@ -795,11 +889,20 @@
   {#if isAddOpen}
     <div class="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
     <div id="newEmployeeForm" class="bg-pos-card border border-pos-border rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
-      <div class="flex items-center justify-between border-b border-pos-border pb-3">
-        <h3 class="font-black text-sm text-pos-text">{t('pay_modal_new')}</h3>
+      <div class="flex items-center gap-3 bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-sky-950/40 dark:to-slate-800/40 border-b border-pos-border px-5 py-4">
+        <div class="w-10 h-10 rounded-2xl bg-sky-600 text-white flex items-center justify-center shrink-0">
+          <UserCheck class="w-5 h-5" />
+        </div>
+        <div class="flex-1">
+          <h3 class="font-black text-sm text-pos-text">{editingEmployeeId ? 'Edit employee' : t('pay_modal_new')}</h3>
+          <p class="text-[10px] text-pos-muted font-bold">{baseSalary ? baseSalary.toLocaleString() + ' DZD' : t('pay_field_salary') + ' *'}</p>
+        </div>
         <button on:click={() => (isAddOpen = false)} class="text-pos-muted hover:text-pos-text"><X class="w-4 h-4" /></button>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-6 gap-4 text-xs">
+
+      <div class="p-5 space-y-4 overflow-y-auto text-xs">
+        <p class="text-[9px] font-black uppercase tracking-wider text-sky-600">Identity / 'الهوية'</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
         <div>
           <label class="block font-bold text-pos-muted mb-1">{t('pay_field_code')} *</label>
           <div class="flex items-center gap-1.5">
@@ -846,6 +949,9 @@
         </div>
       </div>
 
+      </div>
+
+        <p class="text-[9px] font-black uppercase tracking-wider text-violet-600 pt-1">Field Team / 'الفريق الميداني'</p>
       <!-- FIELD TEAM: mark the member as a mobile-app field worker. Trade
            employees leave it off; field team gets app access + full payroll. -->
       <div class="border border-pos-border rounded-2xl p-4 space-y-3 bg-slate-50 dark:bg-slate-800/40">
@@ -892,6 +998,21 @@
           {/if}
           {#if fieldError}
             <p class="text-[11px] font-bold text-rose-600">❌ {fieldError}</p>
+          {/if}
+          {#if editingEmployee && isFieldTeam && fieldMemberFor(editingEmployee)}
+            <div class="p-2.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-xl space-y-2">
+              <p class="text-[10px] font-bold text-rose-700 dark:text-rose-300">
+                App access / إدارة التطبيق — account {fieldMemberFor(editingEmployee).email}
+              </p>
+              <button type="button"
+                on:click={removeAppAccess}
+                disabled={appAccessBusy}
+                class="px-3 py-1.5 text-[10px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
+                Delete app access only / حذف التطبيق فقط
+              </button>
+              <p class="text-[9px] text-pos-muted font-bold">Deletes ONLY the mobile-app account (login). The employee + payroll record stay. / حذف حساب التطبيق فقط — الموظف يبقى.</p>
+              {#if appAccessMsg}<p class="text-[10px] font-bold text-emerald-600">{appAccessMsg}</p>{/if}
+            </div>
           {/if}
           <p class="text-[10px] text-pos-muted font-bold leading-relaxed">
             Creates the member's mobile-app account (role + password) AND a payroll record — advances, absences and slips work exactly like any employee.
@@ -959,7 +1080,8 @@
       {@const daysAbsent = absencesMap[emp.id] || 0}
       {@const dailyRate = Math.round(emp.base_salary / 30)}
       {@const absenceDeduction = daysAbsent * dailyRate}
-      {@const netSalary = Math.max(0, emp.base_salary - advances - absenceDeduction)}
+      {@const extraEarned = extraDaysMap[emp.id] || 0}
+      {@const netSalary = Math.max(0, emp.base_salary + extraEarned - advances - absenceDeduction)}
       {@const fieldMember = fieldMemberFor(emp)}
       <div class="relative bg-pos-card border border-pos-border rounded-3xl p-5 shadow-xs flex flex-col justify-between space-y-4 hover:shadow-md transition group">
         <div>
@@ -1043,9 +1165,39 @@
               <span class="font-mono font-bold">-{absenceDeduction.toLocaleString()} DZD</span>
             </div>
           {/if}
+          {#if extraEarned > 0}
+            <div class="flex items-center justify-between text-violet-700 dark:text-violet-300">
+              <span>Second role / دور ثاني:</span>
+              <span class="font-mono font-bold">+{extraEarned.toLocaleString()} DZD</span>
+            </div>
+          {/if}
           <div class="pt-1.5 border-t border-pos-border flex items-center justify-between">
             <span class="font-black text-pos-text">Estimated Net:</span>
             <span class="font-black font-mono text-sm text-emerald-600">{netSalary.toLocaleString()} DZD</span>
+          </div>
+          <!-- Dual-role quick booking (owner request) -->
+          <div class="flex items-center gap-1 pt-2 border-t border-pos-border">
+            <input type="number" min="0" placeholder="DZD/day"
+              class="w-16 px-1.5 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[10px] font-mono text-pos-text outline-none"
+              bind:value={extraAmountIn[emp.id]} />
+            <span class="text-[10px] text-pos-muted font-bold">×</span>
+            <input type="number" min="1" placeholder="days"
+              class="w-12 px-1.5 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-[10px] font-mono text-pos-text outline-none"
+              bind:value={extraDaysIn[emp.id]} />
+            <button type="button" on:click={() => addExtraDay(emp)}
+              disabled={extraBusy[emp.id] || !(extraAmountIn[emp.id] > 0)}
+              class="flex-1 py-1.5 text-[10px] font-black bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 rounded-lg cursor-pointer transition disabled:opacity-40"
+              title="Second role earnings — added on top of the base salary (e.g. driver covers a seller shift)">
+              + Extra role
+            </button>
+            {#if extraEarned > 0}
+              <button type="button" on:click={() => removeLastExtraDay(emp)}
+                disabled={extraBusy[emp.id]}
+                title="Remove the newest extra-role row"
+                class="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-900 cursor-pointer transition">
+                <Trash2 class="w-3.5 h-3.5" />
+              </button>
+            {/if}
           </div>
         </div>
 

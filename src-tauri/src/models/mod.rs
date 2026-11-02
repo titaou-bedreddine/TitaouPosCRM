@@ -65,9 +65,9 @@ pub struct Product {
     pub category_name: Option<String>,
     pub unit_id: Option<i64>,
     pub unit_name: Option<String>,
-    pub purchase_price: i64,
-    pub sale_price: i64,
-    pub min_sale_price: i64,
+    pub purchase_price: f64,
+    pub sale_price: f64,
+    pub min_sale_price: f64,
     pub tax_rate: i64,
     pub current_stock: f64,
     pub min_stock: f64,
@@ -105,9 +105,9 @@ pub struct ProductInput {
     pub name_en: String,
     pub category_id: Option<i64>,
     pub unit_id: Option<i64>,
-    pub purchase_price: i64,
-    pub sale_price: i64,
-    pub min_sale_price: i64,
+    pub purchase_price: f64,
+    pub sale_price: f64,
+    pub min_sale_price: f64,
     pub tax_rate: i64,
     pub current_stock: f64,
     pub min_stock: f64,
@@ -769,10 +769,10 @@ pub struct PackagingInput {
     /// Kept for legacy callers; recomputed as per_unit × units on save —
     /// never the source of truth.
     #[serde(default)]
-    pub sale_price: i64,
+    pub sale_price: f64,
     /// AUTHORITATIVE sale price: DZD per BASE unit for this packaging.
     #[serde(default)]
-    pub sale_price_per_unit: i64,
+    pub sale_price_per_unit: f64,
     // Purchase price PER PACKAGING (DZD) — e.g. 15,000 DZD per palette.
     #[serde(default)]
     pub purchase_price: i64,

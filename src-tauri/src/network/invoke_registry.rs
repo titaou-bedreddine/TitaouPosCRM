@@ -609,7 +609,7 @@ pub fn dispatch(ctx: &InvokeContext, command: &str, args: &Value) -> Result<Valu
                 Some((weight, price, product)) => as_json(json!({
                     "product_id": product.id,
                     "name": product.name_fr,
-                    "unit_price": if price > 0 { price } else { product.sale_price },
+                    "unit_price": if price > 0 { price as f64 } else { product.sale_price },
                     "weight": weight,
                 }))?,
                 None => Value::Null,

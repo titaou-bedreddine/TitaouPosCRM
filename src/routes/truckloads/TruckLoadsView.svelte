@@ -24,8 +24,10 @@
   let routeDate = new Date().toISOString().slice(0, 10);
   let truckId = '';
   let driverName = '';
-  let items: { product_id: string; product_name: string; quantity: number; unit_price: number }[] = [];
+  let items: { product_id: string; product_name: string; quantity: number; unit_price: number; carry: number }[] = [];
   let busy = false;
+  // Carry-over pool of the selected truck (0059): product_id -> on-board qty.
+  let truckPool: Record<string, number> = {};
 
   // Returns modal
   let returnsLoad: any = null;
@@ -79,7 +81,7 @@
       const payload = await invoke<any>('cloud_route_order_items', { routeId });
       const lines = payload?.lines ?? [];
       // Aggregate per product (routes can serve the same product to several stops).
-      const agg = new Map<string, { product_id: string; product_name: string; quantity: number; unit_price: number }>();
+      const agg = new Map<string, { product_id: string; product_name: string; quantity: number; unit_price: number; carry: number }>();
       for (const ln of lines) {
         const pid = ln.product_id as string;
         const prev = agg.get(pid);
@@ -91,6 +93,7 @@
             product_name: ln.product?.name || '—',
             quantity: Number(ln.quantity ?? 0),
             unit_price: Number(ln.unit_price ?? 0),
+            carry: 0,
           });
         }
       }
@@ -104,6 +107,33 @@
     }
   }
 
+  // 0059 — pull the selected truck's carry-over pool and prefill the form:
+  // pool products become (or top up) item lines with their on-board quantity
+  // marked as carry. Carry consumes NO warehouse stock server-side.
+  async function applyPool() {
+    truckPool = {};
+    if (editing || !truckId) return;
+    let rows: any[] = [];
+    try {
+      rows = (await invoke<any[]>('cloud_truck_stock', { truckId }).catch(() => [])) ?? [];
+    } catch { rows = []; }
+    if (rows.length === 0) return;
+    const byId = new Map(items.map((it) => [it.product_id, it]));
+    for (const r of rows) {
+      const pid = r.product_id as string;
+      const qty = Number(r.quantity ?? 0);
+      truckPool[pid] = qty;
+      const it = byId.get(pid);
+      if (it) {
+        it.quantity += qty;
+        it.carry = qty;
+      } else {
+        items = [...items, { product_id: pid, product_name: r.products?.name ?? '—', quantity: qty, unit_price: 0, carry: qty }];
+      }
+    }
+    items = [...items];
+  }
+
   // When set, the form edits this load instead of creating a new one.
   let editing: any = null;
 
@@ -115,6 +145,7 @@
     truckId = '';
     driverName = '';
     items = [];
+    truckPool = {};
     showForm = true;
   }
 
@@ -124,17 +155,37 @@
     sellerId = l.seller_id ?? '';
     routeId = l.route_id ?? '';
     routeDate = String(l.route_date).slice(0, 10);
+    truckId = l.truck_id ?? '';
+    driverName = l.driver_name ?? '';
     items = (l.items ?? []).map((it: any) => ({
       product_id: it.product_id as string,
       product_name: it.product?.name ?? '—',
       quantity: Number(it.quantity ?? 0),
       unit_price: 0,
+      carry: 0,
     }));
+    truckPool = {};
     showForm = true;
   }
 
-  // Edit/delete are refused server-side once returns exist; hide them here.
-  $: loadEditable = (l: any) => l.status === 'loaded' && !(l.items ?? []).some((it: any) => (it.returned_quantity ?? 0) > 0);
+  // 0059 — any trip that is not closed can be edited (returns recorded on the
+  // load still block it server-side; the button hides there).
+  $: loadEditable = (l: any) => l.status !== 'closed' && !(l.items ?? []).some((it: any) => (it.returned_quantity ?? 0) > 0);
+
+  async function reopenLoad(l: any) {
+    if (!confirm(t('tl_reopen_confirm'))) return;
+    busy = true;
+    error = '';
+    try {
+      await invoke('cloud_reopen_truck_trip', { loadId: l.id });
+      await load();
+      msg = '✅';
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally {
+      busy = false;
+    }
+  }
 
   let deletingLoad: any = null;
 
@@ -173,6 +224,11 @@
           notes: null,
         });
       } else {
+        // 0059: the on-board (carry) portion of each line — the server
+        // validates it against the truck's pool and skips warehouse stock.
+        const carryover = items
+          .filter((i) => i.quantity > 0 && Math.min(i.carry, i.quantity) > 0)
+          .map((i) => ({ product_id: i.product_id, quantity: Math.min(i.carry, i.quantity) }));
         await invoke('cloud_create_truck_load', {
           sellerId,
           routeId: routeId || null,
@@ -181,6 +237,7 @@
           name: loadName || null,
           truckId: truckId || null,
           driverName: driverName.trim() || null,
+          carryover: carryover.length > 0 ? carryover : null,
         });
       }
       showForm = false;
@@ -314,7 +371,7 @@
                 <Printer class="w-3.5 h-3.5" />
               </button>
               {#if loadEditable(l)}
-                <button type="button" class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" on:click={() => startEdit(l)} title="Modifier">
+                <button type="button" class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" on:click={() => startEdit(l)} title={t('tl_edit')}>
                   <Pencil class="w-3.5 h-3.5" />
                 </button>
               {/if}
@@ -322,9 +379,13 @@
                 <button type="button" class="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" on:click={() => openReturns(l)} title={t('tl_returns')}>
                   <Undo2 class="w-3.5 h-3.5" />
                 </button>
+              {:else}
+                <button type="button" class="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer" on:click={() => reopenLoad(l)} disabled={busy} title={t('tl_reopen')}>
+                  <Undo2 class="w-3.5 h-3.5" />
+                </button>
               {/if}
               {#if loadEditable(l)}
-                <button type="button" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer" on:click={() => (deletingLoad = l)} title="Supprimer">
+                <button type="button" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer" on:click={() => (deletingLoad = l)} title={t('tl_delete')}>
                   <Trash2 class="w-3.5 h-3.5" />
                 </button>
               {/if}
@@ -343,6 +404,9 @@
               </div>
             {/each}
           </div>
+          {#if l.status === 'closed' && l.reopened_at}
+            <p class="text-[10px] text-sky-600 font-bold">↻ {t('tl_reopened')}</p>
+          {/if}
         </div>
       {/each}
     </div>
@@ -354,10 +418,16 @@
   <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (showForm = false)} role="presentation">
     <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-xl max-h-[85vh] flex flex-col" on:click|stopPropagation>
       <div class="p-4 border-b border-pos-border flex items-center justify-between">
-        <h3 class="text-sm font-black text-pos-text flex items-center gap-2"><Truck class="w-4 h-4 text-sky-500" />{editing ? 'Modifier le chargement' : t('tl_new')}</h3>
+        <h3 class="text-sm font-black text-pos-text flex items-center gap-2"><Truck class="w-4 h-4 text-sky-500" />{editing ? t('tl_edit_title') : t('tl_new')}</h3>
         <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (showForm = false)}><X class="w-4 h-4" /></button>
       </div>
       <div class="p-4 overflow-y-auto space-y-3">
+        {#if editing && editing.status === 'in_progress'}
+          <p class="text-[11px] font-bold text-amber-700 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl px-3 py-2">⚠️ {t('tl_edit_active_warn')}</p>
+        {/if}
+        {#if editing && editing.status === 'reconciling'}
+          <p class="text-[11px] font-bold text-sky-700 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 rounded-xl px-3 py-2">ℹ️ {t('tl_edit_reconcile_warn')}</p>
+        {/if}
         <div class="grid grid-cols-2 gap-2.5">
           <div class="col-span-2">
             <label class="block text-[10px] font-black text-pos-muted mb-1">{t('routes_name')}</label>
@@ -374,7 +444,7 @@
           </div>
           <div>
             <label class="block text-[10px] font-black text-pos-muted mb-1">{t('trucks_plate')} / {t('nav_trucks')}</label>
-            <select bind:value={truckId} on:change={() => { const tr = trucksList.find((x) => x.id === truckId); driverName = tr?.driver_name ?? ''; }}
+            <select bind:value={truckId} on:change={() => { const tr = trucksList.find((x) => x.id === truckId); driverName = tr?.driver_name ?? ''; void applyPool(); }}
               class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs text-pos-text font-bold outline-none">
               <option value="">—</option>
               {#each trucksList as tr (tr.id)}<option value={tr.id}>{tr.name} ({tr.plate || '—'})</option>{/each}
@@ -417,14 +487,29 @@
           {#if items.length === 0}
             <p class="text-[11px] text-pos-muted">— {t('fo_empty')}</p>
           {/if}
-          {#each items as it (it.product_id)}
+          {#each items as it, idx (it.product_id)}
             <div class="flex items-center gap-2 mb-1.5">
               <Package class="w-3.5 h-3.5 text-pos-muted shrink-0" />
-              <span class="text-xs font-bold text-pos-text flex-1 truncate">{it.product_name}</span>
+              <span class="text-xs font-bold text-pos-text flex-1 truncate">
+                {it.product_name}
+                {#if Math.min(it.carry, it.quantity) > 0}
+                  <span class="text-[9px] font-black text-sky-700 bg-sky-50 dark:bg-sky-950/60 dark:text-sky-300 rounded-md px-1.5 py-0.5 ml-1 whitespace-nowrap">↻ {Math.min(it.carry, it.quantity)} {t('tl_carry')}</span>
+                {/if}
+              </span>
               <input type="number" step="1" min="0" bind:value={it.quantity}
                 class="w-24 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
+              {#if truckPool[it.product_id]}
+                <button type="button" class="p-1 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer shrink-0"
+                  title={t('tl_carry_remove')}
+                  on:click={() => { it.quantity -= Math.min(it.carry, it.quantity); it.carry = 0; items = [...items]; }}>
+                  <X class="w-3 h-3" />
+                </button>
+              {/if}
             </div>
           {/each}
+          {#if Object.keys(truckPool).length > 0}
+            <p class="text-[10px] text-pos-muted">↻ {t('tl_carry_hint')}</p>
+          {/if}
         </div>
 
         <div class="flex justify-end gap-2 pt-2">

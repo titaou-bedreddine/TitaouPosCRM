@@ -3,7 +3,7 @@
 //! replayed push returns the existing row instead of duplicating.
 
 use super::http::SupabaseClient;
-use super::mapping::{crm_payment_method, crm_product_name, dzd_to_centimes, qty_round};
+use super::mapping::{crm_payment_method, crm_product_name, dzd_to_centimes, dzd_to_centimes_f, qty_round};
 use super::outbox::{self, OutboxEntity, PendingEvent};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -231,8 +231,8 @@ fn push_product(
                 p["name_en"].as_str().unwrap_or(""),
             ),
             "p_category": p["category"],
-            "p_unit_price": dzd_to_centimes(p["sale_price"].as_i64().unwrap_or(0)),
-            "p_cost_price": dzd_to_centimes(p["purchase_price"].as_i64().unwrap_or(0)),
+            "p_unit_price": dzd_to_centimes_f(p["sale_price"].as_f64().unwrap_or(0.0)),
+            "p_cost_price": dzd_to_centimes_f(p["purchase_price"].as_f64().unwrap_or(0.0)),
             "p_min_stock_alert": qty_round(p["min_stock"].as_f64().unwrap_or(0.0)),
             "p_is_active": p["is_active"].as_bool().unwrap_or(true),
             // Packaging prices cross the boundary like every other money
@@ -248,8 +248,8 @@ fn push_product(
                 .map(|mut pk| {
                     for key in ["sale_price", "purchase_price", "sale_price_per_unit", "unloading_fee"] {
                         if let Some(v) = pk.get_mut(key) {
-                            if let Some(dzd) = v.as_i64() {
-                                *v = json!(dzd_to_centimes(dzd));
+                            if let Some(dzd) = v.as_f64() {
+                                *v = json!(dzd_to_centimes_f(dzd));
                             }
                         }
                     }

@@ -5,7 +5,8 @@
   import {
     Truck, Plus, RefreshCw, X, Pencil, Play, ClipboardList, Lock, Wallet,
     Package, Search, CircleDollarSign, TrendingDown, CheckCircle2, Fuel,
-    Trash2, Archive, Printer, MapPin, Route as RouteIcon, Users
+    Trash2, Archive, Printer, MapPin, Route as RouteIcon, Users, AlertTriangle,
+    Undo2
   } from 'lucide-svelte';
   import { printService } from '../../lib/services/printService';
   import { currentUser } from '../../lib/stores/auth';
@@ -101,6 +102,21 @@
   const fmt = (v: number | null | undefined) =>
     (((v ?? 0) as number) / 100).toLocaleString('fr-DZ', { maximumFractionDigits: 2 });
 
+  let cloudSyncing = false;
+  // Trucks page sync: push the whole catalog (products) to the cloud, then
+  // run a full outbox push/pull. Same engine as Settings → Cloud Sync.
+  async function syncWithCloud() {
+    busy = true; cloudSyncing = true; error = '';
+    try {
+      await invoke('cloud_push_catalog');
+      const r: any = await invoke('cloud_sync_now');
+      msg = 'Synced: pushed ' + (r.pushed ?? 0) + ' item(s)';
+      await load();
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Sync failed';
+    } finally { busy = false; cloudSyncing = false; }
+  }
+
   async function load() {
     loading = true;
     error = '';
@@ -123,6 +139,32 @@
         invoke<any[]>('cloud_stats_truck_trips', { fromDate: null, toDate: null }).catch(() => []),
       ]);
       warehouseByProduct = new Map(warehouseStock.map((r: any) => [r.product_id, Number(r.current_stock ?? 0)]));
+        // Offline resilience: every cloud list failed → keep the last
+        // synced snapshot (localStorage) so the page still shows trucks and
+        // history with a clear OFFLINE banner instead of going empty.
+        const allEmpty = trucks.length === 0 && loads.length === 0 && trips.length === 0 && products.length === 0;
+        if (allEmpty) {
+          const cached = localStorage.getItem('trucks_cache_v1');
+          if (cached) {
+            try {
+              const c = JSON.parse(cached);
+              trucks = c.trucks ?? []; loads = c.loads ?? []; trips = c.trips ?? [];
+              products = c.products ?? []; staff = c.staff ?? [];
+              warehouseByProduct = new Map(c.warehouseByProduct ?? []);
+              summaryTrips = c.summaryTrips ?? [];
+              offlineBanner = true;
+            } catch { offlineBanner = true; }
+          } else {
+            offlineBanner = true;
+          }
+        } else {
+          offlineBanner = false;
+          localStorage.setItem('trucks_cache_v1', JSON.stringify({
+            trucks, loads, trips, products, staff,
+            summaryTrips, warehouseByProduct: Array.from(warehouseByProduct.entries()),
+          }));
+        }
+
       if (!selectedId && trucks.length > 0) selectedId = trucks[0].id;
       await refreshDeposited();
       if (activeTrip?.id) await refreshStock(activeTrip.id);
@@ -370,6 +412,9 @@
   let showClose = false;
   let physical: Record<string, number> = {};
   let reasons: Record<string, string> = {};
+  // 0059: per product, how much of the counted quantity STAYS on the truck
+  // (carry-over pool) instead of returning to the warehouse.
+  let keep: Record<string, number> = {};
   let actualCash = 0;
   let cashReason = '';
 
@@ -399,6 +444,7 @@
       }
       physical = {};
       reasons = {};
+      keep = {};
       for (const r of stockRows) physical[r.product_id] = r.expected;
       // The field is in DA (the RPC takes centimes — we x100 on submit).
       // Field report: the bar showed raw centimes (319000) — fixed here.
@@ -421,12 +467,21 @@
         const diff = Number(physical[r.product_id] ?? r.expected) - r.expected;
         if (diff !== 0) reasonMap[r.product_id] = reasons[r.product_id] ?? 'other';
       }
+      // 0059: goods the user chose to KEEP on the truck (capped at the
+      // physical count) go to the carry-over pool instead of the warehouse.
+      const keepRows = stockRows
+        .map((r) => ({
+          product_id: r.product_id,
+          keep_quantity: Math.min(Math.max(Number(keep[r.product_id] ?? 0), 0), Number(physical[r.product_id] ?? r.expected)),
+        }))
+        .filter((k) => k.keep_quantity > 0);
       await invoke('cloud_close_truck_trip', {
         loadId: activeTrip.id,
         counts,
         reasons: reasonMap,
         actualCash: Math.round(actualCash * 100),
         cashReason: cashReason.trim() || null,
+        keep: keepRows.length > 0 ? keepRows : null,
       });
       showClose = false;
       await load();
@@ -449,6 +504,13 @@
   let deletePassword = '';
   let deleteConfirmText = '';
   let deleteError = '';
+  let deletePermanent = false;
+  let offlineBanner = false;
+  // Trip-history delete modal (styled dialog, DELETE + admin pass).
+  let tripDeleteTarget: any = null;
+  let tripDeletePassword = '';
+  let tripDeleteConfirm = '';
+  let tripDeleteError = '';
 
   function openDeleteTruck(tr: any) {
     error = '';
@@ -456,6 +518,7 @@
     deletePassword = '';
     deleteConfirmText = '';
     deleteError = '';
+    deletePermanent = false;
   }
 
   async function confirmDeleteTruck() {
@@ -479,7 +542,13 @@
         busy = false;
         return;
       }
-      if (loads.some((l) => l.truck_id === tr.id)) {
+      if (deletePermanent) {
+        // PERMANENT purge: positions, loads, items, reconciliations,
+        // settlements and trip expenses go too. Orders survive (the cloud
+        // sets their truck_load_id NULL). Requires admin + typed TRUCK.
+        const purged = await invoke<number>('cloud_purge_truck', { id: tr.id });
+        msg = 'Purgé: ' + (purged ?? 0) + ' tournée(s) supprimée(s) ✓';
+      } else if (loads.some((l) => l.truck_id === tr.id)) {
         // Trips/loads exist: ARCHIVE (soft delete) — the truck disappears
         // from the active list but every historical record stays intact.
         await invoke('cloud_save_truck', {
@@ -501,6 +570,45 @@
       await load();
     } catch (e: any) {
       error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally { busy = false; }
+  }
+
+  // Delete ONE closed trip from history: the load and everything hanging
+  // off it (items, reconciliation, settlement, trip expenses) disappear.
+  // Money records (orders) survive in the cloud.
+  function deleteTripHistory(tp: any) {
+    error = '';
+    tripDeleteTarget = tp;
+    tripDeletePassword = '';
+    tripDeleteConfirm = '';
+    tripDeleteError = '';
+  }
+
+  async function confirmDeleteTripHistory() {
+    const tp = tripDeleteTarget;
+    if (!tp) return;
+    if (tripDeleteConfirm.trim().toUpperCase() !== 'DELETE') {
+      tripDeleteError = t('trucks_delete_type_truck').replace('TRUCK', 'DELETE');
+      return;
+    }
+    if (!tripDeletePassword.trim()) {
+      tripDeleteError = t('admin_password') + ' *';
+      return;
+    }
+    busy = true; tripDeleteError = '';
+    try {
+      const ok = await invoke<boolean>('verify_admin_password', { password: tripDeletePassword });
+      if (!ok) {
+        tripDeleteError = t('admin_password') + ' ✗';
+        busy = false;
+        return;
+      }
+      await invoke('cloud_purge_truck_load', { loadId: tp.out_load_id });
+      msg = 'Historique supprimé ✓';
+      tripDeleteTarget = null;
+      await load();
+    } catch (e: any) {
+      tripDeleteError = typeof e === 'string' ? e : e?.message || 'Failed';
     } finally { busy = false; }
   }
 
@@ -563,6 +671,72 @@
   async function viewAudit(tp: any) {
     auditTrip = tp;
     auditData = await invoke<any>('cloud_trip_settlement', { loadId: tp.out_load_id }).catch(() => null);
+  }
+
+  // ── Carry-over pool (0059): goods physically on the truck that are NOT
+  // committed to any trip. They stay aboard at reconciliation when the user
+  // "keeps" them, and prefill the next trip's loading form.
+  let poolRows: { product_id: string; name: string; quantity: number }[] = [];
+  let poolLoading = false;
+
+  $: if (selectedId) void loadPool();
+
+  async function loadPool() {
+    poolLoading = true;
+    try {
+      const rows = await invoke<any[]>('cloud_truck_stock', { truckId: selectedId }).catch(() => []);
+      poolRows = (rows ?? []).map((r: any) => ({
+        product_id: r.product_id as string,
+        name: r.products?.name ?? '—',
+        quantity: Number(r.quantity ?? 0),
+      }));
+    } finally {
+      poolLoading = false;
+    }
+  }
+
+  async function returnPoolRow(productId: string) {
+    if (!selectedId) return;
+    const row = poolRows.find((r) => r.product_id === productId);
+    if (!row || !confirm(t('trucks_return_one_confirm').replace('%s', row.name))) return;
+    busy = true; error = '';
+    try {
+      await invoke('cloud_return_truck_stock', {
+        truckId: selectedId,
+        items: [{ product_id: productId, quantity: row.quantity }],
+      });
+      await loadPool();
+      msg = '✅';
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally { busy = false; }
+  }
+
+  async function returnPoolAll() {
+    if (!selectedId || !confirm(t('trucks_return_all_confirm'))) return;
+    busy = true; error = '';
+    try {
+      await invoke('cloud_return_truck_stock', { truckId: selectedId, items: null });
+      await loadPool();
+      msg = '✅';
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally { busy = false; }
+  }
+
+  // ── Reopen a closed trip (0059): back to 'reconciling', close effects are
+  // reversed server-side, then re-count and re-close. ─────────────────────────
+  async function reopenHistoryTrip(tp: any) {
+    if (!confirm(t('trucks_reopen_confirm'))) return;
+    busy = true; error = '';
+    try {
+      await invoke('cloud_reopen_truck_trip', { loadId: tp.out_load_id });
+      auditTrip = null;
+      await Promise.all([load(), reloadTrips(), loadPool()]);
+      msg = '✅';
+    } catch (e: any) {
+      error = typeof e === 'string' ? e : e?.message || 'Failed';
+    } finally { busy = false; }
   }
 
   // Print the closed trip's RECAP (thermal document): truck/seller/driver,
@@ -714,7 +888,18 @@
       </h1>
       <p class="text-[10px] text-pos-muted">{t('trucks_subtitle')}</p>
     </div>
+    {#if offlineBanner}
+      <div class="mb-3 p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl flex items-center gap-2 text-[11px] font-black text-amber-800 dark:text-amber-300">
+        <AlertTriangle class="w-4 h-4 shrink-0" />
+        Offline — showing the last synced trucks & history. Reconnect and press Sync. / غير متصل — يتم عرض آخر مزامنة.
+      </div>
+    {/if}
     <div class="flex gap-2">
+      <button type="button" on:click={syncWithCloud} disabled={cloudSyncing}
+        title="Push products + sync all data to the cloud / مزامنة المنتجات والبيانات"
+        class="px-2.5 py-2 text-[11px] font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded-xl cursor-pointer inline-flex items-center gap-1.5">
+        <RefreshCw class="w-4 h-4 {cloudSyncing ? 'animate-spin' : ''}" />Sync
+      </button>
       <button type="button" on:click={load} disabled={loading}
         class="p-2 text-pos-muted hover:text-pos-text rounded-xl cursor-pointer">
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
@@ -842,6 +1027,37 @@
               </button>
             {/if}
           </div>
+        </div>
+
+        <!-- Carry-over pool (0059): goods physically aboard, not committed to
+             any trip. Kept at reconciliation; prefills the next loading form. -->
+        <div class="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-pos-border">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-[10px] font-black text-pos-muted uppercase">↻ {t('trucks_on_board')}</p>
+            {#if poolRows.length > 0}
+              <button type="button" on:click={returnPoolAll} disabled={busy}
+                class="px-2.5 py-1.5 text-[10px] font-black text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl cursor-pointer">
+                <Undo2 class="w-3 h-3 inline -mt-0.5 me-1" />{t('trucks_return_all')}
+              </button>
+            {/if}
+          </div>
+          {#if poolLoading}
+            <p class="text-[11px] text-pos-muted">…</p>
+          {:else if poolRows.length === 0}
+            <p class="text-[11px] text-pos-muted">— {t('trucks_pool_empty')}</p>
+          {:else}
+            {#each poolRows as r (r.product_id)}
+              <div class="flex items-center gap-2 py-1 border-t border-pos-border">
+                <span class="text-[11px] font-bold text-pos-text flex-1 truncate">{r.name}</span>
+                <span class="text-[11px] font-mono font-black text-sky-600">{r.quantity}</span>
+                <button type="button" on:click={() => returnPoolRow(r.product_id)} disabled={busy}
+                  class="px-2 py-1 text-[9px] font-black text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg cursor-pointer">
+                  {t('trucks_return_depot')}
+                </button>
+              </div>
+            {/each}
+            <p class="text-[10px] text-pos-muted mt-1.5">{t('trucks_pool_hint')}</p>
+          {/if}
         </div>
 
         <!-- Active trip dashboard -->
@@ -1000,7 +1216,17 @@
                           class="px-2 py-1.5 text-[10px] font-black text-pos-muted hover:text-pos-text hover:bg-slate-100 dark:hover:bg-slate-800 border border-pos-border rounded-lg cursor-pointer inline-flex items-center gap-1">
                           <Printer class="w-3.5 h-3.5" />{t('tl_print')}
                         </button>
+                        <button type="button" on:click={() => deleteTripHistory(tp)}
+                          title="Supprimer ce chargement de l'historique / حذف من التاريخ"
+                          class="px-2 py-1.5 text-[10px] font-black text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg cursor-pointer inline-flex items-center gap-1">
+                          <Trash2 class="w-3.5 h-3.5" />
+                        </button>
                         {#if tp.out_status === 'closed'}
+                          <button type="button" on:click={() => reopenHistoryTrip(tp)}
+                            title={t('trucks_reopen')}
+                            class="px-2 py-1.5 text-[10px] font-black text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/40 border border-sky-200 dark:border-sky-900 rounded-lg cursor-pointer inline-flex items-center gap-1">
+                            <Undo2 class="w-3.5 h-3.5" />{t('trucks_reopen')}
+                          </button>
                           <button type="button" on:click={() => viewAudit(tp)}
                             class="px-2 py-1.5 text-[10px] font-black text-pos-muted hover:text-pos-text hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer rounded-lg border border-pos-border">
                             🔒 {t('trucks_audit')}
@@ -1272,6 +1498,7 @@
         <!-- STOCK RECONCILIATION -->
         <div>
           <p class="text-[10px] font-black text-pos-muted uppercase mb-1.5">{t('trucks_stock_reconciliation')}</p>
+          <p class="text-[10px] text-pos-muted mb-1.5">↻ {t('trucks_keep_hint')}</p>
           <table class="w-full text-[10px]">
             <thead><tr class="text-pos-muted font-black uppercase">
               <th class="p-1.5 text-start">{t('trucks_product')}</th>
@@ -1280,6 +1507,7 @@
               <th class="p-1.5 text-end">{t('trucks_returned')}</th>
               <th class="p-1.5 text-end">{t('trucks_expected')}</th>
               <th class="p-1.5 text-end">{t('trucks_physical')}</th>
+              <th class="p-1.5 text-end">{t('trucks_keep')}</th>
               <th class="p-1.5 text-end">{t('trucks_diff')}</th>
               <th class="p-1.5 text-start">{t('trucks_reason')}</th>
             </tr></thead>
@@ -1295,6 +1523,10 @@
                   <td class="p-1.5 text-end font-mono font-black">{r.expected}</td>
                   <td class="p-1.5 text-end">
                     <input type="number" step="1" bind:value={physical[r.product_id]}
+                      class="w-20 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
+                  </td>
+                  <td class="p-1.5 text-end">
+                    <input type="number" step="1" min="0" max={phys} bind:value={keep[r.product_id]}
                       class="w-20 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-lg text-xs text-pos-text font-mono outline-none" />
                   </td>
                   <td class="p-1.5 text-end font-mono font-black {diff < 0 ? 'text-rose-600' : diff > 0 ? 'text-amber-600' : 'text-emerald-600'}">{diff}</td>
@@ -1394,6 +1626,12 @@
           ? t('trucks_delete_archive_msg')
           : t('trucks_delete_hard_msg')}
       </p>
+      {#if loads.some((l) => l.truck_id === deleteTarget.id)}
+        <label class="flex items-start gap-2 text-[11px] font-bold text-rose-600 cursor-pointer select-none p-2 rounded-xl border border-rose-200 dark:border-rose-900">
+          <input type="checkbox" bind:checked={deletePermanent} class="w-4 h-4 mt-0.5 rounded accent-rose-600" />
+          <span>Supprimer DÉFINITIVEMENT : camion + tout l'historique (positions, chargements, réconciliations, dépenses). Les ventes restent. / حذف نهائي للشاحنة وتاريخها بالكامل</span>
+        </label>
+      {/if}
       <div class="space-y-1">
         <label class="block text-[10px] font-bold text-pos-muted">
           {t('trucks_delete_type_truck')} <span class="text-rose-600 font-mono font-black">TRUCK</span>
@@ -1420,6 +1658,43 @@
   </div>
 {/if}
 
+{#if tripDeleteTarget}
+  <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (tripDeleteTarget = null)} role="presentation">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-sm p-5 space-y-3" on:click|stopPropagation>
+      <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
+        <Trash2 class="w-4 h-4 text-rose-500" />
+        {t('trucks_delete')} — {t('trucks_history')}
+      </h3>
+      <p class="text-[11px] text-pos-muted font-bold">
+        {String(tripDeleteTarget.out_route_date).slice(0, 10)} — {tripDeleteTarget.out_truck_name || ''}<br />
+        Supprimer ce chargement de l'historique ? Chargements, réconciliation, règlement et dépenses disparaissent. Les ventes restent. / حذف من التاريخ — البيع يبقى
+      </p>
+      <div class="space-y-1">
+        <label class="block text-[10px] font-bold text-pos-muted">
+          Type <span class="text-rose-600 font-mono font-black">DELETE</span>
+        </label>
+        <input type="text" bind:value={tripDeleteConfirm} placeholder="DELETE"
+          class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-mono font-black text-rose-600 outline-none" />
+        <label class="block text-[10px] font-bold text-pos-muted mt-1">{t('admin_password')} *</label>
+        <input type="password" bind:value={tripDeletePassword} placeholder="••••••••"
+          class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-mono text-pos-text outline-none" />
+        {#if tripDeleteError}
+          <p class="text-[10px] font-bold text-rose-600">{tripDeleteError}</p>
+        {/if}
+      </div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button type="button" on:click={() => (tripDeleteTarget = null)}
+          class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
+        <button type="button" on:click={confirmDeleteTripHistory}
+          disabled={busy || tripDeleteConfirm.trim().toUpperCase() !== 'DELETE' || !tripDeletePassword.trim()}
+          class="px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer flex items-center gap-1.5">
+          <Trash2 class="w-3.5 h-3.5" />Delete
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <!-- Closed-trip immutable audit view -->
 {#if auditTrip}
   <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (auditTrip = null)} role="presentation">
@@ -1430,6 +1705,10 @@
         </h3>
         <div class="flex items-center gap-2">
           <span class="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-pos-muted dark:bg-slate-800">CLOSED — READ ONLY</span>
+          <button type="button" on:click={() => reopenHistoryTrip(auditTrip)} disabled={busy}
+            class="p-1.5 text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/40 rounded-lg cursor-pointer" title={t('trucks_reopen')}>
+            <Undo2 class="w-4 h-4" />
+          </button>
           <button type="button" on:click={printTripRecap} disabled={busy}
             class="p-1.5 text-pos-muted hover:text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer" title="Print trip recap / Imprimer le récap"><Printer class="w-4 h-4" /></button>
           <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (auditTrip = null)}><X class="w-4 h-4" /></button>
@@ -1452,6 +1731,7 @@
                 <th class="p-1.5 text-start">{t('trucks_product')}</th>
                 <th class="p-1.5 text-end">{t('trucks_expected')}</th>
                 <th class="p-1.5 text-end">{t('trucks_physical')}</th>
+                <th class="p-1.5 text-end">{t('trucks_keep')}</th>
                 <th class="p-1.5 text-end">{t('trucks_diff')}</th>
                 <th class="p-1.5 text-start">{t('trucks_reason')}</th>
               </tr></thead>
@@ -1461,6 +1741,7 @@
                     <td class="p-1.5 font-bold">{r.product?.name ?? '—'}</td>
                     <td class="p-1.5 text-end font-mono">{r.expected_quantity}</td>
                     <td class="p-1.5 text-end font-mono">{r.physical_quantity}</td>
+                    <td class="p-1.5 text-end font-mono text-sky-600">{r.kept_quantity ?? 0}</td>
                     <td class="p-1.5 text-end font-mono font-black {r.difference < 0 ? 'text-rose-600' : r.difference > 0 ? 'text-amber-600' : ''}">{r.difference}</td>
                     <td class="p-1.5">{r.reason}</td>
                   </tr>

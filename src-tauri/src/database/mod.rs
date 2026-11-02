@@ -60,6 +60,19 @@ impl DbState {
         // Employee ↔ customer link: every employee is auto-created as a
         // customer so their POS purchases (cash or debt) land in a history.
         let _ = conn.execute("ALTER TABLE employees ADD COLUMN customer_id INTEGER;", []);
+        // Dual-role daily earnings (owner request): a driver (base) can also
+        // cover seller shifts — each covered day records an extra amount on
+        // top of the base salary.
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS employee_extra_days (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                date TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                note TEXT
+            );",
+            [],
+        );
         let _ = conn.execute("ALTER TABLE users ADD COLUMN pinned INTEGER DEFAULT 0;", []);
         conn.execute(
             "CREATE TABLE IF NOT EXISTS employee_absences (

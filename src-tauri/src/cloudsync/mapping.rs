@@ -18,6 +18,19 @@ pub fn centimes_to_dzd(centimes: i64) -> i64 {
     (centimes as f64 / DZD_TO_CENTIMES as f64).round() as i64
 }
 
+/// Push: DZD possibly with decimals (50.5) → centimes (5050). Rounds to
+/// the nearest centime; floating point noise can't leak past the round.
+pub fn dzd_to_centimes_f(dzd: f64) -> i64 {
+    (dzd * DZD_TO_CENTIMES as f64).round() as i64
+}
+
+/// Pull: centimes → DZD that KEEPS decimals (5120 → 51.2) — for product
+/// prices, where the whole-DZD collapse of [centimes_to_dzd] would eat
+/// the user's decimals.
+pub fn centimes_to_dzd_f(centimes: i64) -> f64 {
+    centimes as f64 / DZD_TO_CENTIMES as f64
+}
+
 /// POS payment method → CRM payments.method enum.
 /// cash → cash; cheque → cheque; tpe/versement/bank → transfer.
 /// credit never produces a payment row (the remainder rides the balance).

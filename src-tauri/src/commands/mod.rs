@@ -382,6 +382,29 @@ pub fn list_deposited_truck_settlements(db: State<'_, DbState>) -> Result<Vec<St
     crate::services::cash_service::list_deposited_truck_settlements(&db)
 }
 
+/// sync_map rows for products: local product id → CRM product uuid. Lets UI
+/// layers join cloud-only figures (e.g. inventory "on trucks") onto local rows.
+#[tauri::command]
+pub fn product_cloud_map(db: State<'_, DbState>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT local_id, remote_id FROM sync_map WHERE entity = 'product'")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(serde_json::json!({
+                "local_id": r.get::<_, i64>(0)?,
+                "remote_id": r.get::<_, String>(1)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
 /// Cancel a truck settlement deposit — the cash goes back out of the register.
 #[tauri::command]
 pub fn return_truck_settlement(
@@ -662,7 +685,7 @@ pub fn resolve_scale_scan(db: State<'_, DbState>, code: String) -> Result<Option
     Ok(Some(ScaleScanResult {
         product_id: product.id,
         name: Some(product.name_fr.clone()),
-        unit_price: if price > 0 { price } else { product.sale_price },
+        unit_price: if price > 0 { price as f64 } else { product.sale_price },
         weight,
     }))
 }
@@ -671,7 +694,7 @@ pub fn resolve_scale_scan(db: State<'_, DbState>, code: String) -> Result<Option
 pub struct ScaleScanResult {
     pub product_id: i64,
     pub name: Option<String>,
-    pub unit_price: i64,
+    pub unit_price: f64,
     pub weight: f64,
 }
 
@@ -850,6 +873,27 @@ pub fn record_employee_advance(db: State<'_, DbState>, input: EmployeeAdvanceInp
 #[tauri::command]
 pub fn list_employee_advances(db: State<'_, DbState>, employee_id: Option<i64>, month: Option<String>) -> Result<Vec<EmployeeAdvance>, String> {
     payroll_service::list_employee_advances(&db, employee_id, month)
+}
+
+#[tauri::command]
+pub fn record_employee_extra_day(
+    db: State<'_, DbState>,
+    employee_id: i64,
+    amount: i64,
+    date: String,
+    note: Option<String>,
+) -> Result<i64, String> {
+    crate::services::payroll_service::record_employee_extra_day(&db, employee_id, amount, date, note)
+}
+
+#[tauri::command]
+pub fn list_employee_extra_days(db: State<'_, DbState>, employee_id: Option<i64>) -> Result<Vec<(i64, i64, i64, String, Option<String>)>, String> {
+    crate::services::payroll_service::list_employee_extra_days(&db, employee_id)
+}
+
+#[tauri::command]
+pub fn delete_employee_extra_day(db: State<'_, DbState>, id: i64) -> Result<(), String> {
+    crate::services::payroll_service::delete_employee_extra_day(&db, id)
 }
 
 #[tauri::command]
@@ -1373,8 +1417,11 @@ pub fn get_server_status() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub fn get_app_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+pub fn get_app_version(app_handle: tauri::AppHandle) -> String {
+    // LIVE version from the bundled app metadata (tauri.conf.json at build
+    // time). Cargo's env! constant drifts — it shipped 1.0.0 while the
+    // installed exe was already 1.0.2 (login page mismatch).
+    app_handle.package_info().version.to_string()
 }
 
 // User & Role Management Commands
@@ -1488,16 +1535,26 @@ pub async fn check_github_update(app_handle: tauri::AppHandle) -> Result<AppUpda
 
     let client = reqwest::Client::builder()
         .user_agent("TitaouPosCRM-Desktop")
-        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-    let res = client
-        .get("https://api.github.com/repos/titaou-bedreddine/TitaouPosCRM/releases")
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to reach GitHub: {}", e))?;
+    // api.github.com flaps on some networks — retry before giving up.
+    let mut res = None;
+    for _ in 0..3 {
+        match client
+            .get("https://api.github.com/repos/titaou-bedreddine/TitaouPosCRM/releases")
+            .header("Accept", "application/vnd.github.v3+json")
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => { res = Some(r); break; }
+            Ok(r) => res = Some(r),
+            Err(_) => std::thread::sleep(std::time::Duration::from_secs(3)),
+        }
+    }
+    let res = res.ok_or("Failed to reach GitHub")?;
 
     if !res.status().is_success() {
         return Err(format!("GitHub API returned HTTP {}", res.status()));
@@ -1786,17 +1843,27 @@ pub async fn download_and_install_update(
     let mut file = std::fs::File::create(&file_path)
         .map_err(|e| format!("Cannot write installer: {e}"))?;
     let mut downloaded: u64 = 0;
+    let mut consecutive_errors = 0u32;
     loop {
-        let chunk = res
-            .chunk()
-            .await
-            .map_err(|e| format!("Download interrupted: {e}"))?;
-        let Some(chunk) = chunk else { break };
+        let chunk = match res.chunk().await {
+            Ok(Some(c)) => Some(c),
+            Ok(None) => break,
+            Err(e) => {
+                consecutive_errors += 1;
+                if consecutive_errors > 10 {
+                    return Err(format!("Download interrupted: {e}"));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                continue;
+            }
+        };
+        consecutive_errors = 0;
+        let Some(chunk) = chunk else { continue };
         std::io::Write::write_all(&mut file, &chunk)
             .map_err(|e| format!("Write failed: {e}"))?;
         downloaded += chunk.len() as u64;
         if total > 0 {
-            let pct = ((downloaded * 100) / total) as i32;
+            let pct = ((downloaded * 100) / std::cmp::max(total, 1)) as i32;
             let _ = app_handle.emit("update-progress", serde_json::json!({ "progress": pct }));
         }
     }

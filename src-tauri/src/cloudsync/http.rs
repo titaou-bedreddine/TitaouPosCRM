@@ -19,6 +19,7 @@ impl SupabaseClient {
             anon_key: anon_key.to_string(),
             access_token: access_token.to_string(),
             client: reqwest::blocking::Client::builder()
+                .connect_timeout(Duration::from_secs(5))
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("reqwest client"),

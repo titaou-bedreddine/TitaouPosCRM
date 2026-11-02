@@ -36,7 +36,8 @@
 
   // Sales mode (organizations.sales_mode): Direct Sale hides Pre-Sale-only
   // navigation (Field Orders / Routes / Truck Loads). Shared features stay.
-  let salesMode = 'pre_sale';
+  // Reactive store — the Settings screen flips it live, no restart needed.
+  import { salesMode as salesModeStore, loadSalesMode } from './lib/stores/salesMode';
 
   // Icons
   import {
@@ -128,7 +129,7 @@
   function navEntry(route: string, labelKey: string, icon: any, locale: string, iconClass = ''): NavEntry {
     return { route, label: t(labelKey, locale), icon, iconClass };
   }
-  $: navGroups = buildNavGroups($currentUser, $currentLocale, salesMode);
+  $: navGroups = buildNavGroups($currentUser, $currentLocale, $salesModeStore);
   function buildNavGroups(user: any, locale: string, mode: string): NavEntry[][] {
     if (!user) return [];
     const admin = isAdmin(user);
@@ -342,9 +343,7 @@
   onMount(async () => {
     loadSavedDarkMode();
     loadShopName();
-    try {
-      salesMode = (await invoke<string>('get_setting', { key: 'sales_mode' })) || 'pre_sale';
-    } catch { salesMode = 'pre_sale'; }
+    await loadSalesMode();
     loadTelegramMaster();
     try {
       sidebarVersion = await invoke<string>('get_app_version');

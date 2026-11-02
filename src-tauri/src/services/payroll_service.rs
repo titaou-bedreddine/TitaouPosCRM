@@ -227,3 +227,51 @@ pub fn list_employee_absences(
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
+
+pub fn record_employee_extra_day(
+    db: &DbState,
+    employee_id: i64,
+    amount: i64,
+    date: String,
+    note: Option<String>,
+) -> Result<i64, String> {
+    let conn = db.conn.lock().unwrap();
+    conn.execute(
+        "INSERT INTO employee_extra_days (employee_id, date, amount, note)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![employee_id, date, amount, note],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// (id, employee_id, amount, date, note) — newest first.
+pub fn list_employee_extra_days(
+    db: &DbState,
+    employee_id: Option<i64>,
+) -> Result<Vec<(i64, i64, i64, String, Option<String>)>, String> {
+    let conn = db.conn.lock().unwrap();
+    let mut sql = String::from(
+        "SELECT id, employee_id, amount, date, note FROM employee_extra_days WHERE 1=1",
+    );
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(eid) = employee_id {
+        sql.push_str(" AND employee_id = ?");
+        params.push(Box::new(eid));
+    }
+    sql.push_str(" ORDER BY date DESC, id DESC");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+pub fn delete_employee_extra_day(db: &DbState, id: i64) -> Result<(), String> {
+    let conn = db.conn.lock().unwrap();
+    conn.execute("DELETE FROM employee_extra_days WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}

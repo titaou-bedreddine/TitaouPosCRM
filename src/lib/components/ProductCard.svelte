@@ -203,10 +203,11 @@
     {/if}
   </div>
 
-  <!-- Product Image or Placeholder -->
-  <div class="w-full h-22 bg-slate-100 dark:bg-slate-800/80 rounded-xl flex items-center justify-center mb-2 overflow-hidden relative">
+  <!-- Product Image or Placeholder — ALWAYS square (aspect-square clamps
+       any image dimension so wide/tall photos never deform the card). -->
+  <div class="w-full aspect-square bg-slate-100 dark:bg-slate-800/80 rounded-xl flex items-center justify-center mb-2 overflow-hidden relative">
     {#if product.image_path}
-      <img src={product.image_path} alt={displayName} class="w-full h-full object-cover group-hover:scale-105 transition duration-200" />
+      <img src={product.image_path} alt={displayName} class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition duration-200" />
     {:else}
       <Package class="w-7 h-7 text-pos-muted/40 group-hover:text-sky-500 transition duration-200" />
     {/if}

@@ -5,11 +5,13 @@
   import AboutView from '../about/AboutView.svelte';
   import ShortcutsEditor from '../../lib/components/ShortcutsEditor.svelte';
   import { currentUser } from '../../lib/stores/auth';
+  import { salesMode as salesModeStore } from '../../lib/stores/salesMode';
   import { printLabelSilently, printHtmlSilently, entityQrDataUrl } from '../../lib/utils/printer';
   import { buildUnifiedReceipt } from '../../lib/printing/unifiedReceipt';
   import { printService } from '../../lib/services/printService';
   import { buildA4DocumentHtml } from '../../lib/printing/a4Template';
   import CloudSyncTab from '../../lib/components/CloudSyncTab.svelte';
+  import CloudDataTable from '../../lib/components/CloudDataTable.svelte';
   import { themeSkin, setThemeSkin, THEME_SKINS } from '../../lib/stores/theme';
   import {
     LABEL_PRESETS,
@@ -24,7 +26,7 @@
     Wifi, HardDrive, FileText, CheckCircle2, History, Laptop,
     Scale, Bell, Send, CreditCard, Keyboard, Eye,
     Users, UserPlus, Edit2, Trash2, Shield, Lock, Info, Pin, Plus, Cloud
-  } from 'lucide-svelte';
+  , Database} from 'lucide-svelte';
 
   type SettingsTab =
     | 'general'
@@ -491,6 +493,7 @@
         adminPassword: salesModePassword,
       });
       settings.sales_mode = salesModeDialog.to;
+      salesModeStore.set(salesModeDialog.to); // sidebar reacts immediately
       salesModeDialog = null;
       await autoSaveSettings();
     } catch (e: any) {
@@ -1621,6 +1624,15 @@
       >
         <Cloud class="w-4 h-4 mb-1" />
         <span class="truncate">{t('set_cloud')}</span>
+      </button>
+
+      <button
+        type="button"
+        on:click={() => (currentTab = 'clouddata')}
+        class="flex flex-col items-center justify-center p-2 rounded-xl text-[11px] font-bold transition cursor-pointer {currentTab === 'clouddata' ? 'bg-sky-600 text-white shadow-xs' : 'text-pos-muted hover:bg-slate-100 dark:hover:bg-slate-800'}"
+      >
+        <Database class="w-4 h-4 mb-1" />
+        <span class="truncate">Cloud Data</span>
       </button>
 
       <button
@@ -2932,7 +2944,10 @@
               <div>
                 <label class="block text-[10px] font-bold text-pos-muted mb-1">Round Sale Price to</label>
                 <select bind:value={settings.price_round_step} class="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-pos-border rounded-xl text-xs font-bold text-pos-text outline-none cursor-pointer">
-                  <option value="0">Whole DZD (no rounding)</option>
+                  <option value="0">Keep typed decimals (no rounding)</option>
+                  <option value="0.1">Nearest 0.1 DZD</option>
+                  <option value="0.5">Nearest 0.5 DZD</option>
+                  <option value="1">Nearest 1 DZD</option>
                   <option value="5">Nearest 5 DZD (119→120, 116→115)</option>
                   <option value="10">Nearest 10 DZD</option>
                 </select>
@@ -3328,6 +3343,11 @@
     <!-- 4b. CLOUD SYNC TAB (Titaou One) -->
     <div class:hidden={currentTab !== 'cloud'}>
       <CloudSyncTab />
+    </div>
+
+    <!-- 4c. CLOUD DATA BROWSER TAB -->
+    <div class:hidden={currentTab !== 'clouddata'}>
+      <CloudDataTable />
     </div>
 
     <!-- 5. IMPORT / EXPORT TAB -->

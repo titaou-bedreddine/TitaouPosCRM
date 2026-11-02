@@ -126,10 +126,10 @@ pub fn search_products(
 }
 
 pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, user_id: Option<i64>) -> Result<i64, String> {
-    if input.purchase_price <= 0 {
+    if input.purchase_price <= 0.0 {
         return Err("Purchase price must be greater than 0 / سعر الشراء إجباري وأكبر من الصفر".to_string());
     }
-    if input.sale_price <= 0 {
+    if input.sale_price <= 0.0 {
         return Err("Sale price must be greater than 0 / سعر البيع إجباري وأكبر من الصفر".to_string());
     }
     if input.sale_price < input.purchase_price {
@@ -200,7 +200,7 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
 
     // For the Telegram change alerts: everything the user can alter that we
     // want to diff on edit (prices, stock, names, barcodes).
-    let mut old_state: Option<(i64, i64, f64)> = None; // (purchase, sale, stock)
+    let mut old_state: Option<(f64, f64, f64)> = None; // (purchase, sale, stock)
     let mut old_names: Option<(String, String)> = None; // (name_fr, name_ar)
     let mut old_barcodes: Vec<String> = Vec::new();
 
@@ -218,7 +218,7 @@ pub fn save_product(db: &DbState, input: ProductInput, product_id: Option<i64>, 
 
     let id = if let Some(pid) = product_id {
         // Fetch old prices for price history
-        let old_prices: Option<(i64, i64)> = tx.query_row(
+        let old_prices: Option<(f64, f64)> = tx.query_row(
             "SELECT purchase_price, sale_price FROM products WHERE id = ?1",
             [pid],
             |r| Ok((r.get(0)?, r.get(1)?)),
@@ -741,13 +741,13 @@ pub fn list_packagings(db: &DbState, product_id: i64) -> Result<Vec<ProductPacka
 pub fn save_packagings(db: &DbState, product_id: i64, inputs: Vec<PackagingInput>) -> Result<(), String> {
     let mut conn = db.conn.lock().unwrap();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let purchase_price: i64 = tx
+    let purchase_price: f64 = tx
         .query_row(
             "SELECT purchase_price FROM products WHERE id = ?1",
             [product_id],
-            |r| r.get(0),
+            |r| r.get::<_, f64>(0),
         )
-        .unwrap_or(0);
+        .unwrap_or(0.0);
     write_packagings_tx(&tx, product_id, &inputs, purchase_price)?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -769,7 +769,7 @@ pub(crate) fn write_packagings_tx(
     tx: &rusqlite::Transaction,
     product_id: i64,
     inputs: &[PackagingInput],
-    product_purchase_price: i64,
+    product_purchase_price: f64,
 ) -> Result<(), String> {
     tx.execute("DELETE FROM product_packagings WHERE product_id = ?1", [product_id])
         .map_err(|e| e.to_string())?;
@@ -783,7 +783,7 @@ pub(crate) fn write_packagings_tx(
         if input.units_per_package < 0 {
             return Err(format!("Packaging '{}' has an invalid conversion / تحويل غير صالح للتغليف {}", name, input.units_per_package));
         }
-        if input.sale_price_per_unit <= 0 {
+        if input.sale_price_per_unit <= 0.0 {
             return Err(format!(
                 "Packaging '{}' needs a sale price per unit / التغليف {} يحتاج سعر بيع للوحدة",
                 name, name
@@ -797,7 +797,7 @@ pub(crate) fn write_packagings_tx(
         }
         // Same floor as the unit price: never sell a base unit below what
         // it cost, whatever the presentation.
-        if product_purchase_price > 0 && input.sale_price_per_unit < product_purchase_price {
+        if product_purchase_price > 0.0 && input.sale_price_per_unit < product_purchase_price {
             return Err(format!(
                 "Sale price per unit for '{}' cannot be less than the purchase cost ({} DZD) / سعر البيع للوحدة للتغليف {} لا يمكن أن يكون أقل من سعر الشراء",
                 name, product_purchase_price, name
@@ -840,7 +840,7 @@ pub(crate) fn write_packagings_tx(
                 )
                 .ok(),
         };
-        let derived_total = input.sale_price_per_unit * input.units_per_package;
+        let derived_total = input.sale_price_per_unit * input.units_per_package as f64;
         tx.execute(
             "INSERT INTO product_packagings (product_id, name, units_per_package, sale_price, sale_price_per_unit, purchase_price, packaging_type_id, unloading_fee, is_default)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",

@@ -4,6 +4,35 @@
   import { invoke } from '@tauri-apps/api/core';
   import { Cloud, RefreshCw, Plug, Unplug, FlaskConical, AlertTriangle, CheckCircle2, KeyRound, Lock, Package, Scale } from 'lucide-svelte';
 
+  // ── Purge cloud test data (owner request) ──
+  let purgeProducts = false;
+  let purgeClients = false;
+  let purgeEmployees = false;
+  let purgeTrucksSel = false;
+  let purgePassword = '';
+  let purgeBusy = false;
+  let purgeMsg = '';
+
+  async function purgeEntities() {
+    const chosen: string[] = [];
+    if (purgeProducts) chosen.push('products');
+    if (purgeClients) chosen.push('clients');
+    if (purgeEmployees) chosen.push('employees');
+    if (purgeTrucksSel) chosen.push('trucks');
+    if (chosen.length === 0) { purgeMsg = 'Select something first / اختر أولاً'; return; }
+    if (!confirm('PURGE from the CLOUD: ' + chosen.join(', ') + '? Records sold at least once are only deactivated. This cannot be undone. / حذف نهائي من السحابة؟')) return;
+    purgeBusy = true; purgeMsg = '';
+    try {
+      const r: any = await invoke('cloud_purge_entities', { entities: chosen, adminPassword: purgePassword });
+      purgeMsg = 'Purged — ' + Object.entries(r).map(([k, v]: any) => k + ': ' + JSON.stringify(v)).join(', ');
+      purgeProducts = purgeClients = purgeEmployees = purgeTrucksSel = false;
+      purgePassword = '';
+      await refresh();
+    } catch (e: any) {
+      purgeMsg = typeof e === 'string' ? e : e?.message || 'Purge failed';
+    } finally { purgeBusy = false; }
+  }
+
   let status: any = null;
   let url = '';
   let anonKey = '';
@@ -299,6 +328,23 @@
         class="flex items-center gap-1.5 px-4 py-2 text-[11px] font-black bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-40 text-pos-text rounded-xl cursor-pointer">
         <FlaskConical class="w-3.5 h-3.5" />{t('cloud_test')}
       </button>
+    </div>
+    <div class="p-4 bg-rose-50 dark:bg-rose-950/30 rounded-2xl border border-rose-300 dark:border-rose-900 space-y-2">
+      <p class="text-[11px] font-black text-rose-700 dark:text-rose-300">Purge cloud test data / حذف بيانات الاختبار من السحابة</p>
+      <p class="text-[10px] text-rose-600 dark:text-rose-400">Deleted items stop syncing to the field app. Items already sold are kept but deactivated. / العناصر المبيعة تبقى معطلة.</p>
+      <div class="grid grid-cols-2 gap-1.5">
+        <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer"><input type="checkbox" bind:checked={purgeProducts} class="w-4 h-4 rounded accent-rose-600" /> Products / منتجات</label>
+        <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer"><input type="checkbox" bind:checked={purgeClients} class="w-4 h-4 rounded accent-rose-600" /> Clients / عملاء</label>
+        <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer"><input type="checkbox" bind:checked={purgeEmployees} class="w-4 h-4 rounded accent-rose-600" /> Employees / موظفون</label>
+        <label class="flex items-center gap-2 text-[11px] font-bold text-pos-text cursor-pointer"><input type="checkbox" bind:checked={purgeTrucksSel} class="w-4 h-4 rounded accent-rose-600" /> Trucks / شاحنات</label>
+      </div>
+      <input type="password" bind:value={purgePassword} placeholder="Admin password / كلمة المرور"
+        class="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-900 rounded-xl text-xs font-bold outline-none" />
+      <button type="button" on:click={purgeEntities} disabled={purgeBusy || !purgePassword}
+        class="flex items-center gap-1.5 px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
+        <AlertTriangle class="w-3.5 h-3.5" /> Purge now
+      </button>
+      {#if purgeMsg}<p class="text-[10px] font-bold text-pos-text">{purgeMsg}</p>{/if}
     </div>
   </div>
 </div>

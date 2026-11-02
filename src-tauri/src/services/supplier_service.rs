@@ -108,7 +108,7 @@ pub fn save_supplier(
         let qr_code = format!("SUPP-{:04}", chrono::Local::now().timestamp_subsec_millis());
         conn.execute(
             "INSERT INTO suppliers (name, contact_person, phone, email, address, rc, nif, nis, ai, qr_code, balance, notes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11)",
             rusqlite::params![name, contact_person, phone, email, address, rc, nif, nis, ai, qr_code, notes],
         )
         .map_err(|e| e.to_string())?;

@@ -342,7 +342,7 @@
   async function loadPricingDefaults() {
     try {
       const s = await invoke<Record<string, string>>('get_all_settings');
-      priceRoundStep = parseInt(s['price_round_step'] ?? '5', 10) || 0;
+      priceRoundStep = parseFloat(s['price_round_step'] ?? '5') || 0;
       defaultMarginPercent = parseFloat(s['default_margin_percent'] ?? '20') || 0;
       hideNameAr = s['hide_name_ar'] === 'true';
     } catch (e) {
@@ -352,7 +352,7 @@
 
   // Round to the configured step: 119 -> 120 (step 5), 116 -> 115.
   function roundToStep(value: number, step: number): number {
-    if (!step || step <= 0) return Math.round(value);
+    if (!step || step <= 0) return value; // no step: keep typed decimals
     return Math.round(value / step) * step;
   }
 
@@ -1137,6 +1137,15 @@
               >
                 Camera (كاميرا)
               </button>
+              {#if imagePath}
+                <button
+                  type="button"
+                  on:click={() => (imagePath = '')}
+                  class="mt-1 px-2 py-1 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/70 text-rose-600 text-[10px] font-black rounded-lg cursor-pointer transition inline-flex items-center gap-1"
+                >
+                  <Trash2 class="w-3 h-3" /> Delete photo / حذف الصورة
+                </button>
+              {/if}
             </div>
 
             <!-- Names (with live DB autosuggest: Tab or click accepts) -->

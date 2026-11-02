@@ -1,13 +1,14 @@
 {
   "name": "titaou-poscrm",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:exe": "node scripts/bump-version.mjs && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

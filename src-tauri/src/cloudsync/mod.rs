@@ -9,6 +9,7 @@
 
 pub mod auth;
 pub mod cloud_cmds;
+pub mod cloud_purge;
 pub mod http;
 pub mod mapping;
 pub mod outbox;

@@ -5,7 +5,7 @@
 //! exactly once per order (crm_orders.stock_applied flag).
 
 use super::http::SupabaseClient;
-use super::mapping::centimes_to_dzd;
+use super::mapping::{centimes_to_dzd, centimes_to_dzd_f};
 use super::outbox;
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -182,8 +182,8 @@ fn pull_products(conn: &mut Connection, client: &SupabaseClient) -> Result<(), S
         let barcode = row["barcode"].as_str().unwrap_or_default();
         let name = row["name"].as_str().unwrap_or("Produit").to_string();
         let category = row["category"].as_str().unwrap_or_default().to_string();
-        let sale_price = centimes_to_dzd(row["unit_price"].as_i64().unwrap_or(0));
-        let purchase_price = centimes_to_dzd(row["cost_price"].as_i64().unwrap_or(0));
+        let sale_price = centimes_to_dzd_f(row["unit_price"].as_i64().unwrap_or(0));
+        let purchase_price = centimes_to_dzd_f(row["cost_price"].as_i64().unwrap_or(0));
         let min_stock = row["min_stock_alert"].as_f64().unwrap_or(0.0).to_string();
         let is_active = row["is_active"].as_bool().unwrap_or(true);
 

@@ -81,17 +81,33 @@
     }
   }
 
-  async function remove(m: any) {
-    const pwd = prompt(
-      t('team_admin_password_prompt') || 'Your admin password (YOUR OWN POS login password): / كلمة مرورك أنت:');
-    if (pwd === null) return;
-    busy = true;
-    error = '';
+  // Delete a field-team member (mobile-app account). Uses a real modal —
+  // window.prompt is unsupported in the Tauri webview (it returned null and
+  // the delete button silently did nothing).
+  let removeTarget: any = null;
+  let removePassword = '';
+  let removeError = '';
+
+  function openRemove(m: any) {
+    removeTarget = m;
+    removePassword = '';
+    removeError = '';
+  }
+
+  async function confirmRemove() {
+    if (!removeTarget) return;
+    if (!removePassword.trim()) {
+      removeError = t('admin_password_required') || 'Admin password required';
+      return;
+    }
+    busy = true; removeError = '';
     try {
-      await invoke('cloud_team_delete', { userId: m.id, adminPassword: pwd || null });
+      await invoke('cloud_team_delete', { userId: removeTarget.id, adminPassword: removePassword });
+      removeTarget = null;
+      removePassword = '';
       await load();
     } catch (e: any) {
-      error = typeof e === 'string' ? e : e?.message || 'Failed';
+      removeError = typeof e === 'string' ? e : e?.message || 'Failed';
     } finally {
       busy = false;
     }
@@ -106,6 +122,36 @@
 
   onMount(load);
 </script>
+
+{#if removeTarget}
+  <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (removeTarget = null)} role="presentation">
+    <div class="bg-pos-card border border-pos-border rounded-2xl w-full max-w-sm p-5 space-y-3" on:click|stopPropagation>
+      <h3 class="text-sm font-black text-pos-text flex items-center gap-2">
+        <Trash2 class="w-4 h-4 text-rose-500" /> Delete field-team member
+      </h3>
+      <p class="text-[11px] text-pos-muted font-bold">
+        {removeTarget.email || removeTarget.full_name}<br />
+        Deletes the mobile-app account (login). / حذف حساب التطبيق فقط
+      </p>
+      <label class="block text-[10px] font-bold text-pos-muted">
+        {t('team_admin_password_prompt') || 'Your admin password'} *
+      </label>
+      <input type="password" bind:value={removePassword} placeholder="••••••••"
+        class="w-full px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-pos-border rounded-xl text-xs font-mono text-pos-text outline-none" />
+      {#if removeError}
+        <p class="text-[10px] font-bold text-rose-600">{removeError}</p>
+      {/if}
+      <div class="flex justify-end gap-2 pt-1">
+        <button type="button" on:click={() => (removeTarget = null)}
+          class="px-4 py-2 text-[11px] font-black text-pos-muted hover:text-pos-text cursor-pointer">✕</button>
+        <button type="button" on:click={confirmRemove} disabled={busy}
+          class="px-4 py-2 text-[11px] font-black bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-xl cursor-pointer">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <div class="p-4 md:p-6 space-y-4">
   <div class="flex items-center justify-between">

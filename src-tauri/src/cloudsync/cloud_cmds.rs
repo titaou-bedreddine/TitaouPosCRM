@@ -342,6 +342,7 @@ pub fn cloud_create_truck_load(
     name: Option<String>,
     truck_id: Option<String>,
     driver_name: Option<String>,
+    carryover: Option<Value>,
 ) -> Result<String, String> {
     let client = cloud::ensure_session()?;
     let id = client.rpc(
@@ -355,6 +356,7 @@ pub fn cloud_create_truck_load(
             "p_name": name,
             "p_truck_id": truck_id,
             "p_driver_name": driver_name,
+            "p_carryover": carryover,
         }),
     )?;
     id.as_str().map(String::from).ok_or_else(|| "no id returned".into())
@@ -672,6 +674,8 @@ pub fn cloud_open_truck_reconciliation(load_id: String) -> Result<(), String> {
 
 /// CLOSE & SETTLE: reconciling → closed. One atomic transaction: stock
 /// reconciliation rows + physical-return movements + cash settlement row.
+/// `keep` (0059): per-product quantities that STAY on the truck (carry-over
+/// pool) instead of returning to the warehouse.
 #[tauri::command]
 pub fn cloud_close_truck_trip(
     load_id: String,
@@ -679,6 +683,7 @@ pub fn cloud_close_truck_trip(
     reasons: Option<Value>,
     actual_cash: i64,
     cash_reason: Option<String>,
+    keep: Option<Value>,
 ) -> Result<(), String> {
     let client = cloud::ensure_session()?;
     client
@@ -690,9 +695,59 @@ pub fn cloud_close_truck_trip(
                 "p_reasons": reasons,
                 "p_actual_cash": actual_cash,
                 "p_cash_reason": cash_reason,
+                "p_keep": keep,
             }),
         )
         .map(|_| ())
+}
+
+/// REOPEN a closed trip (0059): reverses the close's stock effects, drops
+/// its reconciliation + settlement rows and returns the trip to
+/// 'reconciling' for a fresh count + re-close.
+#[tauri::command]
+pub fn cloud_reopen_truck_trip(load_id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc("reopen_truck_trip", serde_json::json!({ "p_load_id": load_id }))
+        .map(|_| ())
+}
+
+/// Send carry-over stock back to the warehouse without a trip (0059).
+/// `items` empty/absent = the truck's ENTIRE pool.
+#[tauri::command]
+pub fn cloud_return_truck_stock(truck_id: String, items: Option<Value>) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc(
+            "return_truck_stock",
+            serde_json::json!({ "p_truck_id": truck_id, "p_items": items }),
+        )
+        .map(|_| ())
+}
+
+/// Per-product aggregate "on trucks" (carry-over pool + live-trip goods)
+/// for the inventory view (0059).
+#[tauri::command]
+pub fn cloud_product_on_trucks() -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    client.rpc("product_on_trucks", serde_json::json!({}))
+}
+
+/// One truck's carry-over pool (0059): products currently on the truck but
+/// not committed to any trip. Product name embedded via the FK.
+#[tauri::command]
+pub fn cloud_truck_stock(truck_id: String) -> Result<Value, String> {
+    let client = cloud::ensure_session()?;
+    let rows = client.select(
+        "truck_stock",
+        "product_id, quantity, products(name)",
+        &[
+            ("truck_id", format!("eq.{truck_id}")),
+            ("quantity", "gt.0".into()),
+            ("order", "updated_at.desc".into()),
+        ],
+    )?;
+    Ok(Value::Array(rows))
 }
 
 /// Add an explicit trip expense (loading_fee/unloading_fee/fuel/driver_fee/other).
@@ -1344,7 +1399,49 @@ pub fn cloud_products_for_promos() -> Result<Value, String> {
 }
 
 /// Delete a truck that has no historical dependency (no trips). Trucks with
-/// trips must be archived instead (is_active = false) so history survives.
+/// PERMANENTLY delete a truck and everything attached to it (positions,
+/// loads, items, reconciliations, settlements, trip expenses). Sales/orders
+/// survive: orders.truck_load_id is SET NULL in the cloud. Requires the
+/// purge_truck RPC (0057) and admin role.
+#[tauri::command]
+pub fn cloud_purge_truck(id: String) -> Result<i64, String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc("purge_truck", serde_json::json!({ "p_truck_id": id }))
+        .map(|v| v.as_i64().unwrap_or(0))
+}
+
+/// Delete ONE trip from a truck's history (load + cascaded items,
+/// reconciliations, settlement, trip expenses). Money records (orders)
+/// survive. Requires the purge_truck_load RPC (0057).
+#[tauri::command]
+pub fn cloud_purge_truck_load(load_id: String) -> Result<(), String> {
+    let client = cloud::ensure_session()?;
+    client
+        .rpc("purge_truck_load", serde_json::json!({ "p_load_id": load_id }))
+        .map(|_| ())
+}
+
+/// Delete EVERY trip in a truck's history (each via purge_truck_load).
+#[tauri::command]
+pub fn cloud_purge_truck_history(truck_id: String) -> Result<i64, String> {
+    let client = cloud::ensure_session()?;
+    let loads = client.select(
+        "truck_loads",
+        "id",
+        &[("truck_id", format!("eq.{truck_id}"))],
+    )?;
+    let mut n = 0i64;
+    for load in loads {
+        let lid = load["id"].as_str().ok_or("bad load id")?.to_string();
+        client
+            .rpc("purge_truck_load", serde_json::json!({ "p_load_id": lid }))
+            .map_err(|e| e.to_string())?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 #[tauri::command]
 pub fn cloud_delete_truck(id: String) -> Result<(), String> {
     let client = cloud::ensure_session()?;

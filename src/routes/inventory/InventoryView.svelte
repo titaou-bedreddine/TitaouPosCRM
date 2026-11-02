@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { t } from '../../lib/i18n';
   import { invoke } from '@tauri-apps/api/core';
   import { decomposeStock } from '../../lib/utils/stockUnits';
   import { normalizeBarcode } from '../../lib/utils/barcode';
@@ -95,6 +96,7 @@
     await loadUnits();
     await loadProducts();
     await loadAllPacks();
+    void loadOnTrucks();
   });
 
   async function loadCategories() {
@@ -192,6 +194,30 @@
       allPacks = await invoke<any[]>('list_all_packagings');
     } catch {
       allPacks = [];
+    }
+  }
+
+  // "On trucks" (0059): per-product goods currently on the trucks — carry-over
+  // pool + live-trip stock from the CRM cloud, joined to local rows via the
+  // product sync_map. Empty when the cloud link is down: column just stays.
+  let onTrucksLocal: Record<number, number> = {};
+
+  async function loadOnTrucks() {
+    try {
+      const [map, rows] = await Promise.all([
+        invoke<any[]>('product_cloud_map').catch(() => []),
+        invoke<any[]>('cloud_product_on_trucks').catch(() => []),
+      ]);
+      const localByCloud = new Map<string, number>();
+      for (const m of map ?? []) localByCloud.set(m.remote_id, m.local_id);
+      const out: Record<number, number> = {};
+      for (const r of rows ?? []) {
+        const localId = localByCloud.get(r.out_product_id);
+        if (localId !== undefined) out[localId] = (out[localId] ?? 0) + Number(r.out_quantity ?? 0);
+      }
+      onTrucksLocal = out;
+    } catch {
+      onTrucksLocal = {};
     }
   }
 
@@ -438,6 +464,7 @@
             <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('purchase_price')}>Cost {sortIndicator('purchase_price')}</th>
             <th class="p-3 text-end cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('sale_price')}>Sale Price {sortIndicator('sale_price')}</th>
             <th class="p-3 text-center cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('current_stock')}>Stock {sortIndicator('current_stock')}</th>
+            <th class="p-3 text-center" title={t('trucks_pool_hint')}>↻ {t('inv_on_trucks')}</th>
             <th class="p-3 text-center cursor-pointer select-none hover:text-pos-text" on:click={() => applySort('expiry_date')}>Expiry {sortIndicator('expiry_date')}</th>
             <th class="p-3 text-end">Actions</th>
           </tr>
@@ -445,7 +472,7 @@
         <tbody class="divide-y divide-pos-border/40">
           {#if products.length === 0}
             <tr>
-              <td colspan="9" class="p-8 text-center text-pos-muted">No products found matching filters.</td>
+              <td colspan="10" class="p-8 text-center text-pos-muted">No products found matching filters.</td>
             </tr>
           {:else}
             {#each sortedProducts as p}
@@ -486,6 +513,9 @@
                   {#if stockLabel(p.id, p.current_stock)}
                     <p class="text-[9px] font-sans font-bold text-pos-muted">{stockLabel(p.id, p.current_stock)}</p>
                   {/if}
+                </td>
+                <td class="p-3 text-center font-mono {onTrucksLocal[p.id] ? 'text-sky-600 font-black' : 'text-pos-muted'}">
+                  {onTrucksLocal[p.id] ?? '—'}
                 </td>
                 <td class="p-3 text-center font-mono text-[10px]">
                   {#if expired}
@@ -621,10 +651,10 @@
                 tabindex="0"
                 on:click={() => openEdit(p)}
                 on:keydown={(e) => { if (e.key === 'Enter') openEdit(p); }}
-                class="w-full h-28 bg-slate-100 dark:bg-slate-800/80 rounded-xl mb-3 flex items-center justify-center overflow-hidden cursor-pointer group-hover:scale-[1.02] transition shrink-0"
+                class="w-full aspect-square bg-slate-100 dark:bg-slate-800/80 rounded-xl mb-3 flex items-center justify-center overflow-hidden cursor-pointer group-hover:scale-[1.02] transition shrink-0"
               >
                 {#if p.image_path}
-                  <img src={p.image_path} alt={p.name_fr || p.name_ar} class="w-full h-full object-cover" />
+                  <img src={p.image_path} alt={p.name_fr || p.name_ar} class="absolute inset-0 w-full h-full object-cover" />
                 {:else}
                   <div class="w-12 h-12 rounded-xl bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 flex items-center justify-center">
                     <Package class="w-7 h-7" />

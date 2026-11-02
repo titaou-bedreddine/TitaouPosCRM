@@ -156,9 +156,15 @@ fn finish_active_session(db: &DbState, session: Option<CashSession>) -> Result<O
             s.is_stale = Some(false);
 
             // Calculate total sales and expenses for this session
+            // Total SALES include truck trip settlements (cash_in movements
+            // with reference_type='truck_settlement') — the trucks' cash
+            // belongs on the card (owner request).
             let conn = db.conn.lock().unwrap();
             let sales_sum: i64 = conn.query_row(
-                "SELECT COALESCE(SUM(amount), 0) FROM cash_movements WHERE session_id = ?1 AND type = 'cash_sale'",
+                "SELECT COALESCE(SUM(amount), 0) FROM cash_movements
+                 WHERE session_id = ?1
+                   AND (type = 'cash_sale'
+                        OR (type = 'cash_in' AND reference_type = 'truck_settlement'))",
                 [s.id],
                 |r| r.get(0),
             ).unwrap_or(0);
