@@ -41,6 +41,10 @@
   // App.svelte deep-link: open the Maps page on this truck (live position
   // and/or its trip's client checkpoints).
   export let onShowOnMap: (truckId: string, checkpoints: boolean) => void = () => {};
+  // OWNER (2026-11): "Modifier la tournée" on the active-trip panel —
+  // deep-links to the Chargements page with the load pre-opened in the edit
+  // form (the edit form lives there; server refuses when returns exist).
+  export let onEditTrip: (loadId: string) => void = () => {};
 
   $: selected = trucks.find((x) => x.id === selectedId) ?? null;
   $: visibleTrucks = showArchived ? trucks : trucks.filter((x) => x.is_active !== false);
@@ -1107,6 +1111,13 @@
             </div>
 
             <div class="flex flex-wrap justify-end gap-1.5">
+              {#if activeTrip.status !== 'closed' && !(activeTrip.items ?? []).some((it: any) => (it.returned_quantity ?? 0) > 0)}
+                <button type="button" on:click={() => onEditTrip(activeTrip.id)}
+                  class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl cursor-pointer"
+                  title={t('tl_edit_title')}>
+                  <Pencil class="w-3 h-3" />{t('tl_edit')}
+                </button>
+              {/if}
               <button type="button" on:click={() => printTrip(1)}
                 class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer" title="Print x1">🖨 x1</button>
               <button type="button" on:click={() => printTrip(2)}
