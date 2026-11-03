@@ -220,6 +220,31 @@ fn push_product(
     local_id: i64,
     p: Value,
 ) -> Result<(), String> {
+    // OWNER (2026-11): deletion finally wins. upsert_pos_product matches by
+    // SKU/barcode, so ANY pending local event re-created a product the owner
+    // had deleted from the cloud (Cloud tab or Supabase Studio) — deleted
+    // rows kept coming back. If the mapped CRM row is gone: drop the mapping,
+    // deactivate the local copy, done. Only a STILL-EXISTING mapped product
+    // proceeds to the upsert (which then genuinely updates prices/packages).
+    if let Some(remote) = outbox::remote_id(conn, "product", local_id) {
+        let exists = client.select(
+            "products",
+            "id",
+            &[("id", format!("eq.{remote}"))],
+        )?;
+        if exists.is_empty() {
+            let _ = conn.execute(
+                "DELETE FROM sync_map WHERE entity = 'product' AND local_id = ?1",
+                rusqlite::params![local_id],
+            );
+            let _ = conn.execute(
+                "UPDATE products SET is_active = 0 WHERE id = ?1",
+                rusqlite::params![local_id],
+            );
+            return Ok(());
+        }
+    }
+
     let remote = client.rpc(
         "upsert_pos_product",
         json!({
@@ -295,6 +320,27 @@ fn push_customer(
     // Walk-in (id 1) is handled by ensure_pos_client, never here.
     if local_id == 1 {
         return Ok(());
+    }
+    // OWNER: same deletion-final rule as products — a mapped client that was
+    // deleted upstream drops its mapping + deactivates locally instead of a
+    // patch that silently matches nothing.
+    if let Some(remote) = outbox::remote_id(conn, "customer", local_id) {
+        let exists = client.select(
+            "clients",
+            "id",
+            &[("id", format!("eq.{remote}"))],
+        )?;
+        if exists.is_empty() {
+            let _ = conn.execute(
+                "DELETE FROM sync_map WHERE entity = 'customer' AND local_id = ?1",
+                rusqlite::params![local_id],
+            );
+            let _ = conn.execute(
+                "UPDATE customers SET is_active = 0 WHERE id = ?1",
+                rusqlite::params![local_id],
+            );
+            return Ok(());
+        }
     }
     match outbox::remote_id(conn, "customer", local_id) {
         Some(remote) => client
