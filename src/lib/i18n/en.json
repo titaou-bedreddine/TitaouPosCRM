@@ -845,5 +845,11 @@
   "trucks_no_active_trip": "No active trip for this truck.",
   "trucks_already_closed": "This trip is already CLOSED — open the audit from the history table.",
   "trucks_need_reconcile": "This trip must be IN RECONCILIATION before close & settle — reopen reconciliation first.",
-  "trucks_delete_type_truck": "Type TRUCK to confirm"
+  "trucks_delete_type_truck": "Type TRUCK to confirm",
+  "login_search_bg": "Sign in — the app looks for the shop server in the background after login.",
+  "trucks_status_loaded": "Loaded",
+  "trucks_status_inprogress": "In progress",
+  "trucks_status_reconciling": "Reconciling",
+  "trucks_status_closed": "Closed",
+  "trucks_status_returned": "Returned"
 }

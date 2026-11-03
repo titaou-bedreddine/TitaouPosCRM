@@ -871,8 +871,21 @@
     in_progress: 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300',
     reconciling: 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
     returned: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
-    closed: 'bg-slate-100 text-pos-muted dark:bg-slate-800',
+    closed: 'bg-slate-100 text-pos-muted dark:bg-slate-800 dark:text-slate-300',
   };
+
+  // Owner: statuses showed as raw enum text (in_progress / closed…) —
+  // translate them everywhere they surface.
+  function statusLabel(s?: string | null): string {
+    switch (s) {
+      case 'loaded': return t('trucks_status_loaded');
+      case 'in_progress': return t('trucks_status_inprogress');
+      case 'reconciling': return t('trucks_status_reconciling');
+      case 'closed': return t('trucks_status_closed');
+      case 'returned': return t('trucks_status_returned');
+      default: return s ?? '—';
+    }
+  }
 
   onMount(() => {
     load();
@@ -964,18 +977,21 @@
     </div>
   {/if}
 
-  <div class="grid gap-4 lg:grid-cols-[280px_1fr]">
-    <!-- Trucks list -->
-    <div class="space-y-2">
+  <div class="space-y-4">
+    <!-- Trucks list — OWNER: horizontal strip ON TOP (under the summary
+         cards), so the trip detail below gets the FULL window width. -->
+    <div>
+      <div class="flex gap-2 overflow-x-auto pb-1 items-stretch">
       {#each visibleTrucks as tr (tr.id)}
         {@const at = loads.find((l) => l.truck_id === tr.id && ['loaded', 'in_progress', 'reconciling'].includes(l.status))}
         {@const lamp = truckLamp(tr)}
-        <button type="button" on:click={() => (selectedId = tr.id)}
-          class="w-full text-start p-3 rounded-2xl border cursor-pointer transition {selectedId === tr.id ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/30' : 'border-pos-border bg-white dark:bg-slate-900 hover:border-pos-muted'} {tr.is_active === false ? 'opacity-50' : ''}">
+        <div role="button" tabindex="0" on:click={() => (selectedId = tr.id)}
+          on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') (selectedId = tr.id); }}
+          class="w-56 shrink-0 relative text-start p-3 pb-8 rounded-2xl border cursor-pointer transition {selectedId === tr.id ? 'border-sky-500 bg-sky-50 dark:bg-sky-950/30' : 'border-pos-border bg-white dark:bg-slate-900 hover:border-pos-muted'} {tr.is_active === false ? 'opacity-50' : ''}">
           <div class="flex items-center justify-between">
-            <p class="text-sm font-black text-pos-text">{tr.name}</p>
+            <p class="text-sm font-black text-pos-text truncate">{tr.name}</p>
             {#if at}
-              <span class="text-[9px] font-black px-2 py-0.5 rounded-full {statusBadge[at.status]}">{at.status}</span>
+              <span class="text-[9px] font-black px-2 py-0.5 rounded-full {statusBadge[at.status]}">{statusLabel(at.status)}</span>
             {/if}
           </div>
           <!-- State lamp: on trip / on loading / settling / idle -->
@@ -983,13 +999,20 @@
             <span class="w-1.5 h-1.5 rounded-full {lamp.dot}"></span>{lamp.label}
           </span>
           <p class="text-[10px] text-pos-muted font-mono">{tr.plate || '—'}</p>
-          <p class="text-[10px] text-pos-muted">👤 {tr.driver_name || '—'} · 🛒 {sellerName(tr.seller_id)}</p>
-        </button>
+          <p class="text-[10px] text-pos-muted truncate">👤 {tr.driver_name || '—'} · 🛒 {sellerName(tr.seller_id)}</p>
+          <!-- OWNER: edit the truck straight from its small card -->
+          <button type="button" class="absolute bottom-2 end-2 p-1.5 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-lg cursor-pointer"
+            title={t('trucks_edit')}
+            on:click|stopPropagation={() => openEditTruck(tr)}>
+            <Pencil class="w-3.5 h-3.5" />
+          </button>
+        </div>
       {/each}
       {#if !loading && visibleTrucks.length === 0}
-        <p class="text-center text-pos-muted text-xs py-8">🚚 {t('trucks_empty')}</p>
+        <p class="text-center text-pos-muted text-xs py-8 w-full">🚚 {t('trucks_empty')}</p>
       {/if}
-      <label class="flex items-center gap-2 px-1 py-1 text-[11px] font-bold text-pos-muted cursor-pointer">
+      </div>
+      <label class="mt-1 inline-flex items-center gap-2 px-1 py-1 text-[11px] font-bold text-pos-muted cursor-pointer">
         <input type="checkbox" bind:checked={showArchived} class="w-4 h-4 rounded accent-sky-600" />
         <span>{t('trucks_show_archived')}</span>
       </label>
@@ -1007,7 +1030,7 @@
               </span>
             </div>
             <p class="text-[10px] text-pos-muted">👤 {selected.driver_name || '—'} · 🛒 {sellerName(selected.seller_id)} · {selected.is_active === false ? '📦 ARCHIVED / ARCHIVÉ' : '✓ Active'}</p>
-            <p class="text-[10px] text-pos-muted mt-0.5">{t('trucks_status')}: {activeTrip ? activeTrip.status : (selected.is_active === false ? 'archived' : 'idle')}</p>
+            <p class="text-[10px] text-pos-muted mt-0.5">{t('trucks_status')}: {activeTrip ? statusLabel(activeTrip.status) : (selected.is_active === false ? '📦' : '✓')}</p>
           </div>
           <div class="flex flex-wrap gap-1.5 justify-end">
             <button type="button" on:click={() => onShowOnMap(selected.id, false)}
@@ -1075,7 +1098,7 @@
                   {#if activeTrip.departed_at}· 🕐 {String(activeTrip.departed_at).slice(0, 16).replace('T', ' ')}{/if}
                 </p>
               </div>
-              <span class="text-[9px] font-black px-2 py-0.5 rounded-full {statusBadge[activeTrip.status]}">{activeTrip.status}</span>
+              <span class="text-[9px] font-black px-2 py-0.5 rounded-full {statusBadge[activeTrip.status]}">{statusLabel(activeTrip.status)}</span>
             </div>
 
             <!-- Stock table -->
@@ -1212,7 +1235,7 @@
                           <span class="ms-1 text-[8px] font-black px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">{t('trucks_edited')}</span>
                         {/if}
                       </td>
-                      <td class="p-1.5"><span class="font-black px-1.5 py-0.5 rounded-full {statusBadge[tp.out_status] ?? ''}">{tp.out_status}</span></td>
+                      <td class="p-1.5"><span class="font-black px-1.5 py-0.5 rounded-full {statusBadge[tp.out_status] ?? ''}">{statusLabel(tp.out_status)}</span></td>
                       <td class="p-1.5">{tp.out_seller_name || '—'}</td>
                       <td class="p-1.5 text-end font-mono">{fmt(tp.out_sales_value)}</td>
                       <td class="p-1.5 text-end font-mono">{fmt(tp.out_cash_value)}</td>

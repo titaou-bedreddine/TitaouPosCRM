@@ -177,6 +177,18 @@
     showForm = true;
   }
 
+  // Owner: statuses showed as raw enum text — translate (same map as Trucks).
+  function statusLabel(s?: string | null): string {
+    switch (s) {
+      case 'loaded': return t('trucks_status_loaded');
+      case 'in_progress': return t('trucks_status_inprogress');
+      case 'reconciling': return t('trucks_status_reconciling');
+      case 'closed': return t('trucks_status_closed');
+      case 'returned': return t('trucks_status_returned');
+      default: return s ?? '—';
+    }
+  }
+
   // 0059 — any trip that is not closed can be edited (returns recorded on the
   // load still block it server-side; the button hides there).
   $: loadEditable = (l: any) => l.status !== 'closed' && !(l.items ?? []).some((it: any) => (it.returned_quantity ?? 0) > 0);
@@ -373,7 +385,7 @@
           <div class="flex items-start justify-between">
             <div>
               <p class="text-sm font-black text-pos-text">{l.name || l.seller?.full_name || '—'}</p>
-              <p class="text-[10px] text-pos-muted">{String(l.route_date).slice(0, 10)} · {l.status}</p>
+              <p class="text-[10px] text-pos-muted">{String(l.route_date).slice(0, 10)} · {statusLabel(l.status)}</p>
             </div>
             <div class="flex gap-1">
               <button type="button" class="p-1.5 text-pos-muted hover:text-pos-text rounded-lg cursor-pointer" on:click={() => printSheet(l)} title={t('tl_print')}>

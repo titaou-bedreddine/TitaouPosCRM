@@ -845,5 +845,11 @@
   "team_admin_password": "Votre mot de passe admin (votre mot de passe de connexion)",
   "team_admin_password_hint": "Le mot de passe de VOTRE compte admin (celui avec lequel vous vous connectez) — pas un mot de passe séparé.",
   "team_new_password": "Nouveau mot de passe du membre (optionnel) — réinitialise sa connexion",
-  "team_admin_password_prompt": "Votre mot de passe admin (votre mot de passe de connexion) :"
+  "team_admin_password_prompt": "Votre mot de passe admin (votre mot de passe de connexion) :",
+  "login_search_bg": "Connectez-vous — l'application cherchera le serveur de boutique en arrière-plan après la connexion.",
+  "trucks_status_loaded": "Chargée",
+  "trucks_status_inprogress": "En cours",
+  "trucks_status_reconciling": "Réconciliation",
+  "trucks_status_closed": "Clôturée",
+  "trucks_status_returned": "Retournée"
 }

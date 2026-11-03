@@ -186,8 +186,6 @@ pub struct NetRuntime {
     /// a login performed while disconnected, replayed against the server on
     /// reconnect so the session upgrades to a real server token.
     pub offline_login: Mutex<Option<(String, String)>>,
-    /// Instant this runtime initialized — search-gate fallback clock.
-    pub started_at: Instant,
     /// OWNER (2026-11): the LAN search (connect attempts + probe bursts)
     /// starts only AFTER the user logs in — set by network_begin_search.
     pub search_unlocked: std::sync::atomic::AtomicBool,
@@ -265,7 +263,6 @@ pub fn init(app: tauri::AppHandle, db: DbState) {
         lan_ips_cache: Mutex::new(None),
         users_cache: Mutex::new(None),
         offline_login: Mutex::new(None),
-        started_at: Instant::now(),
         search_unlocked: std::sync::atomic::AtomicBool::new(false),
     };
     let _ = NET.set(runtime);
@@ -335,12 +332,11 @@ pub fn init(app: tauri::AppHandle, db: DbState) {
         .name("net-probe".into())
         .spawn(|| {
             std::thread::sleep(Duration::from_millis(1500));
-            let deadline = Instant::now() + Duration::from_secs(45);
-            while !search_allowed() && Instant::now() < deadline {
+            // No time fallback — the burst fires once the user logs in and
+            // unlocks the search (network_begin_search); until then the
+            // login page stays fully quiet.
+            while !search_allowed() {
                 std::thread::sleep(Duration::from_millis(500));
-            }
-            if !search_allowed() {
-                return;
             }
             {
                 let sink: discovery::PacketSink = Arc::new(|pkt, ip| on_packet(pkt, ip));
@@ -368,16 +364,15 @@ fn manager_loop(rx: std::sync::mpsc::Receiver<()>) {
 // ── Search gate (OWNER 2026-11): the login page comes first ─────────────────
 // The LAN search (outbound connect attempts + discovery probe bursts) starts
 // only AFTER the user logs in — network_begin_search is called by the webview
-// once a session exists. A 45s fallback keeps an unattended terminal (restart
-// overnight, nobody logging in) reconnecting anyway. Explicit servers and
-// terminals already serving tick normally.
+// once a session exists. NO time fallback: an unattended login page stays
+// quiet (the owner found the 45s "Searching…" phase looked like a hang).
+// Explicit servers and terminals already serving tick normally.
 
 /// True when the outbound search may run.
 fn search_allowed() -> bool {
     let Some(rt) = net_opt() else { return true };
     rt.search_unlocked
         .load(std::sync::atomic::Ordering::Relaxed)
-        || rt.started_at.elapsed() >= Duration::from_secs(45)
 }
 
 /// Unlock the LAN search (see the gate comment above). Called by the
@@ -1734,7 +1729,6 @@ pub fn init_for_tests(db: DbState) {
         lan_ips_cache: Mutex::new(None),
         users_cache: Mutex::new(None),
         offline_login: Mutex::new(None),
-        started_at: Instant::now(),
         search_unlocked: std::sync::atomic::AtomicBool::new(false),
     };
     let _ = NET.set(runtime);

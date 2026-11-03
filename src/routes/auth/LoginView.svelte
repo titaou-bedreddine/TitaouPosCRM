@@ -5,7 +5,7 @@
   import { currentUser } from '../../lib/stores/auth';
   import { networkStatus } from '../../lib/stores/network';
   import type { User } from '../../lib/types';
-  import { Lock, ChevronDown, Eye, EyeOff, X, Wifi, WifiOff, Loader2 } from 'lucide-svelte';
+  import { Lock, ChevronDown, Eye, EyeOff, X, Wifi, WifiOff } from 'lucide-svelte';
 
   let usersList: User[] = [];
   let selectedUsername = 'admin';
@@ -258,8 +258,10 @@
           <Wifi class="w-4 h-4 shrink-0" />
           <span>Connected to shop server {$networkStatus?.coordinator?.pc_name ? `(${$networkStatus.coordinator.pc_name})` : ''} — sign in with your shop account.</span>
         {:else if $networkStatus?.mode === 'searching' || $networkStatus?.mode === 'reconnecting'}
-          <Loader2 class="w-4 h-4 shrink-0 animate-spin" />
-          <span>Searching for the shop server… you can still sign in and work offline / جارٍ البحث عن الخادم… يمكنك تسجيل الدخول والعمل محلياً</span>
+          <!-- OWNER: no spinner, no 'searching' churn on the login page — the
+               LAN search starts AFTER login, in the background. -->
+          <Wifi class="w-4 h-4 shrink-0 opacity-60" />
+          <span>{t('login_search_bg')}</span>
         {:else}
           <WifiOff class="w-4 h-4 shrink-0" />
           <span>Shop server unreachable — sign in to work OFFLINE; your session reconnects automatically when the server returns / الخادم غير متاح — سجّل الدخول للعمل دون اتصال، ويعود الاتصال تلقائياً</span>

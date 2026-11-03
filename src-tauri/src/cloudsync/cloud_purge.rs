@@ -56,6 +56,18 @@ pub fn cloud_purge_entities(
             let conn = db.conn.lock().unwrap();
             let _ = conn.execute("DELETE FROM product_packagings", []);
             let _ = conn.execute("DELETE FROM products", []);
+            // OWNER: purged rows came back on the next refresh — the sync
+            // OUTBOX held pending product events that the drain re-uploaded
+            // (upsert_pos_product recreates them by SKU). Purge the queue and
+            // the id maps for the wiped entities.
+            let _ = conn.execute(
+                "DELETE FROM sync_outbox WHERE entity IN ('product','stock_adjustment')",
+                [],
+            );
+            let _ = conn.execute(
+                "DELETE FROM sync_map WHERE entity IN ('product','stock_adjustment')",
+                [],
+            );
         }
         summary.insert("products".into(), json!({"deleted": deleted, "deactivated": deactivated}));
     }
@@ -83,6 +95,16 @@ pub fn cloud_purge_entities(
         {
             let conn = db.conn.lock().unwrap();
             let _ = conn.execute("UPDATE clients SET is_active = 0", []);
+            // Same resurrection guard as products: drop pending client pushes
+            // + maps so a later drain cannot recreate the purged clients.
+            let _ = conn.execute(
+                "DELETE FROM sync_outbox WHERE entity = 'customer'",
+                [],
+            );
+            let _ = conn.execute(
+                "DELETE FROM sync_map WHERE entity = 'customer'",
+                [],
+            );
         }
         summary.insert("clients".into(), json!({"deleted": deleted, "deactivated": deactivated}));
     }
@@ -180,7 +202,31 @@ pub fn cloud_delete_row(
         _ => return Err(format!("table '{}' is not deletable here", table)),
     };
 
-    client.delete(table, &[("id", format!("eq.{id}")), ("organization_id", format!("eq.{org}"))])
+    client.delete(table, &[("id", format!("eq.{id}")), ("organization_id", format!("eq.{org}"))])?;
+
+    // Resurrection guard: a pending product/customer push for this row would
+    // recreate it on the next drain — drop its queued event + id map.
+    {
+        let entity = match table {
+            "products" => Some("product"),
+            "clients" => Some("customer"),
+            _ => None,
+        };
+        if let Some(entity) = entity {
+            let conn = db.conn.lock().unwrap();
+            if let Some(local_id) = super::outbox::local_id(&conn, entity, &id) {
+                let _ = conn.execute(
+                    "DELETE FROM sync_outbox WHERE entity = ?1 AND local_id = ?2",
+                    rusqlite::params![entity, local_id],
+                );
+                let _ = conn.execute(
+                    "DELETE FROM sync_map WHERE entity = ?1 AND local_id = ?2",
+                    rusqlite::params![entity, local_id],
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Deactivate ONE row (products/clients) — the fallback when a RESTRICT FK

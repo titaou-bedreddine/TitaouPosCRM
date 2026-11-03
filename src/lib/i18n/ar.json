@@ -845,5 +845,11 @@
   "team_admin_password": "كلمة مرورك أنت (كلمة مرور دخولك للبرنامج)",
   "team_admin_password_hint": "",
   "team_new_password": "كلمة مرور جديدة للعضو (اختياري)",
-  "team_admin_password_prompt": "كلمة مرورك أنت (كلمة مرور دخولك للبرنامج):"
+  "team_admin_password_prompt": "كلمة مرورك أنت (كلمة مرور دخولك للبرنامج):",
+  "login_search_bg": "سجّل الدخول — يبحث التطبيق عن خادم المحل في الخلفية بعد تسجيل الدخول.",
+  "trucks_status_loaded": "محملة",
+  "trucks_status_inprogress": "جارية",
+  "trucks_status_reconciling": "جرد نهائي",
+  "trucks_status_closed": "مغلقة",
+  "trucks_status_returned": "مرتجعة"
 }
