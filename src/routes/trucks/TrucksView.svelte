@@ -879,7 +879,7 @@
   });
 </script>
 
-<div class="p-4 md:p-6 space-y-4">
+<div class="p-4 md:p-6 space-y-4 h-full overflow-y-auto">
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-lg font-black text-pos-text flex items-center gap-2">

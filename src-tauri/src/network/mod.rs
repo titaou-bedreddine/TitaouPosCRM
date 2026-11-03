@@ -186,6 +186,11 @@ pub struct NetRuntime {
     /// a login performed while disconnected, replayed against the server on
     /// reconnect so the session upgrades to a real server token.
     pub offline_login: Mutex<Option<(String, String)>>,
+    /// Instant this runtime initialized — search-gate fallback clock.
+    pub started_at: Instant,
+    /// OWNER (2026-11): the LAN search (connect attempts + probe bursts)
+    /// starts only AFTER the user logs in — set by network_begin_search.
+    pub search_unlocked: std::sync::atomic::AtomicBool,
 }
 
 static NET: OnceLock<NetRuntime> = OnceLock::new();
@@ -260,6 +265,8 @@ pub fn init(app: tauri::AppHandle, db: DbState) {
         lan_ips_cache: Mutex::new(None),
         users_cache: Mutex::new(None),
         offline_login: Mutex::new(None),
+        started_at: Instant::now(),
+        search_unlocked: std::sync::atomic::AtomicBool::new(false),
     };
     let _ = NET.set(runtime);
     let rt = net();
@@ -321,11 +328,20 @@ pub fn init(app: tauri::AppHandle, db: DbState) {
         .spawn(move || manager_loop(rx))
         .expect("spawn net manager");
 
-    // Startup discovery burst (after a short settle delay).
+    // Startup discovery burst (after a short settle delay) — gated like the
+    // manager loop: the post-login search fires it; a 45s fallback covers an
+    // unattended terminal.
     std::thread::Builder::new()
         .name("net-probe".into())
         .spawn(|| {
             std::thread::sleep(Duration::from_millis(1500));
+            let deadline = Instant::now() + Duration::from_secs(45);
+            while !search_allowed() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            if !search_allowed() {
+                return;
+            }
             {
                 let sink: discovery::PacketSink = Arc::new(|pkt, ip| on_packet(pkt, ip));
                 let cfg = current_config();
@@ -347,6 +363,30 @@ fn manager_loop(rx: std::sync::mpsc::Receiver<()>) {
         // Wake early when something requests an immediate re-evaluation.
         let _ = rx.recv_timeout(Duration::from_secs(4));
     }
+}
+
+// ── Search gate (OWNER 2026-11): the login page comes first ─────────────────
+// The LAN search (outbound connect attempts + discovery probe bursts) starts
+// only AFTER the user logs in — network_begin_search is called by the webview
+// once a session exists. A 45s fallback keeps an unattended terminal (restart
+// overnight, nobody logging in) reconnecting anyway. Explicit servers and
+// terminals already serving tick normally.
+
+/// True when the outbound search may run.
+fn search_allowed() -> bool {
+    let Some(rt) = net_opt() else { return true };
+    rt.search_unlocked
+        .load(std::sync::atomic::Ordering::Relaxed)
+        || rt.started_at.elapsed() >= Duration::from_secs(45)
+}
+
+/// Unlock the LAN search (see the gate comment above). Called by the
+/// `network_begin_search` command from the logged-in webview.
+pub fn begin_background_search() {
+    let Some(rt) = net_opt() else { return };
+    rt.search_unlocked
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    wake_manager();
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +602,20 @@ fn manager_tick() {
     {
         let cutoff = (now_secs() - 15) * 1000;
         rt.peers.lock().unwrap().retain(|_, p| p.last_seen_ms > cutoff);
+    }
+
+    // OWNER: no outbound search while the login page is up (see the gate
+    // comment above manager_loop). Explicit servers and terminals ALREADY
+    // serving (elected standalone) tick normally — their announce state must
+    // never regress, or followers lose their coordinator. Passive announce/
+    // listen stays on for everyone, so the terminal is still visible to
+    // others; only OUR probing/connecting waits.
+    if cfg.role != "server"
+        && !search_allowed()
+        && !rt.mode.lock().unwrap().serving()
+    {
+        set_mode(Mode::Searching);
+        return;
     }
 
     match cfg.role.as_str() {
@@ -1680,6 +1734,8 @@ pub fn init_for_tests(db: DbState) {
         lan_ips_cache: Mutex::new(None),
         users_cache: Mutex::new(None),
         offline_login: Mutex::new(None),
+        started_at: Instant::now(),
+        search_unlocked: std::sync::atomic::AtomicBool::new(false),
     };
     let _ = NET.set(runtime);
     let rt = net();

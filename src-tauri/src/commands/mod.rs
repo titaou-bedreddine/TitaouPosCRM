@@ -106,6 +106,15 @@ pub fn print_label_job(
 }
 
 
+/// OWNER (2026-11): the LAN search (shop-server discovery/connect) starts
+/// only AFTER login — the webview calls this once a user session exists.
+/// Runs locally by design (never forwarded: not a whitelisted business op).
+#[tauri::command]
+pub fn network_begin_search() -> Result<(), String> {
+    crate::network::begin_background_search();
+    Ok(())
+}
+
 #[tauri::command]
 pub fn login(db: State<'_, DbState>, username: String, password: String) -> Result<Option<User>, String> {
     let user = authenticate_user(&db, &username, &password)?;

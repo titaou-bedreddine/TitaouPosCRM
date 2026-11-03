@@ -47,8 +47,15 @@ fn lan_wrap_invoke_handler(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {    let db_state = DbState::new().expect("Failed to initialize database");
 
-    // Startup backup (only when the setting is ON; once per day).
-    crate::services::settings_service::run_startup_backup(&db_state);
+    // Startup backup — OFF the critical path (owner: the login page must
+    // never wait on a full-database backup; the once-per-day rule stays).
+    std::thread::Builder::new()
+        .name("startup-backup".into())
+        .spawn(|| {
+            let Ok(db) = DbState::new() else { return };
+            crate::services::settings_service::run_startup_backup(&db);
+        })
+        .ok();
 
     server::set_diag_db(DbState::new().expect("diag db"));
     // The LAN shop API shares the same authoritative SQLite file (its own
@@ -79,6 +86,7 @@ pub fn run() {    let db_state = DbState::new().expect("Failed to initialize dat
         })
         .invoke_handler(lan_wrap_invoke_handler(tauri::generate_handler![
             commands::login,
+            commands::network_begin_search,
             commands::get_active_users,
             commands::change_user_password,
             commands::get_user_by_qr,

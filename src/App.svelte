@@ -292,6 +292,16 @@
     loadActiveSession();
   }
 
+  // OWNER (2026-11): the LAN shop-server search (discovery + connect) starts
+  // with the FIRST signed-in session — never while the login page is up, so
+  // login is instant and the search runs in the background afterwards. A 45s
+  // backend fallback covers an unattended terminal that never logs in.
+  let netSearchStarted = false;
+  $: if ($currentUser && !netSearchStarted) {
+    netSearchStarted = true;
+    invoke('network_begin_search').catch(() => { /* best-effort */ });
+  }
+
   // Real-time LAN events from the shop server: session events invalidate the
   // locally cached register view so a connected terminal stays in sync.
   let lastNetEventTs = 0;
