@@ -56,9 +56,6 @@
   // highlight its trip's client checkpoints).
   let mapsFocusTruckId = '';
   let mapsFocusCheckpoints = false;
-  // Trucks page "Modifier la tournée" → Chargements page deep-link: the load
-  // id to open pre-filled in the edit form.
-  let truckloadsFocusLoad: string | null = null;
   // Clients page map-button → focus that client's position + money card.
   let mapsFocusClientId = '';
   // Expense advance row → Employees page, pre-filtered to that person.
@@ -752,9 +749,9 @@
         {:else if currentRoute === 'routes'}
           <RoutesView />
         {:else if currentRoute === 'truckloads'}
-          <TruckLoadsView bind:focusLoadId={truckloadsFocusLoad} />
+          <TruckLoadsView />
         {:else if currentRoute === 'trucks'}
-          <TrucksView onShowOnMap={(truckId, checkpoints) => { mapsFocusTruckId = truckId; mapsFocusCheckpoints = checkpoints; mapsFocusClientId = ''; currentRoute = 'maps'; }} onEditTrip={(loadId) => { truckloadsFocusLoad = loadId; currentRoute = 'truckloads'; }} />
+          <TrucksView onShowOnMap={(truckId, checkpoints) => { mapsFocusTruckId = truckId; mapsFocusCheckpoints = checkpoints; mapsFocusClientId = ''; currentRoute = 'maps'; }} />
         {:else if currentRoute === 'maps'}
           <MapsView focusTruckId={mapsFocusTruckId} focusCheckpoints={mapsFocusCheckpoints} focusClientId={mapsFocusClientId} />
         {:else if currentRoute === 'customers'}

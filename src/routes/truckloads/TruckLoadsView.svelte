@@ -9,15 +9,6 @@
   import { Truck, Plus, RefreshCw, Printer, Package, X, Undo2, Eye, Pencil, Trash2, AlertTriangle } from 'lucide-svelte';
 
   let loads: any[] = [];
-
-  // Deep-link from the Trucks page ("Modifier" on the active trip panel):
-  // once the load list has landed, open the matching load in the edit form.
-  export let focusLoadId: string | null = null;
-  $: if (focusLoadId && loads.length > 0) {
-    const target = loads.find((l) => l.id === focusLoadId);
-    focusLoadId = null;
-    if (target && loadEditable(target)) startEdit(target);
-  }
   let staff: any[] = [];
   let routes: any[] = [];
   let trucksList: any[] = [];

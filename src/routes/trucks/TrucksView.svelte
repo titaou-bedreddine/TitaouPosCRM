@@ -41,10 +41,6 @@
   // App.svelte deep-link: open the Maps page on this truck (live position
   // and/or its trip's client checkpoints).
   export let onShowOnMap: (truckId: string, checkpoints: boolean) => void = () => {};
-  // OWNER (2026-11): "Modifier la tournée" on the active-trip panel —
-  // deep-links to the Chargements page with the load pre-opened in the edit
-  // form (the edit form lives there; server refuses when returns exist).
-  export let onEditTrip: (loadId: string) => void = () => {};
 
   $: selected = trucks.find((x) => x.id === selectedId) ?? null;
   $: visibleTrucks = showArchived ? trucks : trucks.filter((x) => x.is_active !== false);
@@ -319,16 +315,62 @@
 
   // Friendly stock validation BEFORE the RPC: raw P0001 JSON never reaches
   // the user (field report: negative warehouse stock showed a JSON blob).
+  // EDIT mode: validate the per-product DELTA (new − old) — the server
+  // (migration 0060) enforces the same rule authoritatively.
   function tripStockProblem(): string | null {
     if (warehouseByProduct.size === 0) return null; // stock unknown → server validates
     for (const i of tripItems) {
       const available = warehouseByProduct.get(i.product_id) ?? 0;
       const requested = i.quantity * (i.unitsPerPackage || 1);
-      if (requested > available) {
+      if (editLoadId) {
+        const delta = requested - (editOldBase[i.product_id] ?? 0);
+        if (delta <= 0) continue; // returning goods is always fine
+        if (delta > available) {
+          return `Stock dépôt insuffisant / Insufficient warehouse stock — ${i.name}: disponible ${available}, demandé ${delta}`;
+        }
+      } else if (requested > available) {
         return `Stock dépôt insuffisant / Insufficient warehouse stock — ${i.name}: disponible ${available}, demandé ${requested}`;
       }
     }
     return null;
+  }
+
+  // ── EDIT a live trip on THIS page (owner: same form, same product picker
+  // as creation — add products freely; closing returns to the Trucks page) ──
+  let editLoadId: string | null = null;
+  let editOldBase: Record<string, number> = {};
+
+  function openEditTrip(l: any) {
+    if (!l) return;
+    editLoadId = l.id;
+    editOldBase = {};
+    tripName = l.name ?? '';
+    tripSeller = l.seller_id ?? '';
+    tripDate = String(l.route_date).slice(0, 10);
+    tripItems = (l.items ?? []).map((it: any) => {
+      const base = Number(it.quantity ?? 0);
+      editOldBase[it.product_id as string] = base;
+      return {
+        product_id: it.product_id as string,
+        name: it.product?.name ?? '—',
+        unit: 'Base',
+        unitsPerPackage: 1,
+        quantity: base,
+      };
+    });
+    tripProductSearch = '';
+    showTripForm = true;
+  }
+
+  function openCreateTrip() {
+    editLoadId = null;
+    editOldBase = {};
+    tripSeller = selected?.seller_id ?? '';
+    tripDate = new Date().toISOString().slice(0, 10);
+    tripItems = [];
+    tripName = '';
+    tripProductSearch = '';
+    showTripForm = true;
   }
 
   async function saveTrip() {
@@ -337,19 +379,35 @@
     if (problem) { error = '⚠️ ' + problem; return; }
     busy = true; error = '';
     try {
-      await invoke('cloud_create_truck_load', {
-        sellerId: tripSeller,
-        routeId: null,
-        routeDate: tripDate,
-        items: tripItems.map((i) => ({
-          product_id: i.product_id,
-          quantity: i.quantity * (i.unitsPerPackage || 1),
-        })),
-        notes: null,
-        name: tripName.trim() || null,
-        truckId: selected.id,
-        driverName: selected.driver_name || null,
-      });
+      const payload = tripItems.map((i) => ({
+        product_id: i.product_id,
+        quantity: i.quantity * (i.unitsPerPackage || 1),
+      }));
+      if (editLoadId) {
+        // Same server RPC as the Chargements page edit — compensating stock
+        // movements + header update, validated against warehouse (0060).
+        await invoke('cloud_update_truck_load', {
+          loadId: editLoadId,
+          sellerId: tripSeller || null,
+          routeId: null,
+          routeDate: tripDate,
+          items: payload,
+          name: tripName.trim() || null,
+          notes: null,
+        });
+        editLoadId = null; editOldBase = {};
+      } else {
+        await invoke('cloud_create_truck_load', {
+          sellerId: tripSeller,
+          routeId: null,
+          routeDate: tripDate,
+          items: payload,
+          notes: null,
+          name: tripName.trim() || null,
+          truckId: selected.id,
+          driverName: selected.driver_name || null,
+        });
+      }
       showTripForm = false;
       tripItems = []; tripName = ''; tripProductSearch = '';
       await load();
@@ -1048,7 +1106,7 @@
               class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
               title={t('trucks_delete')}><Trash2 class="w-3.5 h-3.5" /></button>
             {#if !activeTrip && selected.is_active !== false}
-              <button type="button" on:click={() => { tripSeller = selected.seller_id ?? ''; tripDate = new Date().toISOString().slice(0, 10); tripItems = []; tripName = ''; showTripForm = true; }}
+              <button type="button" on:click={openCreateTrip}
                 class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black bg-sky-600 hover:bg-sky-700 text-white rounded-xl cursor-pointer">
                 <Plus class="w-3 h-3" />{t('trucks_new_trip')}
               </button>
@@ -1135,7 +1193,7 @@
 
             <div class="flex flex-wrap justify-end gap-1.5">
               {#if activeTrip.status !== 'closed' && !(activeTrip.items ?? []).some((it: any) => (it.returned_quantity ?? 0) > 0)}
-                <button type="button" on:click={() => onEditTrip(activeTrip.id)}
+                <button type="button" on:click={() => openEditTrip(activeTrip)}
                   class="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-black text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl cursor-pointer"
                   title={t('tl_edit_title')}>
                   <Pencil class="w-3 h-3" />{t('tl_edit')}
@@ -1405,7 +1463,7 @@
   <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" on:click={() => (showTripForm = false)} role="presentation">
     <div class="bg-white dark:bg-slate-900 rounded-2xl border border-pos-border w-full max-w-3xl max-h-[85vh] flex flex-col" on:click|stopPropagation>
       <div class="p-4 border-b border-pos-border flex items-center justify-between">
-        <h3 class="text-sm font-black text-pos-text flex items-center gap-2"><Truck class="w-4 h-4 text-sky-500" />{t('trucks_new_trip')} — {selected.name}</h3>
+        <h3 class="text-sm font-black text-pos-text flex items-center gap-2"><Truck class="w-4 h-4 text-sky-500" />{editLoadId ? t('tl_edit_title') : t('trucks_new_trip')} — {selected.name}</h3>
         <button type="button" class="p-1 text-pos-muted hover:text-pos-text cursor-pointer" on:click={() => (showTripForm = false)}><X class="w-4 h-4" /></button>
       </div>
       <div class="p-4 overflow-y-auto">
